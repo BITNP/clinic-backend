@@ -1,0 +1,13 @@
+.git
+.gitignore
+.idea
+.env
+.env.example
+clinic.db
+clinic.db-shm
+clinic.db-wal
+clinic-backend
+cookies.txt
+tests
+Dockerfile
+docker-compose.yml

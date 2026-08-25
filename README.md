@@ -26,3 +26,22 @@ go run main.go                   # runs on :8080
 cd /path/to/clinic_admin_frontend
 pnpm dev                         # runs on :5173
 ```
+
+## Run with Docker
+
+Boots PostgreSQL and the backend together:
+
+```bash
+# under clinic-backend
+cp .env.example .env   # optional, to customize config
+docker compose up --build
+```
+
+- Postgres runs on `:5432` (user/db/password all `clinic`, persisted in a volume).
+- Backend runs on `:8080` with `CLINIC_DB_DRIVER=postgres`.
+- Override config via `.env` (see `.env.example`) or environment variables, e.g.
+  `CLINIC_API_KEY=secret docker compose up --build`.
+
+The database schema is created automatically on startup via AutoMigrate. To
+load sample data, seed against the Postgres instance with
+`go run fake/seed.go` (currently sqlite-only, so run it locally first).

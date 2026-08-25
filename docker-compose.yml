@@ -1,0 +1,45 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-clinic}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clinic}
+      POSTGRES_DB: ${POSTGRES_DB:-clinic}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      CLINIC_DB_DRIVER: ${CLINIC_DB_DRIVER:-postgres}
+      CLINIC_DB_DSN: ${CLINIC_DB_DSN:-postgres://clinic:clinic@db:5432/clinic?sslmode=disable}
+      CLINIC_API_KEY: ${CLINIC_API_KEY:-local-dev-key}
+      CLINIC_TIMEZONE: ${CLINIC_TIMEZONE:-Asia/Shanghai}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
+      CAS_SERVER_URL: ${CAS_SERVER_URL:-}
+      CAS_HTTP_TIMEOUT: ${CAS_HTTP_TIMEOUT:-10s}
+      CAS_DEFAULT_REDIRECT: ${CAS_DEFAULT_REDIRECT:-/}
+      SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-sessionid}
+      CSRF_COOKIE_NAME: ${CSRF_COOKIE_NAME:-csrf_token}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      SESSION_COOKIE_SAMESITE: ${SESSION_COOKIE_SAMESITE:-lax}
+      SESSION_TTL: ${SESSION_TTL:-336h}
+      KEYCLOAK_REALM_URL: ${KEYCLOAK_REALM_URL:-}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-}
+    ports:
+      - "8080:8080"
+
+volumes:
+  pgdata:

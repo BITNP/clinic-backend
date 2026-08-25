@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -17,12 +18,25 @@ import (
 	"clinic-backend/services"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 func main() {
-	db, err := gorm.Open(sqlite.Open("clinic.db"), &gorm.Config{})
+	driver := envString("CLINIC_DB_DRIVER", "sqlite")
+	dsn := envString("CLINIC_DB_DSN", "clinic.db")
+
+	var dialector gorm.Dialector
+	switch driver {
+	case "sqlite":
+		dialector = sqlite.Open(dsn)
+	case "postgres":
+		dialector = postgres.Open(dsn)
+	default:
+		log.Fatalf("invalid CLINIC_DB_DRIVER %q: must be sqlite or postgres", driver)
+	}
+	db, err := gorm.Open(dialector, &gorm.Config{})
 	if err != nil {
 		log.Fatalf("failed to open database: %v", err)
 	}
@@ -52,11 +66,15 @@ func main() {
 	`).Error; err != nil {
 		log.Fatalf("failed to create tos unique index: %v", err)
 	}
-	if err := db.Exec(`
+	boolLiteral := "1"
+	if driver == "postgres" {
+		boolLiteral = "true"
+	}
+	if err := db.Exec(fmt.Sprintf(`
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_enabled_schedule
 		ON clinic_work_schedule(enabled)
-		WHERE enabled = 1
-	`).Error; err != nil {
+		WHERE enabled = %s
+	`, boolLiteral)).Error; err != nil {
 		log.Fatalf("failed to create enabled-schedule unique index: %v", err)
 	}
 
