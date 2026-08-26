@@ -27,7 +27,7 @@ services:
       CLINIC_DB_DSN: ${CLINIC_DB_DSN:-postgres://clinic:clinic@db:5432/clinic?sslmode=disable}
       CLINIC_API_KEY: ${CLINIC_API_KEY:-local-dev-key}
       CLINIC_TIMEZONE: ${CLINIC_TIMEZONE:-Asia/Shanghai}
-      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5173}
       CAS_SERVER_URL: ${CAS_SERVER_URL:-}
       CAS_HTTP_TIMEOUT: ${CAS_HTTP_TIMEOUT:-10s}
       CAS_DEFAULT_REDIRECT: ${CAS_DEFAULT_REDIRECT:-/}

@@ -1,47 +1,73 @@
 # clinic-backend
 
-New backend for clinic management system powered by Gin, with better architecture, better database table design, better document.
+Backend for the clinic management system, built with Go and Gin.
 
-## Run locally
+The backend and the admin frontend are deployed as separate compose stacks:
+
+- `clinic-backend` (this repo): PostgreSQL + backend (Go API on `:8080`), via `docker-compose.yml`
+- `clinic_admin_frontend` (separate repo): admin frontend (Caddy on `:5173`), via its own `docker-compose.yml`
+
+The two repos are independent and can live anywhere on disk.
+
+## Deploy the backend
 
 ```bash
-# under clinic-backend
+cd clinic-backend
+cp .env.example .env   # optional, to customize config
+docker compose up --build
+```
 
-# 1. Seed sample data (room, service dates, announcement, staff)
+- Postgres: `:5432` (user/db/password all `clinic`, persisted in a volume).
+- Backend: `:8080`.
+- Override any config via `.env` (see `.env.example`) or environment
+  variables, e.g. `CLINIC_API_KEY=secret docker compose up --build`.
+
+The database schema is created automatically on startup via AutoMigrate. To
+load sample data (rooms, service dates, announcements, staff), run the seed
+script once against the database:
+
+```bash
+# seed.go is currently sqlite-only, so run it locally against a sqlite DB:
 go run fake/seed.go
+```
 
-# 2. Start the fake CAS server (now gives admin role)
-go run fake/fake_cas.go   # runs on :9999
+## Deploy the frontend
 
-# 3. Start the backend
+```bash
+cd clinic_admin_frontend
+cp .env.example .env   # optional, to customize config
+docker compose up --build
+```
+
+- Admin frontend: `:5173` — serves the UI and proxies `/api`, `/login`,
+  `/logout` to the backend.
+- By default it reaches the backend on the host at `:8080`
+  (`BACKEND_UPSTREAM=http://host.docker.internal:8080`). If the backend runs on
+  another server, set `BACKEND_UPSTREAM` in `.env` to its URL, e.g.
+  `BACKEND_UPSTREAM=http://api.example.com:8080`.
+
+## Wire them together
+
+For CAS login/logout to redirect back to the frontend, set `APP_BASE_URL` on
+the backend to the frontend's address (default `http://localhost:5173`). The
+frontend proxies `/api`, `/login`, `/logout` to the backend, so no CORS setup
+is needed — requests stay same-origin from the browser's perspective.
+
+## Run locally (development)
+
+```bash
+# 1. Start the fake CAS server (gives admin role)
+go run fake/fake_cas.go        # runs on :9999
+
+# 2. Start the backend
 export CLINIC_API_KEY=local-dev-key
 export CAS_SERVER_URL=http://127.0.0.1:9999
 export APP_BASE_URL=http://127.0.0.1:5173
 export CAS_DEFAULT_REDIRECT=/
 export SESSION_COOKIE_SAMESITE=lax
+go run main.go                 # runs on :8080
 
-go run main.go                   # runs on :8080
-
-# 4. Start the frontend (separate terminal)
-cd /path/to/clinic_admin_frontend
-pnpm dev                         # runs on :5173
+# 3. Start the frontend (separate terminal)
+cd path/to/clinic_admin_frontend
+pnpm dev                       # runs on :5173
 ```
-
-## Run with Docker
-
-Boots PostgreSQL and the backend together:
-
-```bash
-# under clinic-backend
-cp .env.example .env   # optional, to customize config
-docker compose up --build
-```
-
-- Postgres runs on `:5432` (user/db/password all `clinic`, persisted in a volume).
-- Backend runs on `:8080` with `CLINIC_DB_DRIVER=postgres`.
-- Override config via `.env` (see `.env.example`) or environment variables, e.g.
-  `CLINIC_API_KEY=secret docker compose up --build`.
-
-The database schema is created automatically on startup via AutoMigrate. To
-load sample data, seed against the Postgres instance with
-`go run fake/seed.go` (currently sqlite-only, so run it locally first).
