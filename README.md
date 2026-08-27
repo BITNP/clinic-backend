@@ -21,7 +21,7 @@ docker compose up --build   # build locally
 
 On every push to `master`, CI (`.github/workflows/docker-publish.yml`)
 builds and publishes the image to
-`ghcr.io/potato-yao/clinic-backend` (tag `latest`). Pushing a `v*` tag also
+`ghcr.io/bitnp/clinic-backend` (tag `latest`). Pushing a `v*` tag also
 publishes `1.2.3` / `1.2` tags. No local Go toolchain or Docker build is
 needed on the target machine:
 
@@ -32,7 +32,7 @@ docker compose up -d --pull always
 # or as a one-off container
 docker run -d --name clinic-backend -p 8080:8080 \
   -e CLINIC_API_KEY=your-secret \
-  ghcr.io/potato-yao/clinic-backend:latest
+  ghcr.io/bitnp/clinic-backend:latest
 ```
 
 The image must be **public** for anonymous pulls on other machines:
@@ -41,6 +41,25 @@ image, log in first:
 
 ```bash
 echo $PAT | docker login ghcr.io -u Potato-Yao --password-stdin
+```
+
+## Deploy to a server
+
+`docker-compose.prod.yml` is a standalone deploy config — copy it and `.env`
+to the server, no source checkout needed. It pulls the pre-built image from
+GHCR and connects to the Postgres already running on the server via
+`host.containers.internal:5432` (no bundled database), like the other clinic
+services. It refuses to start if `CLINIC_API_KEY` is missing:
+
+```bash
+cp .env.example .env   # set CLINIC_API_KEY, APP_BASE_URL, CAS_SERVER_URL, ...
+# set CLINIC_DB_DSN in .env to override the default
+# (postgres://clinic:clinic@host.containers.internal:5432/clinic?sslmode=disable)
+docker compose -f docker-compose.prod.yml up -d --pull always
+
+# optional: pin a specific image version instead of latest
+echo BACKEND_IMAGE_TAG=1.2.3 >> .env
+docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
 ```
 
 - Postgres: `:5432` (user/db/password all `clinic`, persisted in a volume).

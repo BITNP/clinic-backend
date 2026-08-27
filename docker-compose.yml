@@ -17,7 +17,7 @@ services:
       retries: 10
 
   backend:
-    image: ghcr.io/potato-yao/clinic-backend:latest
+    image: ghcr.io/bitnp/clinic-backend:latest
     build: .
     restart: unless-stopped
     depends_on:

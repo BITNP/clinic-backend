@@ -1,0 +1,45 @@
+version: "3"
+
+# Production deployment: pulls the pre-built image from GHCR — no local build.
+# Uses the Postgres already running on the server (host.containers.internal:5432),
+# same as the other clinic services.
+#
+# Podman alternative (rootless, same compose file):
+#   systemctl --user enable --now podman.socket
+#   podman-compose -f docker-compose.prod.yml up -d --pull always
+#
+# Usage on the server (only this file + .env are needed, no source checkout):
+#   cp .env.example .env            # then set real secrets:
+#                                   #   CLINIC_API_KEY, APP_BASE_URL,
+#                                   #   CAS_SERVER_URL, CLINIC_DB_DSN, ...
+#   docker compose -f docker-compose.prod.yml up -d --pull always
+#
+# Pin a specific image version with BACKEND_IMAGE_TAG, e.g. BACKEND_IMAGE_TAG=1.2.3
+#
+# If the frontend runs in a separate compose stack, expose the port:
+#   ports:
+#     - "8080:8080"
+#   (and point the frontend at BACKEND_UPSTREAM=http://host.containers.internal:8080)
+
+services:
+  backend:
+    image: ghcr.io/bitnp/clinic-backend:${BACKEND_IMAGE_TAG:-latest}
+    env_file: .env
+    environment:
+      CLINIC_DB_DRIVER: postgres
+      CLINIC_DB_DSN: ${CLINIC_DB_DSN:-postgres://${POSTGRES_USER:-clinic}:${POSTGRES_PASSWORD:-clinic}@host.containers.internal:5432/${POSTGRES_DB:-clinic}?sslmode=disable}
+      CLINIC_API_KEY: ${CLINIC_API_KEY:?set CLINIC_API_KEY in .env}
+      CLINIC_TIMEZONE: ${CLINIC_TIMEZONE:-Asia/Shanghai}
+      TZ: ${TZ:-Asia/Shanghai}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5173}
+      CAS_SERVER_URL: ${CAS_SERVER_URL:-}
+      CAS_HTTP_TIMEOUT: ${CAS_HTTP_TIMEOUT:-10s}
+      CAS_DEFAULT_REDIRECT: ${CAS_DEFAULT_REDIRECT:-/}
+      SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-sessionid}
+      CSRF_COOKIE_NAME: ${CSRF_COOKIE_NAME:-csrf_token}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      SESSION_COOKIE_SAMESITE: ${SESSION_COOKIE_SAMESITE:-lax}
+      SESSION_TTL: ${SESSION_TTL:-336h}
+      KEYCLOAK_REALM_URL: ${KEYCLOAK_REALM_URL:-}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-}
+    restart: unless-stopped
