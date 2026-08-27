@@ -2,4 +2,5 @@
 .env
 cookies.txt
 clinic-backend
+bench_seed
 clinic.db

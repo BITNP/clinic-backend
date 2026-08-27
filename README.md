@@ -14,7 +14,33 @@ The two repos are independent and can live anywhere on disk.
 ```bash
 cd clinic-backend
 cp .env.example .env   # optional, to customize config
-docker compose up --build
+docker compose up --build   # build locally
+```
+
+## Deploy from GitHub Packages (no local build)
+
+On every push to `master`, CI (`.github/workflows/docker-publish.yml`)
+builds and publishes the image to
+`ghcr.io/potato-yao/clinic-backend` (tag `latest`). Pushing a `v*` tag also
+publishes `1.2.3` / `1.2` tags. No local Go toolchain or Docker build is
+needed on the target machine:
+
+```bash
+# with docker compose — pulls the image instead of building
+docker compose up -d --pull always
+
+# or as a one-off container
+docker run -d --name clinic-backend -p 8080:8080 \
+  -e CLINIC_API_KEY=your-secret \
+  ghcr.io/potato-yao/clinic-backend:latest
+```
+
+The image must be **public** for anonymous pulls on other machines:
+repo → Packages → package settings → *Change visibility*. For a private
+image, log in first:
+
+```bash
+echo $PAT | docker login ghcr.io -u Potato-Yao --password-stdin
 ```
 
 - Postgres: `:5432` (user/db/password all `clinic`, persisted in a volume).
