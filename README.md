@@ -2,12 +2,10 @@
 
 Backend for the clinic management system, built with Go and Gin.
 
-The backend and the admin frontend are deployed as separate compose stacks:
-
-- `clinic-backend` (this repo): PostgreSQL + backend (Go API on `:8080`), via `docker-compose.yml`
-- `clinic_admin_frontend` (separate repo): admin frontend (Caddy on `:5173`), via its own `docker-compose.yml`
-
-The two repos are independent and can live anywhere on disk.
+- Dev: the backend and the admin frontend run as separate compose stacks
+  (`docker-compose.yml` in each repo).
+- Prod: `docker-compose.prod.yml` deploys both as a single stack, pulling
+  pre-built images from GHCR (backend on `:8080`, admin frontend on `:5173`).
 
 ## Deploy the backend
 
@@ -46,26 +44,35 @@ echo $PAT | docker login ghcr.io -u Potato-Yao --password-stdin
 ## Deploy to a server
 
 `docker-compose.prod.yml` is a standalone deploy config — copy it and `.env`
-to the server, no source checkout needed. It pulls the pre-built image from
-GHCR and connects to the Postgres already running on the server via
-`host.containers.internal:5432` (no bundled database), like the other clinic
-services. It refuses to start if `CLINIC_API_KEY` is missing:
+to the server, no source checkout needed. It pulls the pre-built backend and
+admin-frontend images from GHCR and connects to the Postgres already running
+on the server via `host.containers.internal:5432` (no bundled database), like
+the other clinic services. It refuses to start if `CLINIC_API_KEY` is missing:
 
 ```bash
 cp .env.example .env   # set CLINIC_API_KEY, APP_BASE_URL, CAS_SERVER_URL, ...
 # set CLINIC_DB_DSN in .env to override the default
 # (postgres://clinic:clinic@host.containers.internal:5432/clinic?sslmode=disable)
 docker compose -f docker-compose.prod.yml up -d --pull always
-
-# optional: pin a specific image version instead of latest
-echo BACKEND_IMAGE_TAG=1.2.3 >> .env
-docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
 ```
 
+The frontend (Caddy on `:5173`) proxies `/api`, `/login`, `/logout` to the
+backend over the compose network, so the backend needs no host port.
+
 - Postgres: `:5432` (user/db/password all `clinic`, persisted in a volume).
-- Backend: `:8080`.
+- Admin frontend: `:5173`.
+- Backend: `:8080` (compose-internal; expose a host port if you need to reach
+  it directly).
 - Override any config via `.env` (see `.env.example`) or environment
   variables, e.g. `CLINIC_API_KEY=secret docker compose up --build`.
+
+To pin specific image versions instead of `latest`:
+
+```bash
+echo BACKEND_IMAGE_TAG=1.2.3 >> .env
+echo ADMIN_FRONTEND_IMAGE_TAG=1.2.3 >> .env
+docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
+```
 
 The database schema is created automatically on startup via AutoMigrate. To
 load sample data (rooms, service dates, announcements, staff), run the seed
