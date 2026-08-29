@@ -81,8 +81,8 @@ func main() {
 		Capacity:  15,
 		RoomID:    &roomZG,
 		Date:      tomorrow,
-		StartTime: tomorrow.Add(18*time.Hour + 30*time.Minute),
-		EndTime:   tomorrow.Add(21 * time.Hour),
+		StartTime: tomorrow.Add(10*time.Hour + 30*time.Minute),
+		EndTime:   tomorrow.Add(13 * time.Hour),
 		Title:     "正常服务",
 	}
 	if err := db.Where("room_id = ? AND date = ?", sdZG.RoomID, sdZG.Date).FirstOrCreate(&sdZG).Error; err != nil {
@@ -94,8 +94,8 @@ func main() {
 		Capacity:  10,
 		RoomID:    &roomSH,
 		Date:      dayAfter,
-		StartTime: dayAfter.Add(18*time.Hour + 30*time.Minute),
-		EndTime:   dayAfter.Add(21 * time.Hour),
+		StartTime: dayAfter.Add(10*time.Hour + 30*time.Minute),
+		EndTime:   dayAfter.Add(13 * time.Hour),
 		Title:     "正常服务",
 	}
 	if err := db.Where("room_id = ? AND date = ?", sdSH.RoomID, sdSH.Date).FirstOrCreate(&sdSH).Error; err != nil {

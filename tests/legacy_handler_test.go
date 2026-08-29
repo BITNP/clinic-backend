@@ -423,8 +423,8 @@ func TestLegacy_Dates_Shape(t *testing.T) {
 		Capacity:  10,
 		RoomID:    &room.ID,
 		Date:      futureTruncatedDate(7),
-		StartTime: futureTruncatedDate(7).Add(18 * time.Hour),
-		EndTime:   futureTruncatedDate(7).Add(21 * time.Hour),
+		StartTime: futureTruncatedDate(7).Add(10 * time.Hour),
+		EndTime:   futureTruncatedDate(7).Add(13 * time.Hour),
 		Title:     "正常服务",
 	}
 	if err := db.Create(&sd).Error; err != nil {
@@ -454,8 +454,8 @@ func TestLegacy_Dates_Shape(t *testing.T) {
 	if d["campus"] != "中关村" {
 		t.Errorf("campus should be room name, got %v", d["campus"])
 	}
-	if d["startTime"] != futureTruncatedDate(7).Add(18*time.Hour).Format("15:04:05") {
-		t.Errorf("startTime should be HH:MM:SS, got %v", d["startTime"])
+	if d["startTime"] != "18:00:00" {
+		t.Errorf("startTime should be shifted to clinic timezone (UTC+8), got %v", d["startTime"])
 	}
 	count, _ := d["count"].(float64)
 	if count != 0 {

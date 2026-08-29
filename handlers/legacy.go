@@ -383,14 +383,15 @@ func (h *LegacyHandler) listDateItems(activeOnly bool) ([]dateItem, error) {
 		if d.RoomID != nil {
 			campus = roomNames[*d.RoomID]
 		}
+		loc := h.serviceDateSvc.Location()
 		items = append(items, dateItem{
 			ID:        d.ID,
 			Title:     d.Title,
 			Date:      d.Date.Format("2006-01-02"),
 			Capacity:  d.Capacity,
 			Campus:    campus,
-			StartTime: d.StartTime.Format("15:04:05"),
-			EndTime:   d.EndTime.Format("15:04:05"),
+			StartTime: d.StartTime.In(loc).Format("15:04:05"),
+			EndTime:   d.EndTime.In(loc).Format("15:04:05"),
 			Count:     d.Count,
 			Finish:    0, // not exposed by new backend; kept for shape compat
 			Working:   0,
