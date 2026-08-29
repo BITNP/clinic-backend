@@ -171,7 +171,7 @@ func (s *StaffService) ListValidForYear(year int) ([]StaffListItem, error) {
 		return nil, fmt.Errorf("list work year %d: %w", year, err)
 	}
 	if len(rows) == 0 {
-		return nil, nil
+		return []StaffListItem{}, nil
 	}
 	staffIDs := make([]int, len(rows))
 	for i, r := range rows {
