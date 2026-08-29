@@ -116,7 +116,7 @@ func (s *AnnouncementService) List(f ListAnnouncementFilter) ([]models.ClinicAnn
 		q = q.Where("tag = ?", f.Tag)
 	}
 	if f.ActiveOnly {
-		q = q.Where("(expireDate >= ? OR tag = ?)", DateInLocation(time.Now(), nil), models.AnnouncementTagTOS)
+		q = q.Where("(expire_date >= ? OR tag = ?)", DateInLocation(time.Now(), nil), models.AnnouncementTagTOS)
 	}
 
 	var total int64
@@ -134,7 +134,7 @@ func (s *AnnouncementService) List(f ListAnnouncementFilter) ([]models.ClinicAnn
 
 	var items []models.ClinicAnnouncement
 	if err := q.
-		Order("priority DESC, createdTime DESC").
+		Order("priority DESC, created_time DESC").
 		Offset(offset).
 		Limit(f.PageSize).
 		Find(&items).Error; err != nil {
@@ -183,12 +183,12 @@ func (s *AnnouncementService) Update(id uint, in UpdateAnnouncementInput) (model
 		updates["brief"] = *in.Brief
 	}
 	if in.ExpireDate != nil {
-		updates["expireDate"] = DateInLocation(*in.ExpireDate, nil)
+		updates["expire_date"] = DateInLocation(*in.ExpireDate, nil)
 	}
 	if in.Priority != nil {
 		updates["priority"] = *in.Priority
 	}
-	updates["lastEditedTime"] = time.Now().UTC()
+	updates["last_edited_time"] = time.Now().UTC()
 
 	if len(updates) > 1 {
 		if err := s.db.Model(&a).Updates(updates).Error; err != nil {

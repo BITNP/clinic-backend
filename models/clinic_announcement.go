@@ -26,9 +26,9 @@ type ClinicAnnouncement struct {
 	Title          string          `gorm:"size:20;not null;column:title" json:"title"`
 	Content        string          `gorm:"type:text;not null;column:content" json:"content"`
 	Tag            AnnouncementTag `gorm:"size:16;not null;default:normal;column:tag" json:"tag"`
-	CreatedTime    time.Time       `gorm:"not null;column:createdTime" json:"createdTime"`
-	LastEditedTime time.Time       `gorm:"not null;column:lastEditedTime" json:"lastEditedTime"`
-	ExpireDate     time.Time       `gorm:"type:date;not null;column:expireDate" json:"expireDate"`
+	CreatedTime    time.Time       `gorm:"not null;column:created_time" json:"createdTime"`
+	LastEditedTime time.Time       `gorm:"not null;column:last_edited_time" json:"lastEditedTime"`
+	ExpireDate     time.Time       `gorm:"type:date;not null;column:expire_date" json:"expireDate"`
 	Priority       uint            `gorm:"not null;column:priority" json:"priority"`
 	Brief          string          `gorm:"size:64;not null;column:brief" json:"brief"`
 }

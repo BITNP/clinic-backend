@@ -144,7 +144,7 @@ func TestClinicServiceDate_NegativeCapacityCheck(t *testing.T) {
 	end := time.Date(0, 1, 1, 17, 0, 0, 0, time.UTC)
 
 	err := db.Exec(
-		`INSERT INTO clinic_service_date (capacity, room_id, date, startTime, endTime, title) VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO clinic_service_date (capacity, room_id, date, start_time, end_time, title) VALUES (?, ?, ?, ?, ?, ?)`,
 		-1, room.ID, date.Format("2006-01-02"), start.Format("15:04:05"), end.Format("15:04:05"), "Bad",
 	).Error
 	if err == nil {

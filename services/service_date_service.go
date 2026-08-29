@@ -205,7 +205,7 @@ func (s *ServiceDateService) List(f ListServiceDateFilter) ([]models.ClinicServi
 
 	var items []models.ClinicServiceDate
 	if err := q.
-		Order("date ASC, startTime ASC").
+		Order("date ASC, start_time ASC").
 		Offset(offset).
 		Limit(f.PageSize).
 		Find(&items).Error; err != nil {
@@ -290,10 +290,10 @@ func (s *ServiceDateService) Update(id uint, in UpdateServiceDateInput) (models.
 		updates["date"] = DateInLocation(*in.Date, s.loc)
 	}
 	if in.StartTime != nil {
-		updates["startTime"] = *in.StartTime
+		updates["start_time"] = *in.StartTime
 	}
 	if in.EndTime != nil {
-		updates["endTime"] = *in.EndTime
+		updates["end_time"] = *in.EndTime
 	}
 	if in.Title != nil {
 		updates["title"] = *in.Title
