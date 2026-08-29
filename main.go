@@ -32,7 +32,10 @@ func main() {
 	case "sqlite":
 		dialector = sqlite.Open(dsn)
 	case "postgres":
-		dialector = postgres.Open(dsn)
+		dialector = postgres.New(postgres.Config{
+			DSN:                  dsn,
+			PreferSimpleProtocol: true,
+		})
 	default:
 		log.Fatalf("invalid CLINIC_DB_DRIVER %q: must be sqlite or postgres", driver)
 	}
