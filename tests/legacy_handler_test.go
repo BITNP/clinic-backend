@@ -514,6 +514,120 @@ func TestLegacy_Dates_DefaultExcludesPast(t *testing.T) {
 	}
 }
 
+func TestLegacy_Dates_AlwaysShiftsToUTC8(t *testing.T) {
+	// Build the legacy handler with services configured in UTC to prove the
+	// /api/date endpoints ignore the configured timezone and always shift
+	// service times into UTC+8 (Asia/Shanghai).
+	gin.SetMode(gin.TestMode)
+	db, err := gorm.Open(sqlite.Open(":memory:?_fk=1"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(
+		&models.ClinicRoom{},
+		&models.ClinicServiceDate{},
+		&models.ClinicRecord{},
+		&models.ClinicRecordDevice{},
+		&models.ClinicRecordArrival{},
+		&models.ClinicRecordWorker{},
+		&models.ClinicRecordRejection{},
+		&models.ClinicRecordReferral{},
+		&models.ClinicAnnouncement{},
+	); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	ticketSvc := services.NewTicketService(db, time.UTC)
+	serviceDateSvc := services.NewServiceDateService(db, time.UTC)
+	roomSvc := services.NewRoomService(db)
+	announceSvc := services.NewAnnouncementService(db)
+	legacyH := handlers.NewLegacyHandler(ticketSvc, serviceDateSvc, roomSvc, announceSvc)
+
+	r := gin.New()
+	authed := r.Group("", handlers.ClientAuthMiddleware(ticketAPIKey, 5*time.Minute))
+	{
+		authed.GET("/api/date", legacyH.ListDates)
+		authed.GET("/api/date/all", legacyH.ListAllDates)
+	}
+
+	room := models.ClinicRoom{Name: "中关村", Address: "addr", Enabled: true}
+	if err := db.Create(&room).Error; err != nil {
+		t.Fatalf("seed room: %v", err)
+	}
+
+	// A date stored at UTC midnight renders as the same calendar day in UTC+8,
+	// but 00:30 UTC start time must show as 08:30:00 after the +8 shift.
+	base := futureTruncatedDate(7)
+	sd := models.ClinicServiceDate{
+		Capacity:  10,
+		RoomID:    &room.ID,
+		Date:      base,
+		StartTime: base.Add(30 * time.Minute),
+		EndTime:   base.Add(3*time.Hour + 30*time.Minute),
+		Title:     "shifted",
+	}
+	if err := db.Create(&sd).Error; err != nil {
+		t.Fatalf("seed service date: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, signedTicketReq(http.MethodGet, "/api/date/all", nil, ""))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &items); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 date, got %d", len(items))
+	}
+	d := items[0]
+	if d["date"] != base.Format("2006-01-02") {
+		t.Errorf("date should be %s, got %v", base.Format("2006-01-02"), d["date"])
+	}
+	if d["startTime"] != "08:30:00" {
+		t.Errorf("startTime should be shifted +8 to 08:30:00, got %v", d["startTime"])
+	}
+	if d["endTime"] != "11:30:00" {
+		t.Errorf("endTime should be shifted +8 to 11:30:00, got %v", d["endTime"])
+	}
+
+	// The active-only listing must also use UTC+8 for its "today" cutoff:
+	// a date on today's Beijing calendar is always included.
+	beijingToday := services.DateInLocation(time.Now(), nil)
+	sdToday := models.ClinicServiceDate{
+		Capacity:  10,
+		RoomID:    &room.ID,
+		Date:      beijingToday,
+		StartTime: beijingToday.Add(9 * time.Hour),
+		EndTime:   beijingToday.Add(17 * time.Hour),
+		Title:     "today",
+	}
+	if err := db.Create(&sdToday).Error; err != nil {
+		t.Fatalf("seed today service date: %v", err)
+	}
+
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, signedTicketReq(http.MethodGet, "/api/date", nil, ""))
+	if w2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w2.Code, w2.Body.String())
+	}
+	var active []map[string]any
+	if err := json.Unmarshal(w2.Body.Bytes(), &active); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	found := false
+	for _, it := range active {
+		if it["title"] == "today" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Beijing-today date should be listed as active, got %v", active)
+	}
+}
+
 func TestLegacy_DatesAll_IncludesPast(t *testing.T) {
 	r, db, _ := setupLegacyHandlerRouter(t)
 	room := models.ClinicRoom{Name: "中关村", Address: "addr", Enabled: true}

@@ -29,6 +29,12 @@ type legacyRecord struct {
 	Password          string `json:"password"`
 }
 
+// legacyTimezone is the timezone the old Django API ran in (Asia/Shanghai,
+// UTC+8). The legacy /api/date/ endpoints always shift service times into
+// this zone, regardless of the CLINIC_TIMEZONE configured for the rest of
+// the new backend.
+var legacyTimezone = time.FixedZone("UTC+8", 8*60*60)
+
 // statusMap translates the new backend's string RecordStatus to the old
 // Django int codes (1=预约待确认, 2=预约已确认, 3=预约已驳回, 4=登记待受理,
 // 5=正在处理, 6=已解决问题, 7=建议返厂, 9=未到诊所).
@@ -86,6 +92,10 @@ func (h *LegacyHandler) username(c *gin.Context) (string, bool) {
 	return user, true
 }
 
+// legacyRecordFrom reshapes a record for the legacy /api/wechat endpoints.
+// Unlike TicketView (which formats in UTC), the legacy wire format always
+// shifts times into the clinic timezone (UTC+8 for Asia/Shanghai), matching
+// what the old Django API returned with TIME_ZONE=Asia/Shanghai.
 func (h *LegacyHandler) legacyRecordFrom(rec models.ClinicRecord) (legacyRecord, error) {
 	v, err := h.ticketSvc.View(rec)
 	if err != nil {
@@ -98,7 +108,7 @@ func (h *LegacyHandler) legacyRecordFrom(rec models.ClinicRecord) (legacyRecord,
 		Realname:          v.Realname,
 		PhoneNum:          v.PhoneNum,
 		Campus:            v.Campus,
-		AppointmentTime:   v.AppointmentTime,
+		AppointmentTime:   rec.AppointmentTime.In(h.serviceDateSvc.Location()).Format("2006-01-02"),
 		Description:       v.Description,
 		WorkerDescription: v.WorkerDescription,
 		Model:             v.Model,
@@ -361,6 +371,7 @@ type dateItem struct {
 func (h *LegacyHandler) listDateItems(activeOnly bool) ([]dateItem, error) {
 	f := services.ListServiceDateFilter{
 		ActiveOnly: activeOnly,
+		TodayLoc:   legacyTimezone,
 		Page:       1,
 		PageSize:   1000,
 	}
@@ -377,17 +388,17 @@ func (h *LegacyHandler) listDateItems(activeOnly bool) ([]dateItem, error) {
 		roomNames[r.ID] = r.Name
 	}
 
+	loc := legacyTimezone
 	items := make([]dateItem, 0, len(dates))
 	for _, d := range dates {
 		campus := ""
 		if d.RoomID != nil {
 			campus = roomNames[*d.RoomID]
 		}
-		loc := h.serviceDateSvc.Location()
 		items = append(items, dateItem{
 			ID:        d.ID,
 			Title:     d.Title,
-			Date:      d.Date.Format("2006-01-02"),
+			Date:      d.Date.In(loc).Format("2006-01-02"),
 			Capacity:  d.Capacity,
 			Campus:    campus,
 			StartTime: d.StartTime.In(loc).Format("15:04:05"),
@@ -442,6 +453,7 @@ func (h *LegacyHandler) ListAnnouncements(c *gin.Context) {
 		ExpireDate     string `json:"expireDate"`
 		Priority       uint   `json:"priority"`
 	}
+	loc := h.serviceDateSvc.Location()
 	items := make([]announcementItem, 0, len(announcements))
 	for _, a := range announcements {
 		items = append(items, announcementItem{
@@ -450,9 +462,9 @@ func (h *LegacyHandler) ListAnnouncements(c *gin.Context) {
 			Content:        a.Content,
 			Brief:          a.Brief,
 			Tag:            string(a.Tag),
-			CreatedTime:    a.CreatedTime.Format(time.RFC3339),
-			LastEditedTime: a.LastEditedTime.Format(time.RFC3339),
-			ExpireDate:     a.ExpireDate.Format("2006-01-02"),
+			CreatedTime:    a.CreatedTime.In(loc).Format(time.RFC3339),
+			LastEditedTime: a.LastEditedTime.In(loc).Format(time.RFC3339),
+			ExpireDate:     a.ExpireDate.In(loc).Format("2006-01-02"),
 			Priority:       a.Priority,
 		})
 	}
