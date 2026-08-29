@@ -176,7 +176,7 @@ func (s *TicketService) validateCreate(username string, roomID uint, date time.T
 	var workingCount int64
 	today := s.todayCutoff()
 	if err := s.db.Model(&models.ClinicRecord{}).
-		Where("user = ? AND status IN ? AND appointment_time >= ?", username, workingStatuses, today).
+		Where(`"user" = ? AND status IN ? AND appointment_time >= ?`, username, workingStatuses, today).
 		Count(&workingCount).Error; err != nil {
 		return fmt.Errorf("count working for user: %w", err)
 	}
@@ -195,7 +195,7 @@ func (s *TicketService) validateCreate(username string, roomID uint, date time.T
 // List returns the user's records, hiding expired-but-still-active bookings.
 // Order: id DESC (newest first). Paginated.
 func (s *TicketService) List(username string, f ListTicketFilter) ([]models.ClinicRecord, int64, error) {
-	q := s.db.Model(&models.ClinicRecord{}).Where("user = ?", username)
+	q := s.db.Model(&models.ClinicRecord{}).Where(`"user" = ?`, username)
 	today := s.todayCutoff()
 	q = q.Where("NOT (status IN ? AND appointment_time < ?)", workingStatuses, today)
 
@@ -223,7 +223,7 @@ func (s *TicketService) List(username string, f ListTicketFilter) ([]models.Clin
 // Order: id DESC. Paginated.
 func (s *TicketService) Finished(username string, f ListTicketFilter) ([]models.ClinicRecord, int64, error) {
 	q := s.db.Model(&models.ClinicRecord{}).
-		Where("user = ? AND status IN ?", username, finishedStatuses)
+		Where(`"user" = ? AND status IN ?`, username, finishedStatuses)
 
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
@@ -252,7 +252,7 @@ func (s *TicketService) Finished(username string, f ListTicketFilter) ([]models.
 func (s *TicketService) Working(username string) (*models.ClinicRecord, error) {
 	var count int64
 	if err := s.db.Model(&models.ClinicRecord{}).
-		Where("user = ? AND status IN ?", username, workingStatuses).
+		Where(`"user" = ? AND status IN ?`, username, workingStatuses).
 		Count(&count).Error; err != nil {
 		return nil, fmt.Errorf("count working: %w", err)
 	}
@@ -263,7 +263,7 @@ func (s *TicketService) Working(username string) (*models.ClinicRecord, error) {
 		log.Printf("warning: user %s has %d working records; returning the first by id", username, count)
 	}
 	var rec models.ClinicRecord
-	if err := s.db.Where("user = ? AND status IN ?", username, workingStatuses).
+	if err := s.db.Where(`"user" = ? AND status IN ?`, username, workingStatuses).
 		Order("id ASC").First(&rec).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil

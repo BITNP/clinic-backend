@@ -192,7 +192,7 @@ func main() {
 	// Map username -> record id.
 	recordMap := make(map[string]uint, recordCount)
 	var saved []models.ClinicRecord
-	if err := db.Where("user LIKE ?", "user%").Order("id").Find(&saved).Error; err != nil {
+	if err := db.Where(`"user" LIKE ?`, "user%").Order("id").Find(&saved).Error; err != nil {
 		log.Fatalf("fetch saved records: %v", err)
 	}
 	for _, rec := range saved {

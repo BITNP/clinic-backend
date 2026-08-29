@@ -297,7 +297,7 @@ func main() {
 			QuestionDesc:    td.QuestionDesc,
 			RoomID:          td.RoomID,
 		}
-		if err := db.Where("user = ? AND appointment_time = ? AND room = ?", rec.User, rec.AppointmentTime, rec.RoomID).FirstOrCreate(&rec).Error; err != nil {
+		if err := db.Where(`"user" = ? AND appointment_time = ? AND room = ?`, rec.User, rec.AppointmentTime, rec.RoomID).FirstOrCreate(&rec).Error; err != nil {
 			log.Fatalf("seed ticket %s: %v", td.User, err)
 		}
 		fmt.Printf("ticket: %s status=%s (id=%d)\n", td.User, td.Status, rec.ID)
