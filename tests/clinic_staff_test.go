@@ -1,9 +1,11 @@
 package tests
 
 import (
+	"reflect"
 	"testing"
 
 	"clinic-backend/models"
+	"clinic-backend/services"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -105,5 +107,47 @@ func TestClinicStaffWorkyear_CompositeKeyPreventsDuplicate(t *testing.T) {
 
 	if err := db.Create(&models.ClinicStaffWorkyear{StaffID: staff.ID, WorkYear: 2025}).Error; err == nil {
 		t.Fatal("expected duplicate composite key to fail")
+	}
+}
+
+func TestStaffService_EnsureWorkYears(t *testing.T) {
+	db := setupStaffTestDB(t)
+	svc := services.NewStaffService(db)
+
+	staff := models.ClinicStaff{ID: 9, AccountID: "cas:staff9"}
+	if err := db.Create(&staff).Error; err != nil {
+		t.Fatalf("failed to create staff: %v", err)
+	}
+
+	if err := svc.EnsureWorkYears(staff.ID, []int{2025, 2026, 2025}); err != nil {
+		t.Fatalf("ensure work years: %v", err)
+	}
+
+	var years []models.ClinicStaffWorkyear
+	if err := db.Where("staff_id = ?", staff.ID).Order("work_year ASC").Find(&years).Error; err != nil {
+		t.Fatalf("load work years: %v", err)
+	}
+	got := make([]int, len(years))
+	for i, y := range years {
+		got[i] = y.WorkYear
+	}
+	if !reflect.DeepEqual(got, []int{2025, 2026}) {
+		t.Errorf("work years after first ensure: got %v, want [2025 2026]", got)
+	}
+
+	if err := svc.EnsureWorkYears(staff.ID, []int{2026, 2027}); err != nil {
+		t.Fatalf("ensure work years again: %v", err)
+	}
+
+	var years2 []models.ClinicStaffWorkyear
+	if err := db.Where("staff_id = ?", staff.ID).Order("work_year ASC").Find(&years2).Error; err != nil {
+		t.Fatalf("load work years: %v", err)
+	}
+	got2 := make([]int, len(years2))
+	for i, y := range years2 {
+		got2[i] = y.WorkYear
+	}
+	if !reflect.DeepEqual(got2, []int{2025, 2026, 2027}) {
+		t.Errorf("work years after second ensure: got %v, want [2025 2026 2027]", got2)
 	}
 }

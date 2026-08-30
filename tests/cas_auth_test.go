@@ -18,7 +18,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func setupCASAuthRouter(t *testing.T, fakeCAS *httptest.Server) (*gin.Engine, *services.SessionService) {
+func setupCASAuthRouter(t *testing.T, fakeCAS *httptest.Server) (*gin.Engine, *services.SessionService, *gorm.DB) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
@@ -26,7 +26,7 @@ func setupCASAuthRouter(t *testing.T, fakeCAS *httptest.Server) (*gin.Engine, *s
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := db.AutoMigrate(&models.ClinicStaff{}, &models.AuthSession{}); err != nil {
+	if err := db.AutoMigrate(&models.ClinicStaff{}, &models.ClinicStaffWorkyear{}, &models.AuthSession{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
@@ -71,7 +71,7 @@ func setupCASAuthRouter(t *testing.T, fakeCAS *httptest.Server) (*gin.Engine, *s
 		})
 	}
 
-	return r, sessionSvc
+	return r, sessionSvc, db
 }
 
 func TestCASAuthHandler_LoginRedirect(t *testing.T) {
@@ -80,7 +80,7 @@ func TestCASAuthHandler_LoginRedirect(t *testing.T) {
 	}))
 	defer fake.Close()
 
-	r, _ := setupCASAuthRouter(t, fake)
+	r, _, _ := setupCASAuthRouter(t, fake)
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/login?next=/manage/", nil)
 	r.ServeHTTP(w, req)
@@ -125,7 +125,7 @@ func TestCASAuthHandler_LoginCallback(t *testing.T) {
 	}))
 	defer fake.Close()
 
-	r, _ := setupCASAuthRouter(t, fake)
+	r, _, _ := setupCASAuthRouter(t, fake)
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/login?ticket=ST-123&next=/dashboard", nil)
 	r.ServeHTTP(w, req)
@@ -164,6 +164,50 @@ func TestCASAuthHandler_LoginCallback(t *testing.T) {
 	}
 }
 
+func TestCASAuthHandler_LoginCallback_RecordsWorkYear(t *testing.T) {
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = fmt.Fprint(w, `
+<cas:serviceResponse xmlns:cas='http://www.yale.edu/tp/cas'>
+  <cas:authenticationSuccess>
+    <cas:user>student42</cas:user>
+    <cas:attributes>
+      <cas:name>Alice Smith</cas:name>
+      <cas:groups>2025-clinic</cas:groups>
+      <cas:groups>2024-management</cas:groups>
+    </cas:attributes>
+  </cas:authenticationSuccess>
+</cas:serviceResponse>`)
+	}))
+	defer fake.Close()
+
+	r, _, db := setupCASAuthRouter(t, fake)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/login?ticket=ST-123", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var staff models.ClinicStaff
+	if err := db.Where("account_id = ?", "student42").First(&staff).Error; err != nil {
+		t.Fatalf("load staff: %v", err)
+	}
+
+	var years []models.ClinicStaffWorkyear
+	if err := db.Where("staff_id = ?", staff.ID).Order("work_year ASC").Find(&years).Error; err != nil {
+		t.Fatalf("load work years: %v", err)
+	}
+	var got []int
+	for _, y := range years {
+		got = append(got, y.WorkYear)
+	}
+	if len(got) != 2 || got[0] != 2024 || got[1] != 2025 {
+		t.Errorf("work years: got %v, want [2024 2025]", got)
+	}
+}
+
 func TestCASAuthHandler_LoginNoGroups(t *testing.T) {
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/xml")
@@ -179,7 +223,7 @@ func TestCASAuthHandler_LoginNoGroups(t *testing.T) {
 	}))
 	defer fake.Close()
 
-	r, _ := setupCASAuthRouter(t, fake)
+	r, _, _ := setupCASAuthRouter(t, fake)
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/login?ticket=ST-123", nil)
 	r.ServeHTTP(w, req)
@@ -199,7 +243,7 @@ func TestCASAuthHandler_LoginInvalidTicket(t *testing.T) {
 	}))
 	defer fake.Close()
 
-	r, _ := setupCASAuthRouter(t, fake)
+	r, _, _ := setupCASAuthRouter(t, fake)
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/login?ticket=ST-bad", nil)
 	r.ServeHTTP(w, req)
@@ -215,7 +259,7 @@ func TestCASAuthHandler_LoginExternalNext(t *testing.T) {
 	}))
 	defer fake.Close()
 
-	r, _ := setupCASAuthRouter(t, fake)
+	r, _, _ := setupCASAuthRouter(t, fake)
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/login?next=https://evil.example", nil)
 	r.ServeHTTP(w, req)
@@ -239,7 +283,7 @@ func TestCASAuthHandler_LoginExternalNext(t *testing.T) {
 }
 
 func TestCASAuthHandler_LoginNotConfigured(t *testing.T) {
-	r, _ := setupCASAuthRouter(t, nil)
+	r, _, _ := setupCASAuthRouter(t, nil)
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/login", nil)
 	r.ServeHTTP(w, req)
@@ -261,7 +305,7 @@ func TestCASAuthHandler_Logout(t *testing.T) {
 	}))
 	defer fake.Close()
 
-	r, sessionSvc := setupCASAuthRouter(t, fake)
+	r, sessionSvc, _ := setupCASAuthRouter(t, fake)
 
 	// Create a session manually.
 	token, _, err := sessionSvc.Create(1, string(handlers.RoleStaff), "ST-123")
@@ -311,7 +355,7 @@ func TestCASAuthHandler_SessionAuthAndCSRF(t *testing.T) {
 	}))
 	defer fake.Close()
 
-	r, _ := setupCASAuthRouter(t, fake)
+	r, _, _ := setupCASAuthRouter(t, fake)
 
 	// Login to obtain session and csrf cookies.
 	w := httptest.NewRecorder()
@@ -379,7 +423,7 @@ func TestCASAuthHandler_SessionInvalidAfterDelete(t *testing.T) {
 	}))
 	defer fake.Close()
 
-	r, sessionSvc := setupCASAuthRouter(t, fake)
+	r, sessionSvc, _ := setupCASAuthRouter(t, fake)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/login?ticket=ST-123", nil)

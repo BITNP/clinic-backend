@@ -77,6 +77,10 @@ func (a *KeycloakAuthenticator) Authenticate(tokenStr string) (models.ClinicStaf
 		log.Printf("warning: failed to persist role %s for staff %d: %v", role, staff.ID, err)
 	}
 
+	if err := a.staffSvc.EnsureWorkYears(staff.ID, extractWorkYears(groups)); err != nil {
+		log.Printf("warning: failed to record work years for staff %d: %v", staff.ID, err)
+	}
+
 	return staff, role, nil
 }
 

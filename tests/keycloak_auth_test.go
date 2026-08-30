@@ -34,7 +34,7 @@ func setupKeycloakTest(t *testing.T) (*rsa.PrivateKey, string, *services.StaffSe
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := db.AutoMigrate(&models.ClinicStaff{}); err != nil {
+	if err := db.AutoMigrate(&models.ClinicStaff{}, &models.ClinicStaffWorkyear{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	staffSvc := services.NewStaffService(db)
@@ -92,7 +92,7 @@ func TestKeycloakAuthenticator_Authenticate(t *testing.T) {
 		t.Fatal("expected authenticator to be configured")
 	}
 
-	token, err := signTestJWT(key, kid, fake.URL+"/realms/fake/", "clinic-backend", "staff01", "Staff One", []string{"/clinic"})
+	token, err := signTestJWT(key, kid, fake.URL+"/realms/fake/", "clinic-backend", "staff01", "Staff One", []string{"2025-clinic"})
 	if err != nil {
 		t.Fatalf("sign jwt: %v", err)
 	}
@@ -117,6 +117,14 @@ func TestKeycloakAuthenticator_Authenticate(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("expected staff row to be created")
+	}
+
+	var wyCount int64
+	if err := db.Model(&models.ClinicStaffWorkyear{}).Where("staff_id = ? AND work_year = ?", staff.ID, 2025).Count(&wyCount).Error; err != nil {
+		t.Fatalf("count work years: %v", err)
+	}
+	if wyCount != 1 {
+		t.Errorf("expected work year 2025 to be recorded")
 	}
 }
 

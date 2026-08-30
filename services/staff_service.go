@@ -215,6 +215,24 @@ func (s *StaffService) UpdateRole(id int, role string) error {
 	return nil
 }
 
+// EnsureWorkYears records the given work years for a staff member, inserting
+// only those that do not already exist.
+func (s *StaffService) EnsureWorkYears(staffID int, years []int) error {
+	unique := make(map[int]bool, len(years))
+	for _, y := range years {
+		unique[y] = true
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		for year := range unique {
+			wy := models.ClinicStaffWorkyear{StaffID: staffID, WorkYear: year}
+			if err := tx.Where("staff_id = ? AND work_year = ?", staffID, year).FirstOrCreate(&wy).Error; err != nil {
+				return fmt.Errorf("ensure work year %d for staff %d: %w", year, staffID, err)
+			}
+		}
+		return nil
+	})
+}
+
 func (s *StaffService) Update(id int, in UpdateStaffInput) (models.ClinicStaff, error) {
 	var staff models.ClinicStaff
 	if err := s.db.First(&staff, id).Error; err != nil {

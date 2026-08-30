@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"clinic-backend/models"
@@ -84,6 +85,37 @@ func determineRole(groups []string) StaffRole {
 		return RoleStaff
 	}
 	return ""
+}
+
+// extractWorkYears parses group names of the form YYYY-XXXX and returns the
+// year for each one. Groups that do not match the format are ignored.
+func extractWorkYears(groups []string) []int {
+	var years []int
+	seen := make(map[int]bool)
+	for _, g := range groups {
+		year, ok := parseGroupYear(g)
+		if !ok || seen[year] {
+			continue
+		}
+		seen[year] = true
+		years = append(years, year)
+	}
+	return years
+}
+
+// parseGroupYear extracts the leading year from a group named YYYY-XXXX.
+func parseGroupYear(group string) (int, bool) {
+	trimmed := strings.TrimSpace(group)
+	trimmed = strings.TrimPrefix(trimmed, "/")
+	parts := strings.Split(trimmed, "-")
+	if len(parts) < 2 || parts[1] == "" {
+		return 0, false
+	}
+	year, err := strconv.Atoi(parts[0])
+	if err != nil || year < 1000 || year > 9999 {
+		return 0, false
+	}
+	return year, true
 }
 
 // AdminAuthConfig configures the combined session + JWT authentication middleware.

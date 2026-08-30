@@ -90,6 +90,10 @@ func (h *CASAuthHandler) Login(c *gin.Context) {
 		log.Printf("warning: failed to persist role %s for staff %d: %v", role, staff.ID, err)
 	}
 
+	if err := h.cfg.StaffService.EnsureWorkYears(staff.ID, extractWorkYears(attrs.Groups)); err != nil {
+		log.Printf("warning: failed to record work years for staff %d: %v", staff.ID, err)
+	}
+
 	sessionToken, csrfToken, err := h.cfg.SessionService.Create(staff.ID, string(role), ticket)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to create session"})
