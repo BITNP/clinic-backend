@@ -214,6 +214,18 @@ func (s *StaffService) ListValidForYear(year int) ([]StaffListItem, error) {
 	return result, nil
 }
 
+// UpdateVersion sets a staff member's stored login version.
+func (s *StaffService) UpdateVersion(id int, version int) error {
+	result := s.db.Model(&models.ClinicStaff{}).Where("id = ?", id).Update("version", version)
+	if err := result.Error; err != nil {
+		return fmt.Errorf("update staff %d version: %w", id, err)
+	}
+	if result.RowsAffected == 0 {
+		return ErrStaffNotFound
+	}
+	return nil
+}
+
 func (s *StaffService) UpdateRole(id int, role string) error {
 	result := s.db.Model(&models.ClinicStaff{}).Where("id = ?", id).Update("role", role)
 	if err := result.Error; err != nil {

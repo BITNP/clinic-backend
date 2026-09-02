@@ -124,6 +124,7 @@ type AdminAuthConfig struct {
 	StaffService   *services.StaffService
 	KeycloakAuth   *KeycloakAuthenticator
 	CookieName     string
+	StaffVersion   int
 }
 
 // NewAdminAuthMiddleware returns a Gin middleware that accepts either a CAS session
@@ -131,19 +132,21 @@ type AdminAuthConfig struct {
 // keys so that RequireStaff and RequireAdmin continue to work unchanged.
 func NewAdminAuthMiddleware(cfg AdminAuthConfig) gin.HandlerFunc {
 	m := &adminAuthMiddleware{
-		sessionSvc: cfg.SessionService,
-		staffSvc:   cfg.StaffService,
-		kcAuth:     cfg.KeycloakAuth,
-		cookieName: cfg.CookieName,
+		sessionSvc:   cfg.SessionService,
+		staffSvc:     cfg.StaffService,
+		kcAuth:       cfg.KeycloakAuth,
+		cookieName:   cfg.CookieName,
+		staffVersion: cfg.StaffVersion,
 	}
 	return m.handle
 }
 
 type adminAuthMiddleware struct {
-	sessionSvc *services.SessionService
-	staffSvc   *services.StaffService
-	kcAuth     *KeycloakAuthenticator
-	cookieName string
+	sessionSvc   *services.SessionService
+	staffSvc     *services.StaffService
+	kcAuth       *KeycloakAuthenticator
+	cookieName   string
+	staffVersion int
 }
 
 func (m *adminAuthMiddleware) handle(c *gin.Context) {
@@ -203,6 +206,12 @@ func (m *adminAuthMiddleware) handleSession(c *gin.Context) {
 		return
 	}
 
+	if staff.Version != m.staffVersion {
+		_ = m.sessionSvc.Delete(token)
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+
 	if isMutatingMethod(c.Request.Method) {
 		csrfHeader := c.GetHeader("X-CSRF-Token")
 		if csrfHeader == "" || !m.sessionSvc.ValidateCSRF(token, csrfHeader) {
@@ -222,10 +231,11 @@ func (m *adminAuthMiddleware) handleSession(c *gin.Context) {
 // anonymous (no staff/role in context).
 func NewOptionalAdminAuthMiddleware(cfg AdminAuthConfig) gin.HandlerFunc {
 	m := &adminAuthMiddleware{
-		sessionSvc: cfg.SessionService,
-		staffSvc:   cfg.StaffService,
-		kcAuth:     cfg.KeycloakAuth,
-		cookieName: cfg.CookieName,
+		sessionSvc:   cfg.SessionService,
+		staffSvc:     cfg.StaffService,
+		kcAuth:       cfg.KeycloakAuth,
+		cookieName:   cfg.CookieName,
+		staffVersion: cfg.StaffVersion,
 	}
 	return m.optionalHandle
 }
@@ -269,6 +279,11 @@ func (m *adminAuthMiddleware) optionalTrySession(c *gin.Context) {
 
 	staff, err := m.staffSvc.GetByID(sess.StaffID)
 	if err != nil {
+		return
+	}
+
+	if staff.Version != m.staffVersion {
+		_ = m.sessionSvc.Delete(token)
 		return
 	}
 

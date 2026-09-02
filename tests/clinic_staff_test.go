@@ -52,6 +52,9 @@ func TestClinicStaff_CreateAndRetrieve(t *testing.T) {
 	if retrieved.Email != staff.Email {
 		t.Errorf("expected email %q, got %q", staff.Email, retrieved.Email)
 	}
+	if retrieved.Version != 0 {
+		t.Errorf("expected default version 0, got %d", retrieved.Version)
+	}
 }
 
 func TestClinicStaff_AccountIDUnique(t *testing.T) {

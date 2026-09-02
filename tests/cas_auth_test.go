@@ -20,6 +20,11 @@ import (
 
 func setupCASAuthRouter(t *testing.T, fakeCAS *httptest.Server) (*gin.Engine, *services.SessionService, *gorm.DB) {
 	t.Helper()
+	return setupCASAuthRouterVersion(t, fakeCAS, 0)
+}
+
+func setupCASAuthRouterVersion(t *testing.T, fakeCAS *httptest.Server, currentVersion int) (*gin.Engine, *services.SessionService, *gorm.DB) {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 
 	db, err := gorm.Open(sqlite.Open(":memory:?_fk=1"), &gorm.Config{})
@@ -49,6 +54,7 @@ func setupCASAuthRouter(t *testing.T, fakeCAS *httptest.Server) (*gin.Engine, *s
 		CookieSecure:   true,
 		CookieSameSite: http.SameSiteLaxMode,
 		SessionTTL:     time.Hour,
+		StaffVersion:   currentVersion,
 	})
 
 	r := gin.New()
@@ -59,6 +65,7 @@ func setupCASAuthRouter(t *testing.T, fakeCAS *httptest.Server) (*gin.Engine, *s
 		SessionService: sessionSvc,
 		StaffService:   staffSvc,
 		CookieName:     "sessionid",
+		StaffVersion:   currentVersion,
 	})
 	authed := r.Group("/api/admin/fake")
 	authed.Use(adminAuth, handlers.RequireStaff)
@@ -443,5 +450,82 @@ func TestCASAuthHandler_SessionInvalidAfterDelete(t *testing.T) {
 	r.ServeHTTP(w2, req2)
 	if w2.Code != http.StatusUnauthorized {
 		t.Errorf("deleted session expected 401, got %d", w2.Code)
+	}
+}
+
+func TestCASAuthHandler_LoginStampsStaffVersion(t *testing.T) {
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = fmt.Fprint(w, `
+<cas:serviceResponse xmlns:cas='http://www.yale.edu/tp/cas'>
+  <cas:authenticationSuccess>
+    <cas:user>student42</cas:user>
+    <cas:attributes>
+      <cas:name>Alice Smith</cas:name>
+      <cas:groups>/clinic</cas:groups>
+    </cas:attributes>
+  </cas:authenticationSuccess>
+</cas:serviceResponse>`)
+	}))
+	defer fake.Close()
+
+	r, _, db := setupCASAuthRouterVersion(t, fake, 5)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/login?ticket=ST-123", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusFound {
+		t.Fatalf("login failed: %d %s", w.Code, w.Body.String())
+	}
+
+	var staff models.ClinicStaff
+	if err := db.Where("account_id = ?", "student42").First(&staff).Error; err != nil {
+		t.Fatalf("load staff: %v", err)
+	}
+	if staff.Version != 5 {
+		t.Errorf("staff version after login: got %d, want 5", staff.Version)
+	}
+
+	var sessionValue string
+	for _, c := range w.Result().Cookies() {
+		if c.Name == "sessionid" {
+			sessionValue = c.Value
+		}
+	}
+	if sessionValue == "" {
+		t.Fatalf("expected session cookie")
+	}
+
+	w2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "/api/admin/fake", nil)
+	req2.AddCookie(&http.Cookie{Name: "sessionid", Value: sessionValue})
+	r.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Errorf("session with current version expected 200, got %d: %s", w2.Code, w2.Body.String())
+	}
+}
+
+func TestCASAuthHandler_StaleSessionRejectedAndDeleted(t *testing.T) {
+	r, sessionSvc, db := setupCASAuthRouterVersion(t, nil, 5)
+
+	staff := models.ClinicStaff{AccountID: "student42", Version: 0}
+	if err := db.Create(&staff).Error; err != nil {
+		t.Fatalf("create staff: %v", err)
+	}
+	token, _, err := sessionSvc.Create(staff.ID, string(handlers.RoleStaff), "ST-123")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/fake", nil)
+	req.AddCookie(&http.Cookie{Name: "sessionid", Value: token})
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("stale session expected 401, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if _, err := sessionSvc.Get(token); err == nil {
+		t.Errorf("stale session should be deleted")
 	}
 }

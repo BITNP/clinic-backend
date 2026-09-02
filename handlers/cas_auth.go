@@ -26,6 +26,7 @@ type CASAuthConfig struct {
 	CookieSecure   bool
 	CookieSameSite http.SameSite
 	SessionTTL     time.Duration
+	StaffVersion   int
 }
 
 // CASAuthHandler implements GET /login and GET /logout.
@@ -92,6 +93,11 @@ func (h *CASAuthHandler) Login(c *gin.Context) {
 
 	if err := h.cfg.StaffService.EnsureWorkYears(staff.ID, extractWorkYears(attrs.Groups)); err != nil {
 		log.Printf("warning: failed to record work years for staff %d: %v", staff.ID, err)
+	}
+
+	if err := h.cfg.StaffService.UpdateVersion(staff.ID, h.cfg.StaffVersion); err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to finalize login"})
+		return
 	}
 
 	sessionToken, csrfToken, err := h.cfg.SessionService.Create(staff.ID, string(role), ticket)

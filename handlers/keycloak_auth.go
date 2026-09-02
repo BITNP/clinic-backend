@@ -26,6 +26,8 @@ type KeycloakAuthenticator struct {
 	clientID string
 	staffSvc *services.StaffService
 
+	staffVersion int
+
 	mu     sync.RWMutex
 	cached *cachedJWKS
 }
@@ -37,6 +39,11 @@ func NewKeycloakAuthenticator(realmURL, clientID string, staffSvc *services.Staf
 		clientID: clientID,
 		staffSvc: staffSvc,
 	}
+}
+
+// SetStaffVersion sets the currently required login version stamped onto staff.
+func (a *KeycloakAuthenticator) SetStaffVersion(version int) {
+	a.staffVersion = version
 }
 
 // Configured reports whether realm URL and client ID are both set.
@@ -80,6 +87,10 @@ func (a *KeycloakAuthenticator) Authenticate(tokenStr string) (models.ClinicStaf
 
 	if err := a.staffSvc.EnsureWorkYears(staff.ID, extractWorkYears(groups)); err != nil {
 		log.Printf("warning: failed to record work years for staff %d: %v", staff.ID, err)
+	}
+
+	if err := a.staffSvc.UpdateVersion(staff.ID, a.staffVersion); err != nil {
+		log.Printf("warning: failed to update version for staff %d: %v", staff.ID, err)
 	}
 
 	return staff, role, nil

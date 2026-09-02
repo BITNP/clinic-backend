@@ -132,6 +132,33 @@ func TestKeycloakAuthenticator_Authenticate(t *testing.T) {
 	}
 }
 
+func TestKeycloakAuthenticator_AuthenticateStampsVersion(t *testing.T) {
+	key, kid, staffSvc, db := setupKeycloakTest(t)
+	fake := httptest.NewServer(jwksHandler(key, kid))
+	defer fake.Close()
+
+	a := handlers.NewKeycloakAuthenticator(fake.URL+"/realms/fake", "clinic-backend", staffSvc)
+	a.SetStaffVersion(7)
+
+	token, err := signTestJWT(key, kid, fake.URL+"/realms/fake/", "clinic-backend", "staff01", "Staff One", []string{"2025-clinic"})
+	if err != nil {
+		t.Fatalf("sign jwt: %v", err)
+	}
+
+	staff, _, err := a.Authenticate(token)
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+
+	var stored models.ClinicStaff
+	if err := db.First(&stored, staff.ID).Error; err != nil {
+		t.Fatalf("load staff: %v", err)
+	}
+	if stored.Version != 7 {
+		t.Errorf("staff version after authenticate: got %d, want 7", stored.Version)
+	}
+}
+
 func TestKeycloakAuthenticator_AuthenticateAdminRole(t *testing.T) {
 	key, kid, staffSvc, _ := setupKeycloakTest(t)
 	fake := httptest.NewServer(jwksHandler(key, kid))

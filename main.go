@@ -126,6 +126,11 @@ func main() {
 	keycloakClient := os.Getenv("KEYCLOAK_CLIENT_ID")
 	keycloakAuth := handlers.NewKeycloakAuthenticator(keycloakRealm, keycloakClient, staffSvc)
 
+	// Current required login version. Raise STAFF_VERSION at deploy time to
+	// force every staff member to re-login once.
+	staffVersion := envInt("STAFF_VERSION", 0)
+	keycloakAuth.SetStaffVersion(staffVersion)
+
 	casServerURL := os.Getenv("CAS_SERVER_URL")
 	casTimeout := envDuration("CAS_HTTP_TIMEOUT", 10*time.Second)
 	casLogoutParam := os.Getenv("CAS_LOGOUT_RETURN_PARAM")
@@ -150,6 +155,7 @@ func main() {
 		CookieSecure:   envBool("SESSION_COOKIE_SECURE", false),
 		CookieSameSite: envSameSite("SESSION_COOKIE_SAMESITE", http.SameSiteLaxMode),
 		SessionTTL:     sessionTTL,
+		StaffVersion:   staffVersion,
 	})
 
 	authCfg := handlers.AdminAuthConfig{
@@ -157,6 +163,7 @@ func main() {
 		StaffService:   staffSvc,
 		KeycloakAuth:   keycloakAuth,
 		CookieName:     envString("SESSION_COOKIE_NAME", "sessionid"),
+		StaffVersion:   staffVersion,
 	}
 	adminAuth := handlers.NewAdminAuthMiddleware(authCfg)
 	optionalAuth := handlers.NewOptionalAdminAuthMiddleware(authCfg)
@@ -434,6 +441,18 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 		log.Fatalf("invalid %s: %v", key, err)
 	}
 	return d
+}
+
+func envInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	i, err := strconv.Atoi(v)
+	if err != nil {
+		log.Fatalf("invalid %s: %v", key, err)
+	}
+	return i
 }
 
 func envBool(key string, fallback bool) bool {
