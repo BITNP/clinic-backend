@@ -138,7 +138,7 @@ func main() {
 	staff := models.ClinicStaff{
 		AccountID: adminAccount,
 		Realname:  "Benchmark Admin",
-		PhoneNum:  "13800138000",
+		Email:     "benchmark-admin@example.com",
 		Role:      adminRole,
 	}
 	if err := db.Create(&staff).Error; err != nil {

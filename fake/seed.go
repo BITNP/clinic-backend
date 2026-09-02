@@ -107,24 +107,24 @@ func main() {
 	staffDefs := []struct {
 		AccountID string
 		Realname  string
-		PhoneNum  string
+		Email     string
 		Role      string
 		WorkYears []int
 	}{
-		{AccountID: "manualuser", Realname: "Manual Tester", PhoneNum: "13800138000", Role: "", WorkYears: []int{2025, 2026}},
-		{AccountID: "zhangsan", Realname: "张三", PhoneNum: "13900139001", Role: "", WorkYears: []int{2024, 2025, 2026}},
-		{AccountID: "lisi", Realname: "李四", PhoneNum: "13900139002", Role: "", WorkYears: []int{2025, 2026}},
-		{AccountID: "wangwu", Realname: "王五", PhoneNum: "13900139003", Role: ""},
-		{AccountID: "zhaoliu", Realname: "赵六", PhoneNum: "13900139004", Role: "", WorkYears: []int{2026}},
-		{AccountID: "sunqi", Realname: "孙七", PhoneNum: "13900139005", Role: ""},
-		{AccountID: "admin", Realname: "管理员", PhoneNum: "13900139006", Role: "admin", WorkYears: []int{2023, 2024, 2025, 2026}},
+		{AccountID: "manualuser", Realname: "Manual Tester", Email: "manual@example.com", Role: "", WorkYears: []int{2025, 2026}},
+		{AccountID: "zhangsan", Realname: "张三", Email: "zhangsan@example.com", Role: "", WorkYears: []int{2024, 2025, 2026}},
+		{AccountID: "lisi", Realname: "李四", Email: "lisi@example.com", Role: "", WorkYears: []int{2025, 2026}},
+		{AccountID: "wangwu", Realname: "王五", Email: "wangwu@example.com", Role: ""},
+		{AccountID: "zhaoliu", Realname: "赵六", Email: "zhaoliu@example.com", Role: "", WorkYears: []int{2026}},
+		{AccountID: "sunqi", Realname: "孙七", Email: "sunqi@example.com", Role: ""},
+		{AccountID: "admin", Realname: "管理员", Email: "admin@example.com", Role: "admin", WorkYears: []int{2023, 2024, 2025, 2026}},
 	}
 	staffByAccount := make(map[string]int)
 	for _, sd := range staffDefs {
 		s := models.ClinicStaff{
 			AccountID: sd.AccountID,
 			Realname:  sd.Realname,
-			PhoneNum:  sd.PhoneNum,
+			Email:     sd.Email,
 			Role:      sd.Role,
 		}
 		if err := db.Where("account_id = ?", s.AccountID).FirstOrCreate(&s).Error; err != nil {

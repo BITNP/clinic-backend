@@ -74,6 +74,7 @@ func signTestJWT(key *rsa.PrivateKey, kid, issuer, audience, username, name stri
 		"sub":                username + "-sub",
 		"preferred_username": username,
 		"name":               name,
+		"email":              username + "@example.com",
 		"groups":             groups,
 		"iat":                time.Now().Unix(),
 		"exp":                time.Now().Add(time.Hour).Unix(),
@@ -106,6 +107,9 @@ func TestKeycloakAuthenticator_Authenticate(t *testing.T) {
 	}
 	if staff.Realname != "Staff One" {
 		t.Errorf("realname: got %q", staff.Realname)
+	}
+	if staff.Email != "staff01@example.com" {
+		t.Errorf("email: got %q", staff.Email)
 	}
 	if role != handlers.RoleStaff {
 		t.Errorf("role: got %q", role)

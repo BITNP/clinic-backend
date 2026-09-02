@@ -43,6 +43,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to open database: %v", err)
 	}
+	// clinic_staff.phone_num was replaced by email. AutoMigrate only adds
+	// missing columns, so rename an existing phone_num column explicitly.
+	if db.Migrator().HasColumn(&models.ClinicStaff{}, "phone_num") {
+		if err := db.Migrator().RenameColumn(&models.ClinicStaff{}, "phone_num", "email"); err != nil {
+			log.Fatalf("failed to rename clinic_staff.phone_num to email: %v", err)
+		}
+	}
 	if err := db.AutoMigrate(
 		&models.ClinicAnnouncement{},
 		&models.ClinicServiceDate{},

@@ -31,7 +31,7 @@ func TestClinicStaff_CreateAndRetrieve(t *testing.T) {
 		ID:        42,
 		AccountID: "cas:student42",
 		Realname:  "Alice Smith",
-		PhoneNum:  "123-456-7890",
+		Email:     "alice@example.com",
 	}
 
 	if err := db.Create(&staff).Error; err != nil {
@@ -49,8 +49,8 @@ func TestClinicStaff_CreateAndRetrieve(t *testing.T) {
 	if retrieved.Realname != staff.Realname {
 		t.Errorf("expected realname %q, got %q", staff.Realname, retrieved.Realname)
 	}
-	if retrieved.PhoneNum != staff.PhoneNum {
-		t.Errorf("expected phone_num %q, got %q", staff.PhoneNum, retrieved.PhoneNum)
+	if retrieved.Email != staff.Email {
+		t.Errorf("expected email %q, got %q", staff.Email, retrieved.Email)
 	}
 }
 

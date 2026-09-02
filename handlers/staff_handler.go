@@ -21,12 +21,12 @@ func NewStaffHandler(svc *services.StaffService) *StaffHandler {
 type createStaffRequest struct {
 	AccountID string `json:"account_id" binding:"required"`
 	Realname  string `json:"realname"`
-	PhoneNum  string `json:"phone_num"`
+	Email     string `json:"email"`
 }
 
 type updateStaffRequest struct {
 	Realname *string `json:"realname"`
-	PhoneNum *string `json:"phone_num"`
+	Email    *string `json:"email"`
 }
 
 func (h *StaffHandler) List(c *gin.Context) {
@@ -62,13 +62,13 @@ func (h *StaffHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	s, err := h.svc.GetOrCreateByAccountID(req.AccountID, req.Realname)
+	s, err := h.svc.GetOrCreateByAccountID(req.AccountID, req.Realname, req.Email)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if req.PhoneNum != "" {
-		s, err = h.svc.Update(s.ID, services.UpdateStaffInput{PhoneNum: &req.PhoneNum})
+	if req.Email != "" {
+		s, err = h.svc.Update(s.ID, services.UpdateStaffInput{Email: &req.Email})
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -90,7 +90,7 @@ func (h *StaffHandler) Update(c *gin.Context) {
 	}
 	s, err := h.svc.Update(id, services.UpdateStaffInput{
 		Realname: req.Realname,
-		PhoneNum: req.PhoneNum,
+		Email:    req.Email,
 	})
 	if err != nil {
 		if errors.Is(err, services.ErrStaffNotFound) {

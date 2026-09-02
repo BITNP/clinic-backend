@@ -38,7 +38,7 @@ func setupUserHandlerRouter(t *testing.T, staff *models.ClinicStaff, role handle
 }
 
 func TestUserHandler_Current_Authenticated(t *testing.T) {
-	staff := models.ClinicStaff{ID: 3, AccountID: "alice", Realname: "张三", PhoneNum: "13800138000"}
+	staff := models.ClinicStaff{ID: 3, AccountID: "alice", Realname: "张三", Email: "alice@example.com"}
 	r := setupUserHandlerRouter(t, &staff, handlers.RoleStaff)
 
 	w := doRequest(t, r, http.MethodGet, "/api/user/", nil)
@@ -65,7 +65,7 @@ func TestUserHandler_Current_Unauthenticated(t *testing.T) {
 }
 
 func TestUserHandler_Me_Authenticated(t *testing.T) {
-	staff := models.ClinicStaff{ID: 5, AccountID: "bob", Realname: "李四", PhoneNum: "13900139000"}
+	staff := models.ClinicStaff{ID: 5, AccountID: "bob", Realname: "李四", Email: "bob@example.com"}
 	r := setupUserHandlerRouter(t, &staff, handlers.RoleAdmin)
 
 	w := doRequest(t, r, http.MethodGet, "/api/users/me/", nil)
@@ -100,7 +100,7 @@ func TestUserHandler_Me_Anonymous(t *testing.T) {
 }
 
 func TestUserHandler_Current_AdminResponse(t *testing.T) {
-	staff := models.ClinicStaff{ID: 1, AccountID: "admin", Realname: "管理员", PhoneNum: "10086"}
+	staff := models.ClinicStaff{ID: 1, AccountID: "admin", Realname: "管理员", Email: "admin@example.com"}
 	r := setupUserHandlerRouter(t, &staff, handlers.RoleAdmin)
 
 	w := doRequest(t, r, http.MethodGet, "/api/user/", nil)
@@ -144,7 +144,7 @@ func setupUserTestEnv(t *testing.T) *userTestEnv {
 	staffSvc := services.NewStaffService(db)
 	sessionSvc := services.NewSessionService(db, time.Hour)
 
-	staff, err := staffSvc.GetOrCreateByAccountID("integration_user", "测试")
+	staff, err := staffSvc.GetOrCreateByAccountID("integration_user", "测试", "")
 	if err != nil {
 		t.Fatalf("create staff: %v", err)
 	}

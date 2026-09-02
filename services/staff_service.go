@@ -26,30 +26,39 @@ func NewStaffService(db *gorm.DB) *StaffService {
 type CreateStaffInput struct {
 	AccountID string
 	Realname  string
-	PhoneNum  string
+	Email     string
 }
 
 type UpdateStaffInput struct {
 	Realname *string
-	PhoneNum *string
+	Email    *string
 }
 
 type StaffListItem struct {
 	ID           int    `json:"id"`
 	AccountID    string `json:"account_id"`
 	Realname     string `json:"realname"`
-	PhoneNum     string `json:"phone_num"`
+	Email        string `json:"email"`
 	Role         string `json:"role"`
 	HandledCount int    `json:"handled_count"`
 	WorkYears    []int  `json:"work_years"`
 }
 
-func (s *StaffService) GetOrCreateByAccountID(accountID, realname string) (models.ClinicStaff, error) {
+func (s *StaffService) GetOrCreateByAccountID(accountID, realname, email string) (models.ClinicStaff, error) {
 	var staff models.ClinicStaff
 	err := s.db.Where("account_id = ?", accountID).First(&staff).Error
 	if err == nil {
+		updates := map[string]any{}
 		if realname != "" && staff.Realname != realname {
-			s.db.Model(&staff).Update("realname", realname)
+			updates["realname"] = realname
+		}
+		if email != "" && staff.Email != email {
+			updates["email"] = email
+		}
+		if len(updates) > 0 {
+			if err := s.db.Model(&staff).Updates(updates).Error; err != nil {
+				return models.ClinicStaff{}, fmt.Errorf("update staff %s: %w", accountID, err)
+			}
 		}
 		return staff, nil
 	}
@@ -60,6 +69,7 @@ func (s *StaffService) GetOrCreateByAccountID(accountID, realname string) (model
 	staff = models.ClinicStaff{
 		AccountID: accountID,
 		Realname:  realname,
+		Email:     email,
 	}
 	if err := s.db.Create(&staff).Error; err != nil {
 		return models.ClinicStaff{}, fmt.Errorf("create staff %s: %w", accountID, err)
@@ -109,7 +119,7 @@ func (s *StaffService) List() ([]StaffListItem, error) {
 			ID:           st.ID,
 			AccountID:    st.AccountID,
 			Realname:     st.Realname,
-			PhoneNum:     st.PhoneNum,
+			Email:        st.Email,
 			Role:         st.Role,
 			HandledCount: countMap[st.ID],
 			WorkYears:    yearMap[st.ID],
@@ -195,7 +205,7 @@ func (s *StaffService) ListValidForYear(year int) ([]StaffListItem, error) {
 			ID:           st.ID,
 			AccountID:    st.AccountID,
 			Realname:     st.Realname,
-			PhoneNum:     st.PhoneNum,
+			Email:        st.Email,
 			Role:         st.Role,
 			HandledCount: countMap[st.ID],
 			WorkYears:    yearMap[st.ID],
@@ -246,8 +256,8 @@ func (s *StaffService) Update(id int, in UpdateStaffInput) (models.ClinicStaff, 
 	if in.Realname != nil {
 		updates["realname"] = *in.Realname
 	}
-	if in.PhoneNum != nil {
-		updates["phone_num"] = *in.PhoneNum
+	if in.Email != nil {
+		updates["email"] = *in.Email
 	}
 	if len(updates) > 0 {
 		if err := s.db.Model(&staff).Updates(updates).Error; err != nil {

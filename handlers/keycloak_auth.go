@@ -68,7 +68,8 @@ func (a *KeycloakAuthenticator) Authenticate(tokenStr string) (models.ClinicStaf
 	}
 
 	realname := extractRealname(claims)
-	staff, err := a.staffSvc.GetOrCreateByAccountID(accountID, realname)
+	email := extractEmail(claims)
+	staff, err := a.staffSvc.GetOrCreateByAccountID(accountID, realname, email)
 	if err != nil {
 		return models.ClinicStaff{}, "", fmt.Errorf("resolve staff: %w", err)
 	}
@@ -112,6 +113,13 @@ func extractAccountID(claims jwt.MapClaims) string {
 
 func extractRealname(claims jwt.MapClaims) string {
 	if v, ok := claims["name"].(string); ok && v != "" {
+		return v
+	}
+	return ""
+}
+
+func extractEmail(claims jwt.MapClaims) string {
+	if v, ok := claims["email"].(string); ok && v != "" {
 		return v
 	}
 	return ""

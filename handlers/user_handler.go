@@ -12,7 +12,7 @@ type UserResponse struct {
 	ID        int    `json:"id"`
 	AccountID string `json:"account_id"`
 	Realname  string `json:"realname"`
-	PhoneNum  string `json:"phone_num"`
+	Email     string `json:"email"`
 	Role      string `json:"role"`
 }
 
@@ -47,7 +47,7 @@ func toUserResponse(staff models.ClinicStaff, role StaffRole) UserResponse {
 		ID:        staff.ID,
 		AccountID: staff.AccountID,
 		Realname:  staff.Realname,
-		PhoneNum:  staff.PhoneNum,
+		Email:     staff.Email,
 		Role:      string(role),
 	}
 }
