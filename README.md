@@ -117,9 +117,13 @@ export CAS_SERVER_URL=http://127.0.0.1:9999
 export APP_BASE_URL=http://127.0.0.1:5173
 export CAS_DEFAULT_REDIRECT=/
 export SESSION_COOKIE_SAMESITE=lax
+# Optional: raise to force all staff to log in again; defaults to 0
+export STAFF_VERSION=0
 go run main.go                 # runs on :8080
 
 # 3. Start the frontend (separate terminal)
 cd path/to/clinic_admin_frontend
 pnpm dev                       # runs on :5173
 ```
+
+Sessions whose staff `version` differs from `STAFF_VERSION` are rejected until the staff log in again, so each time you raise `STAFF_VERSION` all staff are forced through the login page once.
