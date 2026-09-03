@@ -33,7 +33,7 @@ func setupServiceDateHandlerRouter(t *testing.T) (*gin.Engine, *services.Service
 	g := r.Group("/api/admin/service-dates")
 	{
 		g.POST("", h.Create)
-		g.GET("", h.AdminList)
+		g.GET("", h.ListUpcoming)
 		g.GET("/all", h.ListAll)
 		g.GET("/:id", h.Get)
 		g.PUT("/:id", h.Update)
@@ -319,6 +319,91 @@ func TestServiceDateHandler_InvalidID(t *testing.T) {
 	w := doRequest(t, r, http.MethodGet, "/api/admin/service-dates/abc", nil)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestServiceDateHandler_List_ExplicitRangeIncludesPast(t *testing.T) {
+	r, svc, db := setupServiceDateHandlerRouter(t)
+	mustCreateServiceDate(t, db, svc, validServiceDateInput(1, -2, 5)) // past
+	mustCreateServiceDate(t, db, svc, validServiceDateInput(1, 2, 5))
+	mustCreateServiceDate(t, db, svc, validServiceDateInput(2, 6, 5))
+
+	w := doRequest(t, r, http.MethodGet,
+		"/api/admin/service-dates?from=2020-01-01T00:00:00Z&to="+futureDate(4).Format(time.RFC3339), nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Items []models.ClinicServiceDate `json:"items"`
+		Total int64                      `json:"total"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if resp.Total != 2 || len(resp.Items) != 2 {
+		t.Errorf("expected past + day2 items, got total %d / %d items", resp.Total, len(resp.Items))
+	}
+}
+
+func TestServiceDateHandler_List_RoomIDs(t *testing.T) {
+	r, svc, db := setupServiceDateHandlerRouter(t)
+	mustCreateServiceDate(t, db, svc, validServiceDateInput(1, -2, 5)) // past, excluded by active-only
+	mustCreateServiceDate(t, db, svc, validServiceDateInput(1, 2, 5))
+	mustCreateServiceDate(t, db, svc, validServiceDateInput(2, 6, 5))
+
+	cases := []struct {
+		name      string
+		query     string
+		wantTotal int
+	}{
+		{"room_ids multi", "room_ids=1,2", 2},
+		{"room_ids single", "room_ids=2", 1},
+		{"room_id single", "room_id=2", 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			w := doRequest(t, r, http.MethodGet, "/api/admin/service-dates?"+c.query, nil)
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+			}
+			var resp struct {
+				Items []models.ClinicServiceDate `json:"items"`
+				Total int64                      `json:"total"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode failed: %v", err)
+			}
+			if int(resp.Total) != c.wantTotal || len(resp.Items) != c.wantTotal {
+				t.Errorf("expected total %d / %d items, got total %d / %d items", c.wantTotal, c.wantTotal, resp.Total, len(resp.Items))
+			}
+		})
+	}
+}
+
+func TestServiceDateHandler_List_InvalidFilters(t *testing.T) {
+	r, _, _ := setupServiceDateHandlerRouter(t)
+
+	later := futureDate(10).Format(time.RFC3339)
+	earlier := futureDate(2).Format(time.RFC3339)
+
+	cases := []struct {
+		name  string
+		query string
+	}{
+		{"invalid from", "from=not-a-date"},
+		{"invalid to", "to=not-a-date"},
+		{"to before from", "from=" + later + "&to=" + earlier},
+		{"invalid room_ids element", "room_ids=1,abc"},
+		{"invalid room_ids", "room_ids=abc"},
+		{"invalid room_id", "room_id=abc"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			w := doRequest(t, r, http.MethodGet, "/api/admin/service-dates?"+c.query, nil)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+			}
+		})
 	}
 }
 

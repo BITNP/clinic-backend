@@ -81,7 +81,9 @@ type UpdateServiceDateInput struct {
 // ListServiceDateFilter controls listing behavior.
 type ListServiceDateFilter struct {
 	RoomID      *uint
+	RoomIDs     []uint         // matches any of the given rooms; takes precedence over RoomID
 	FromDate    time.Time      // inclusive lower bound on date, zero means unbounded
+	ToDate      time.Time      // inclusive upper bound on date, zero means unbounded
 	ActiveOnly  bool           // date >= today
 	TodayLoc    *time.Location // timezone used for "today"; nil means use the service's configured location
 	HasCapacity bool           // for students: booked count < capacity
@@ -176,11 +178,16 @@ func (s *ServiceDateService) bookedCount(roomID *uint, date time.Time) (int64, e
 
 func (s *ServiceDateService) List(f ListServiceDateFilter) ([]models.ClinicServiceDate, int64, error) {
 	q := s.db.Model(&models.ClinicServiceDate{})
-	if f.RoomID != nil {
+	if len(f.RoomIDs) > 0 {
+		q = q.Where("room_id IN ?", f.RoomIDs)
+	} else if f.RoomID != nil {
 		q = q.Where("room_id = ?", *f.RoomID)
 	}
 	if !f.FromDate.IsZero() {
 		q = q.Where("date >= ?", DateInLocation(f.FromDate, s.loc))
+	}
+	if !f.ToDate.IsZero() {
+		q = q.Where("date <= ?", DateInLocation(f.ToDate, s.loc))
 	}
 	if f.ActiveOnly {
 		loc := s.loc

@@ -195,7 +195,7 @@ func main() {
 	sdRead := r.Group("/api/admin/service-dates")
 	sdRead.Use(adminAuth, handlers.RequireStaff)
 	{
-		sdRead.GET("", serviceDateH.AdminList)
+		sdRead.GET("", serviceDateH.ListUpcoming)
 		sdRead.GET("/all", serviceDateH.ListAll)
 		sdRead.GET("/:id", serviceDateH.Get)
 	}

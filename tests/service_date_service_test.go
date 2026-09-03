@@ -139,6 +139,57 @@ func TestServiceDateService_List_Filter(t *testing.T) {
 			t.Fatalf("expected 1 item on/after day 4, got %d (total %d)", len(items), total)
 		}
 	})
+
+	t.Run("room_ids_filter", func(t *testing.T) {
+		items, total, err := svc.List(services.ListServiceDateFilter{RoomIDs: []uint{room1, room2}})
+		if err != nil {
+			t.Fatalf("list failed: %v", err)
+		}
+		if total != 3 || len(items) != 3 {
+			t.Fatalf("expected 3 items for both rooms, got %d (total %d)", len(items), total)
+		}
+	})
+
+	t.Run("room_ids_filter_overrides_room_id", func(t *testing.T) {
+		items, total, err := svc.List(services.ListServiceDateFilter{RoomID: &room2, RoomIDs: []uint{room1}})
+		if err != nil {
+			t.Fatalf("list failed: %v", err)
+		}
+		if total != 2 || len(items) != 2 {
+			t.Fatalf("expected 2 items for room1 only, got %d (total %d)", len(items), total)
+		}
+		for _, it := range items {
+			if *it.RoomID != room1 {
+				t.Errorf("expected only room1 items, got room %d", *it.RoomID)
+			}
+		}
+	})
+
+	t.Run("to_filter", func(t *testing.T) {
+		items, total, err := svc.List(services.ListServiceDateFilter{ToDate: futureDate(3)})
+		if err != nil {
+			t.Fatalf("list failed: %v", err)
+		}
+		if total != 2 || len(items) != 2 {
+			t.Fatalf("expected 2 items on/before day 3, got %d (total %d)", len(items), total)
+		}
+	})
+
+	t.Run("range_filter", func(t *testing.T) {
+		items, total, err := svc.List(services.ListServiceDateFilter{
+			FromDate: futureDate(0),
+			ToDate:   futureDate(3),
+		})
+		if err != nil {
+			t.Fatalf("list failed: %v", err)
+		}
+		if total != 1 || len(items) != 1 {
+			t.Fatalf("expected 1 item between today and day 3, got %d (total %d)", len(items), total)
+		}
+		if *items[0].RoomID != room1 {
+			t.Errorf("expected the day-3 room1 item, got room %d", *items[0].RoomID)
+		}
+	})
 }
 
 func TestServiceDateService_GetByDateAndRoom_NonMidnightInput(t *testing.T) {

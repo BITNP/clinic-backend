@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"clinic-backend/services"
@@ -80,9 +82,12 @@ func (h *ServiceDateHandler) List(c *gin.Context) {
 	h.list(c, c.Query("active") == "true", nil)
 }
 
-// AdminList returns service dates from today onward by default.
-func (h *ServiceDateHandler) AdminList(c *gin.Context) {
-	h.list(c, true, h.svc.Location())
+// ListUpcoming returns service dates from today onward by default. When an
+// explicit date range (from/to) is supplied, that range takes precedence over
+// the "today onward" default so past dates can be selected too.
+func (h *ServiceDateHandler) ListUpcoming(c *gin.Context) {
+	activeOnly := c.Query("from") == "" && c.Query("to") == ""
+	h.list(c, activeOnly, h.svc.Location())
 }
 
 // ListAll returns all service dates regardless of date.
@@ -96,12 +101,53 @@ func (h *ServiceDateHandler) list(c *gin.Context, activeOnly bool, todayLoc *tim
 		TodayLoc:    todayLoc,
 		HasCapacity: c.Query("available") == "true",
 	}
-	if v, err := strconv.ParseUint(c.Query("room_id"), 10, 64); err == nil && v > 0 {
-		f.RoomID = new(uint(v))
+
+	if roomIDStr := c.Query("room_id"); roomIDStr != "" {
+		id, err := strconv.ParseUint(roomIDStr, 10, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid room_id: %s", roomIDStr)})
+			return
+		}
+		if id > 0 {
+			f.RoomID = new(uint(id))
+		}
 	}
-	if v, err := time.Parse(time.RFC3339, c.Query("from")); err == nil {
+
+	if roomIDsStr := c.Query("room_ids"); roomIDsStr != "" {
+		parts := strings.Split(roomIDsStr, ",")
+		ids := make([]uint, 0, len(parts))
+		for _, p := range parts {
+			id, err := strconv.ParseUint(strings.TrimSpace(p), 10, 64)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid room_id: %s", p)})
+				return
+			}
+			ids = append(ids, uint(id))
+		}
+		f.RoomIDs = ids
+	}
+
+	if fromStr := c.Query("from"); fromStr != "" {
+		v, err := time.Parse(time.RFC3339, fromStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid from: %s", fromStr)})
+			return
+		}
 		f.FromDate = v
 	}
+	if toStr := c.Query("to"); toStr != "" {
+		v, err := time.Parse(time.RFC3339, toStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid to: %s", toStr)})
+			return
+		}
+		f.ToDate = v
+	}
+	if !f.FromDate.IsZero() && !f.ToDate.IsZero() && f.ToDate.Before(f.FromDate) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "to must not be before from"})
+		return
+	}
+
 	f.Page, f.PageSize = parsePagination(c)
 
 	items, total, err := h.svc.List(f)
