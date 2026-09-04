@@ -117,7 +117,7 @@ func (s *ServiceDateService) GetByID(id uint) (models.ClinicServiceDate, error) 
 		}
 		return models.ClinicServiceDate{}, fmt.Errorf("get service date %d: %w", id, err)
 	}
-	booked, err := s.bookedCount(d.RoomID, d.Date)
+	booked, err := s.bookedCount(d.RoomID, d.Date, DateInLocation(time.Now(), s.loc))
 	if err != nil {
 		return models.ClinicServiceDate{}, err
 	}
@@ -162,14 +162,32 @@ func (s *ServiceDateService) recordsExistFor(tx *gorm.DB, roomID uint, date time
 	return n > 0, nil
 }
 
-// bookedCount returns the number of active (non-rejected, non-noshow) records
-// for the given room+date combination.
-func (s *ServiceDateService) bookedCount(roomID *uint, date time.Time) (int64, error) {
+// ticketedCountExcludeStatuses returns the statuses that do not count toward a
+// service date's ticketed total on the given day. rejected, referred, and
+// no_show tickets never count; from the day after today onward, completed
+// tickets are also excluded (an upcoming date only shows still-open tickets).
+// Both day and today must be normalized calendar days (see DateInLocation).
+func ticketedCountExcludeStatuses(day, today time.Time) []models.RecordStatus {
+	excluded := []models.RecordStatus{
+		models.RecordStatusRejected,
+		models.RecordStatusReferred,
+		models.RecordStatusNoShow,
+	}
+	if day.After(today) {
+		excluded = append(excluded, models.RecordStatusCompleted)
+	}
+	return excluded
+}
+
+// bookedCount returns the number of ticketed records for the given room+date,
+// excluding statuses per ticketedCountExcludeStatuses based on whether the day
+// is today/earlier or still ahead.
+func (s *ServiceDateService) bookedCount(roomID *uint, date time.Time, today time.Time) (int64, error) {
+	day := DateInLocation(date, s.loc)
 	var n int64
 	q := s.db.Model(&models.ClinicRecord{}).
 		Where("room = ? AND appointment_time = ? AND status NOT IN ?",
-			roomID, DateInLocation(date, s.loc),
-			[]models.RecordStatus{models.RecordStatusRejected, models.RecordStatusNoShow})
+			roomID, day, ticketedCountExcludeStatuses(day, today))
 	if err := q.Count(&n).Error; err != nil {
 		return 0, fmt.Errorf("count booked: %w", err)
 	}
@@ -189,11 +207,11 @@ func (s *ServiceDateService) List(f ListServiceDateFilter) ([]models.ClinicServi
 	if !f.ToDate.IsZero() {
 		q = q.Where("date <= ?", DateInLocation(f.ToDate, s.loc))
 	}
+	loc := s.loc
+	if f.TodayLoc != nil {
+		loc = f.TodayLoc
+	}
 	if f.ActiveOnly {
-		loc := s.loc
-		if f.TodayLoc != nil {
-			loc = f.TodayLoc
-		}
 		q = q.Where("date >= ?", DateInLocation(time.Now(), loc))
 	}
 
@@ -220,8 +238,9 @@ func (s *ServiceDateService) List(f ListServiceDateFilter) ([]models.ClinicServi
 	}
 
 	filtered := items[:0]
+	today := DateInLocation(time.Now(), loc)
 	for _, d := range items {
-		booked, err := s.bookedCount(d.RoomID, d.Date)
+		booked, err := s.bookedCount(d.RoomID, d.Date, today)
 		if err != nil {
 			return nil, 0, fmt.Errorf("count booked for service date %d: %w", d.ID, err)
 		}
@@ -277,7 +296,7 @@ func (s *ServiceDateService) Update(id uint, in UpdateServiceDateInput) (models.
 	}
 
 	if in.Capacity != nil {
-		booked, err := s.bookedCount(&effectiveRoomID, effectiveDate)
+		booked, err := s.bookedCount(&effectiveRoomID, effectiveDate, DateInLocation(time.Now(), s.loc))
 		if err != nil {
 			return models.ClinicServiceDate{}, err
 		}

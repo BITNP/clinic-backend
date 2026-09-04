@@ -4,3 +4,5 @@ cookies.txt
 clinic-backend
 bench_seed
 clinic.db
+clinic.db-shm
+clinic.db-wal

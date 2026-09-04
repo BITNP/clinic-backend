@@ -223,6 +223,54 @@ func TestTicketService_Create_CapacityExcludesRejected(t *testing.T) {
 	}
 }
 
+func TestTicketService_Create_CapacityExcludesClosedOnFuture(t *testing.T) {
+	db := setupTicketTestDB(t)
+	roomID := seedOpenServiceDate(t, db, time.UTC, futureTruncatedDate(7), 1)
+	for _, st := range []models.RecordStatus{
+		models.RecordStatusCompleted,
+		models.RecordStatusReferred,
+		models.RecordStatusNoShow,
+		models.RecordStatusRejected,
+	} {
+		r := models.ClinicRecord{User: "other-" + string(st), Realname: "x", PhoneNum: "p", Status: st, AppointmentTime: futureTruncatedDate(7), QuestionDesc: "x", RoomID: roomID}
+		if err := db.Create(&r).Error; err != nil {
+			t.Fatalf("seed %s: %v", st, err)
+		}
+	}
+	svc := services.NewTicketService(db, nil)
+	if _, err := svc.Create(services.CreateTicketInput{
+		User: "u", Realname: "r", PhoneNum: "p", Campus: "中关村",
+		AppointmentTime: futureTruncatedDate(7), Description: "d",
+	}); err != nil {
+		t.Fatalf("expected success on future date (completed/referred/no_show don't count), got %v", err)
+	}
+}
+
+func TestTicketService_Create_CapacityCountsCompletedOnToday(t *testing.T) {
+	db := setupTicketTestDB(t)
+	loc := time.FixedZone("UTC+8", 8*60*60)
+	svc := services.NewTicketService(db, loc)
+
+	now := time.Now().In(loc)
+	todayLocal := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	inputDate := todayLocal.UTC()
+
+	roomID := seedOpenServiceDate(t, db, loc, inputDate, 1)
+	day := services.DateInLocation(inputDate, loc)
+	completed := models.ClinicRecord{User: "other", Realname: "x", PhoneNum: "p", Status: models.RecordStatusCompleted, AppointmentTime: day, QuestionDesc: "x", RoomID: roomID}
+	if err := db.Create(&completed).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	_, err := svc.Create(services.CreateTicketInput{
+		User: "u", Realname: "r", PhoneNum: "p", Campus: "中关村",
+		AppointmentTime: inputDate, Description: "d",
+	})
+	if !errors.Is(err, services.ErrTicketNoCapacity) {
+		t.Fatalf("expected ErrTicketNoCapacity (completed counts on today), got %v", err)
+	}
+}
+
 func TestTicketService_Working(t *testing.T) {
 	db := setupTicketTestDB(t)
 	roomID := seedOpenServiceDate(t, db, time.UTC, futureTruncatedDate(7), 5)

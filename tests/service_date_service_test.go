@@ -253,6 +253,66 @@ func TestServiceDateService_List_ActiveOnly_TodayInTimezone(t *testing.T) {
 	}
 }
 
+func TestServiceDateService_TicketedCount_ByRecency(t *testing.T) {
+	db := setupServiceDateServiceDB(t)
+	svc := services.NewServiceDateService(db, nil)
+	mustCreateRoom(t, db, 1)
+
+	past := mustCreateServiceDate(t, db, svc, validServiceDateInput(1, -15, 20))
+	future := mustCreateServiceDate(t, db, svc, validServiceDateInput(1, 15, 20))
+
+	seedStatuses := []models.RecordStatus{
+		models.RecordStatusPending,
+		models.RecordStatusConfirmed,
+		models.RecordStatusArrived,
+		models.RecordStatusInProgress,
+		models.RecordStatusCompleted,
+		models.RecordStatusRejected,
+		models.RecordStatusReferred,
+		models.RecordStatusNoShow,
+	}
+	seedForDay := func(date models.ClinicServiceDate, userPrefix string) {
+		t.Helper()
+		for i, st := range seedStatuses {
+			if err := db.Create(&models.ClinicRecord{
+				User:            fmt.Sprintf("%s-%d", userPrefix, i),
+				Realname:        "x",
+				PhoneNum:        "000",
+				Status:          st,
+				AppointmentTime: date.Date,
+				QuestionDesc:    "x",
+				RoomID:          *date.RoomID,
+			}).Error; err != nil {
+				t.Fatalf("seed record %s: %v", st, err)
+			}
+		}
+	}
+	seedForDay(past, "past")
+	seedForDay(future, "future")
+
+	cases := []struct {
+		name string
+		id   uint
+		want int64
+	}{
+		// Today or earlier: rejected/referred/no_show excluded → 5 of 8 count.
+		{"past", past.ID, 5},
+		// After today: completed is excluded too → 4 of 8 count.
+		{"future", future.ID, 4},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := svc.GetByID(tc.id)
+			if err != nil {
+				t.Fatalf("get by id: %v", err)
+			}
+			if got.Count != tc.want {
+				t.Errorf("expected count %d, got %d", tc.want, got.Count)
+			}
+		})
+	}
+}
+
 func TestServiceDateService_List_HasCapacity(t *testing.T) {
 	db := setupServiceDateServiceDB(t)
 	svc := services.NewServiceDateService(db, nil)

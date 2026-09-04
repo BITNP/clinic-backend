@@ -45,9 +45,6 @@ var (
 	}
 )
 
-// Rejected statuses don't count toward capacity (spec line 159).
-var capacityExcludeStatuses = []models.RecordStatus{models.RecordStatusRejected}
-
 // TicketService implements the customer-facing booking flow.
 type TicketService struct {
 	db  *gorm.DB
@@ -155,11 +152,12 @@ func (s *TicketService) validateCreate(username string, roomID uint, date time.T
 		return err
 	}
 
-	// STEP 2 — capacity (excluding rejected).
+	// STEP 2 — capacity. Statuses that do not count toward a day's ticketed
+	// total (see ticketedCountExcludeStatuses) are excluded from the count.
 	var existing int64
 	if err := s.db.Model(&models.ClinicRecord{}).
 		Where("room = ? AND appointment_time = ? AND status NOT IN ?",
-			roomID, date, capacityExcludeStatuses).
+			roomID, date, ticketedCountExcludeStatuses(date, s.todayCutoff())).
 		Count(&existing).Error; err != nil {
 		return fmt.Errorf("count existing for capacity: %w", err)
 	}
@@ -401,7 +399,7 @@ func (s *TicketService) validateUpdate(username string, recordID, roomID uint, d
 	var existing int64
 	if err := s.db.Model(&models.ClinicRecord{}).
 		Where("room = ? AND appointment_time = ? AND status NOT IN ? AND id != ?",
-			roomID, date, capacityExcludeStatuses, recordID).
+			roomID, date, ticketedCountExcludeStatuses(date, s.todayCutoff()), recordID).
 		Count(&existing).Error; err != nil {
 		return fmt.Errorf("count existing for capacity: %w", err)
 	}
