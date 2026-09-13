@@ -17,11 +17,18 @@ var (
 )
 
 type AdminRecordService struct {
-	db *gorm.DB
+	db     *gorm.DB
+	tagSvc *RecordTagService
 }
 
 func NewAdminRecordService(db *gorm.DB) *AdminRecordService {
 	return &AdminRecordService{db: db}
+}
+
+// SetRecordTagService attaches the in-memory record tag resolver used to
+// populate the tag title on record views.
+func (s *AdminRecordService) SetRecordTagService(tagSvc *RecordTagService) {
+	s.tagSvc = tagSvc
 }
 
 type ListAdminRecordFilter struct {
@@ -51,6 +58,7 @@ type AdminRecordView struct {
 	ReferralReason  string  `json:"referral_reason"`
 	Model           string  `json:"model"`
 	Password        string  `json:"password"`
+	Tag             string  `json:"tag"`
 	ArriveTime      *string `json:"arrive_time,omitempty"`
 	FinishTime      *string `json:"finish_time,omitempty"`
 	WorkerID        *uint   `json:"worker_id,omitempty"`
@@ -597,6 +605,11 @@ func (s *AdminRecordService) buildViewTx(tx *gorm.DB, rec models.ClinicRecord) (
 		Description:     rec.QuestionDesc,
 		Campus:          room.Name,
 		ApproverID:      rec.ApproverID,
+	}
+	if s.tagSvc != nil {
+		if tag, ok := s.tagSvc.ByID(rec.TagID); ok {
+			v.Tag = tag.Title
+		}
 	}
 	if hasDevice {
 		v.Model = device.LaptopModel

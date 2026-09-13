@@ -122,6 +122,7 @@ func main() {
 	sessionSvc := services.NewSessionService(db, sessionTTL)
 
 	adminRecordSvc := services.NewAdminRecordService(db)
+	adminRecordSvc.SetRecordTagService(recordTagSvc)
 	adminRecordH := handlers.NewAdminRecordHandler(adminRecordSvc)
 
 	workScheduleSvc := services.NewWorkScheduleService(db)
