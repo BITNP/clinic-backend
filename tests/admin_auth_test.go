@@ -1,6 +1,7 @@
-package handlers
+package tests
 
 import (
+	"clinic-backend/handlers"
 	"reflect"
 	"testing"
 )
@@ -25,7 +26,7 @@ func TestExtractWorkYears(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := extractWorkYears(tt.groups)
+			got := handlers.extractWorkYears(tt.groups)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("extractWorkYears(%v) = %v, want %v", tt.groups, got, tt.want)
 			}
