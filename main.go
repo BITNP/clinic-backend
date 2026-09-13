@@ -93,6 +93,9 @@ func main() {
 	if _, err := recordTagSvc.SeedDefault(); err != nil {
 		log.Fatalf("failed to seed default record tag: %v", err)
 	}
+	if err := recordTagSvc.SeedCatalog(); err != nil {
+		log.Fatalf("failed to seed record tag catalog: %v", err)
+	}
 	if err := recordTagSvc.Load(); err != nil {
 		log.Fatalf("failed to load record tags: %v", err)
 	}

@@ -78,6 +78,39 @@ func TestClinicRecord_PersistsTagID(t *testing.T) {
 	}
 }
 
+func TestRecordTagService_SeedCatalog(t *testing.T) {
+	db := setupTagTestDB(t)
+	svc := services.NewRecordTagService(db)
+
+	if err := svc.SeedCatalog(); err != nil {
+		t.Fatalf("seed catalog: %v", err)
+	}
+	if err := svc.SeedCatalog(); err != nil {
+		t.Fatalf("reseed catalog: %v", err)
+	}
+	if err := svc.Load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	var count int64
+	if err := db.Model(&models.ClinicRecordTag{}).Count(&count).Error; err != nil {
+		t.Fatalf("count tags: %v", err)
+	}
+
+	titles := []string{
+		"清灰换硅脂", "换风扇", "重装系统", "加硬盘/内存", "网络问题", "soildworks安装",
+		"软件安装", "安装双系统", "清理C盘", "其它问题", "G15", "蛟龙16",
+	}
+	for _, title := range titles {
+		if _, ok := svc.ByTitle(title); !ok {
+			t.Errorf("expected tag %q in memory after load", title)
+		}
+	}
+	if int(count) != len(titles) {
+		t.Errorf("expected %d tags, got %d", len(titles), count)
+	}
+}
+
 func TestRecordTagService_SeedAndLoad(t *testing.T) {
 	db := setupTagTestDB(t)
 	svc := services.NewRecordTagService(db)
