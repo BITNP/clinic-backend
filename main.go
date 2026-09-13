@@ -57,6 +57,7 @@ func main() {
 		&models.ClinicStaff{},
 		&models.ClinicStaffWorkyear{},
 		&models.ClinicRecord{},
+		&models.ClinicRecordTag{},
 		&models.ClinicRecordDevice{},
 		&models.ClinicRecordWorker{},
 		&models.ClinicRecordArrival{},
@@ -88,6 +89,17 @@ func main() {
 		log.Fatalf("failed to create enabled-schedule unique index: %v", err)
 	}
 
+	recordTagSvc := services.NewRecordTagService(db)
+	if _, err := recordTagSvc.SeedDefault(); err != nil {
+		log.Fatalf("failed to seed default record tag: %v", err)
+	}
+	if err := recordTagSvc.Load(); err != nil {
+		log.Fatalf("failed to load record tags: %v", err)
+	}
+	if err := recordTagSvc.BackfillRecords(); err != nil {
+		log.Fatalf("failed to backfill record tag_id: %v", err)
+	}
+
 	announcementSvc := services.NewAnnouncementService(db)
 	announcementH := handlers.NewAnnouncementHandler(announcementSvc)
 
@@ -99,6 +111,7 @@ func main() {
 	roomH := handlers.NewRoomHandler(roomSvc)
 
 	ticketSvc := services.NewTicketService(db, serviceDateLoc)
+	ticketSvc.SetDefaultTagID(recordTagSvc.DefaultID())
 	ticketH := handlers.NewTicketHandler(ticketSvc)
 	legacyH := handlers.NewLegacyHandler(ticketSvc, serviceDateSvc, roomSvc, announcementSvc)
 

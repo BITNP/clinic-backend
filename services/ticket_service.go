@@ -47,8 +47,9 @@ var (
 
 // TicketService implements the customer-facing booking flow.
 type TicketService struct {
-	db  *gorm.DB
-	loc *time.Location
+	db           *gorm.DB
+	loc          *time.Location
+	defaultTagID uint
 }
 
 func NewTicketService(db *gorm.DB, loc *time.Location) *TicketService {
@@ -56,6 +57,11 @@ func NewTicketService(db *gorm.DB, loc *time.Location) *TicketService {
 		loc = time.UTC
 	}
 	return &TicketService{db: db, loc: loc}
+}
+
+// SetDefaultTagID sets the tag id assigned to newly created records.
+func (s *TicketService) SetDefaultTagID(id uint) {
+	s.defaultTagID = id
 }
 
 // todayCutoff returns 00:00:00 UTC for the current calendar day in the service
@@ -120,6 +126,7 @@ func (s *TicketService) Create(in CreateTicketInput) (models.ClinicRecord, error
 		AppointmentTime: date,
 		QuestionDesc:    in.Description,
 		RoomID:          room.ID,
+		TagID:           s.defaultTagID,
 	}
 
 	err = s.db.Transaction(func(tx *gorm.DB) error {

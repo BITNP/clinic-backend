@@ -28,6 +28,7 @@ type ClinicRecord struct {
 	QuestionDesc    string       `gorm:"size:10000;not null;column:question_desc" json:"question_desc"`
 	RoomID          uint         `gorm:"not null;column:room" json:"room"`
 	ApproverID      *uint        `gorm:"column:approver_id" json:"approver_id"`
+	TagID           uint         `gorm:"column:tag_id" json:"tag_id"`
 }
 
 // TableName overrides GORM's default pluralized table name.
