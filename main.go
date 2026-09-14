@@ -58,6 +58,7 @@ func main() {
 		&models.ClinicStaffWorkyear{},
 		&models.ClinicRecord{},
 		&models.ClinicRecordTag{},
+		&models.ClinicRecordTagPrompt{},
 		&models.ClinicRecordDevice{},
 		&models.ClinicRecordWorker{},
 		&models.ClinicRecordArrival{},
@@ -95,6 +96,9 @@ func main() {
 	}
 	if err := recordTagSvc.SeedCatalog(); err != nil {
 		log.Fatalf("failed to seed record tag catalog: %v", err)
+	}
+	if err := recordTagSvc.SeedPrompt(); err != nil {
+		log.Fatalf("failed to seed record tag prompt: %v", err)
 	}
 	if err := recordTagSvc.Load(); err != nil {
 		log.Fatalf("failed to load record tags: %v", err)

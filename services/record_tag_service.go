@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"fmt"
 
 	"clinic-backend/models"
@@ -13,15 +14,17 @@ import (
 // fallback tag id for new and migrated records.
 const DefaultRecordTagTitle = "no_pending"
 
-// RecordTagService stores the clinic_record_tag rows in memory at startup so
-// record-tagging logic can resolve tags without hitting the database. The
-// in-memory maps are written once during boot and only read afterwards.
+// RecordTagService stores the clinic_record_tag rows and the singleton tag
+// prompt in memory at startup so record-tagging logic can resolve them without
+// hitting the database. The in-memory values are written once during boot and
+// only read afterwards.
 type RecordTagService struct {
 	db        *gorm.DB
 	tags      []models.ClinicRecordTag
 	byID      map[uint]models.ClinicRecordTag
 	byTitle   map[string]models.ClinicRecordTag
 	defaultID uint
+	prompt    string
 }
 
 func NewRecordTagService(db *gorm.DB) *RecordTagService {
@@ -57,6 +60,15 @@ func (s *RecordTagService) Load() error {
 	if t, ok := byTitle[DefaultRecordTagTitle]; ok {
 		s.defaultID = t.ID
 	}
+
+	var prompt models.ClinicRecordTagPrompt
+	if err := s.db.First(&prompt, "singleton = ?", true).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("load record tag prompt: %w", err)
+		}
+	} else {
+		s.prompt = prompt.Prompt
+	}
 	return nil
 }
 
@@ -90,4 +102,10 @@ func (s *RecordTagService) ByID(id uint) (models.ClinicRecordTag, bool) {
 func (s *RecordTagService) ByTitle(title string) (models.ClinicRecordTag, bool) {
 	t, ok := s.byTitle[title]
 	return t, ok
+}
+
+// Prompt returns the loaded tag-set prompt, or an empty string when none is
+// stored.
+func (s *RecordTagService) Prompt() string {
+	return s.prompt
 }

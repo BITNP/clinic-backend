@@ -23,6 +23,7 @@ func setupTagTestDB(t *testing.T) *gorm.DB {
 		&models.ClinicRecord{},
 		&models.ClinicRecordDevice{},
 		&models.ClinicRecordTag{},
+		&models.ClinicRecordTagPrompt{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -98,8 +99,9 @@ func TestRecordTagService_SeedCatalog(t *testing.T) {
 	}
 
 	titles := []string{
-		"清灰换硅脂", "换风扇", "重装系统", "加硬盘/内存", "网络问题", "soildworks安装",
-		"软件安装", "安装双系统", "清理C盘", "其它问题", "G15", "蛟龙16",
+		"清灰换硅脂", "风扇故障", "重装系统", "硬盘内存", "网络问题", "SW安装",
+		"软件安装", "安装双系统", "空间整理", "系统驱动", "软件故障", "电池供电",
+		"硬件故障", "其它问题", "G15", "蛟龙16",
 	}
 	for _, title := range titles {
 		if _, ok := svc.ByTitle(title); !ok {
@@ -108,6 +110,32 @@ func TestRecordTagService_SeedCatalog(t *testing.T) {
 	}
 	if int(count) != len(titles) {
 		t.Errorf("expected %d tags, got %d", len(titles), count)
+	}
+}
+
+func TestRecordTagService_SeedPrompt(t *testing.T) {
+	db := setupTagTestDB(t)
+	svc := services.NewRecordTagService(db)
+
+	if err := svc.SeedPrompt(); err != nil {
+		t.Fatalf("seed prompt: %v", err)
+	}
+	if err := svc.SeedPrompt(); err != nil {
+		t.Fatalf("reseed prompt: %v", err)
+	}
+	if err := svc.Load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	var count int64
+	if err := db.Model(&models.ClinicRecordTagPrompt{}).Count(&count).Error; err != nil {
+		t.Fatalf("count prompts: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 prompt row, got %d", count)
+	}
+	if svc.Prompt() == "" {
+		t.Error("expected non-empty prompt after load")
 	}
 }
 

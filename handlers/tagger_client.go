@@ -23,8 +23,9 @@ type taggerTagPayload struct {
 }
 
 type registerTagSetPayload struct {
-	Name string             `json:"name"`
-	Tags []taggerTagPayload `json:"tags"`
+	Name   string             `json:"name"`
+	Prompt string             `json:"prompt"`
+	Tags   []taggerTagPayload `json:"tags"`
 }
 
 type tagPayload struct {
@@ -58,8 +59,8 @@ func NewTaggerHTTPClient(baseURL, apiToken string, timeout time.Duration) servic
 }
 
 // RegisterTagSet registers (or replaces) a named tag set.
-func (c *taggerHTTPClient) RegisterTagSet(ctx context.Context, name string, tags []services.TaggerTag) error {
-	body := registerTagSetPayload{Name: name, Tags: make([]taggerTagPayload, 0, len(tags))}
+func (c *taggerHTTPClient) RegisterTagSet(ctx context.Context, name, prompt string, tags []services.TaggerTag) error {
+	body := registerTagSetPayload{Name: name, Prompt: prompt, Tags: make([]taggerTagPayload, 0, len(tags))}
 	for _, t := range tags {
 		body.Tags = append(body.Tags, taggerTagPayload{
 			Name:        t.Name,

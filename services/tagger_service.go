@@ -32,7 +32,7 @@ var ErrTagSetNotFound = errors.New("tagger tag set not found")
 // TaggerClient is the outbound transport to the tagger API. Implementations
 // live in the web layer so this package stays free of HTTP details.
 type TaggerClient interface {
-	RegisterTagSet(ctx context.Context, name string, tags []TaggerTag) error
+	RegisterTagSet(ctx context.Context, name, prompt string, tags []TaggerTag) error
 	Tag(ctx context.Context, name, text string) (string, error)
 }
 
@@ -103,13 +103,18 @@ func normalizeApplyRule(rule string) string {
 	return strings.TrimSpace(rule)
 }
 
-// RegisterTagSet registers (or replaces) the tag set built from the catalog.
+// RegisterTagSet registers (or replaces) the tag set built from the catalog
+// and the loaded prompt.
 func (s *TaggerService) RegisterTagSet(ctx context.Context) error {
+	prompt := strings.TrimSpace(s.tagSvc.Prompt())
+	if prompt == "" {
+		return errors.New("tagger: no prompt to register")
+	}
 	tags := s.buildTags()
 	if len(tags) == 0 {
 		return errors.New("tagger: no tags to register")
 	}
-	if err := s.client.RegisterTagSet(ctx, s.tagSetName, tags); err != nil {
+	if err := s.client.RegisterTagSet(ctx, s.tagSetName, prompt, tags); err != nil {
 		return err
 	}
 	s.registered = true

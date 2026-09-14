@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 type fakeTaggerClient struct {
 	mu           sync.Mutex
 	registerName string
+	registerPrmt string
 	registered   []services.TaggerTag
 	registerHits int
 	registerErr  error
@@ -25,11 +27,12 @@ type fakeTaggerClient struct {
 	tagFn        func(text string) (string, error)
 }
 
-func (f *fakeTaggerClient) RegisterTagSet(_ context.Context, name string, tags []services.TaggerTag) error {
+func (f *fakeTaggerClient) RegisterTagSet(_ context.Context, name, prompt string, tags []services.TaggerTag) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.registerHits++
 	f.registerName = name
+	f.registerPrmt = prompt
 	f.registered = tags
 	return f.registerErr
 }
@@ -45,10 +48,10 @@ func (f *fakeTaggerClient) Tag(_ context.Context, _, text string) (string, error
 	return "", nil
 }
 
-func (f *fakeTaggerClient) snapshot() (name string, tags []services.TaggerTag, registerHits, tagHits int) {
+func (f *fakeTaggerClient) snapshot() (name, prompt string, tags []services.TaggerTag, registerHits, tagHits int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.registerName, f.registered, f.registerHits, f.tagHits
+	return f.registerName, f.registerPrmt, f.registered, f.registerHits, f.tagHits
 }
 
 // seedTaggerTags loads the default and catalog tags into a fresh in-memory DB
@@ -62,6 +65,9 @@ func seedTaggerTags(t *testing.T) (*gorm.DB, *services.RecordTagService) {
 	}
 	if err := tagSvc.SeedCatalog(); err != nil {
 		t.Fatalf("seed catalog: %v", err)
+	}
+	if err := tagSvc.SeedPrompt(); err != nil {
+		t.Fatalf("seed prompt: %v", err)
 	}
 	if err := tagSvc.Load(); err != nil {
 		t.Fatalf("load tags: %v", err)
@@ -78,25 +84,28 @@ func TestTaggerService_RegisterTagSet(t *testing.T) {
 		t.Fatalf("register: %v", err)
 	}
 
-	name, tags, _, _ := client.snapshot()
+	name, prompt, tags, _, _ := client.snapshot()
 	if name != "clinic_record" {
 		t.Errorf("expected set name clinic_record, got %q", name)
 	}
-	if len(tags) != 11 {
-		t.Errorf("expected 11 tags (catalog minus blank-rule 其它问题), got %d", len(tags))
+	if prompt != tagSvc.Prompt() || prompt == "" {
+		t.Errorf("expected the loaded prompt to be registered, got %q", prompt)
+	}
+	if len(tags) != 16 {
+		t.Errorf("expected 16 tags, got %d", len(tags))
 	}
 	byName := make(map[string]services.TaggerTag, len(tags))
 	for _, tag := range tags {
 		byName[tag.Name] = tag
 	}
-	if _, ok := byName["其它问题"]; ok {
-		t.Error("blank-rule tag 其它问题 must be skipped")
+	if _, ok := byName["其它问题"]; !ok {
+		t.Error("其它问题 now has an apply rule and must be registered")
 	}
 	if _, ok := byName[services.DefaultRecordTagTitle]; ok {
 		t.Error("default no_pending tag must be skipped")
 	}
-	if tag := byName["G15"]; tag.ApplyRule != "g15, dell g15, dellg15" {
-		t.Errorf("expected model: prefix stripped, got %q", tag.ApplyRule)
+	if tag := byName["G15"]; tag.ApplyRule == "" || strings.HasPrefix(tag.ApplyRule, "model:") {
+		t.Errorf("expected a natural-language G15 rule, got %q", tag.ApplyRule)
 	}
 }
 
@@ -109,7 +118,7 @@ func TestTaggerService_Tag_RetriesAfterNotFound(t *testing.T) {
 		if attempts == 1 {
 			return "", services.ErrTagSetNotFound
 		}
-		return "换风扇", nil
+		return "风扇故障", nil
 	}
 	svc := services.NewTaggerService(client, "clinic_record", nil, tagSvc)
 
@@ -117,10 +126,10 @@ func TestTaggerService_Tag_RetriesAfterNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tag: %v", err)
 	}
-	if name != "换风扇" {
-		t.Errorf("expected 换风扇, got %q", name)
+	if name != "风扇故障" {
+		t.Errorf("expected 风扇故障, got %q", name)
 	}
-	_, _, registerHits, tagHits := client.snapshot()
+	_, _, _, registerHits, tagHits := client.snapshot()
 	if registerHits != 2 {
 		t.Errorf("expected tag set registered twice (initial + after 404), got %d", registerHits)
 	}
@@ -131,13 +140,13 @@ func TestTaggerService_Tag_RetriesAfterNotFound(t *testing.T) {
 
 func TestTaggerService_WorkerAssignsTag(t *testing.T) {
 	db, tagSvc := seedTaggerTags(t)
-	matched, ok := tagSvc.ByTitle("换风扇")
+	matched, ok := tagSvc.ByTitle("风扇故障")
 	if !ok {
-		t.Fatal("expected 换风扇 tag in catalog")
+		t.Fatal("expected 风扇故障 tag in catalog")
 	}
 
 	client := &fakeTaggerClient{}
-	client.tagFn = func(string) (string, error) { return "换风扇", nil }
+	client.tagFn = func(string) (string, error) { return "风扇故障", nil }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

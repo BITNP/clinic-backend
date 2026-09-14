@@ -20,8 +20,9 @@ type clientTagDef struct {
 }
 
 type clientRegisterBody struct {
-	Name string         `json:"name"`
-	Tags []clientTagDef `json:"tags"`
+	Name   string         `json:"name"`
+	Prompt string         `json:"prompt"`
+	Tags   []clientTagDef `json:"tags"`
 }
 
 func TestTaggerHTTPClient_RegisterTagSet(t *testing.T) {
@@ -41,7 +42,7 @@ func TestTaggerHTTPClient_RegisterTagSet(t *testing.T) {
 	defer srv.Close()
 
 	client := handlers.NewTaggerHTTPClient(srv.URL, "secret", time.Second)
-	err := client.RegisterTagSet(context.Background(), "clinic_record", []services.TaggerTag{
+	err := client.RegisterTagSet(context.Background(), "clinic_record", "tag the text", []services.TaggerTag{
 		{Name: "换风扇", Description: "fan", ApplyRule: "fan noise"},
 	})
 	if err != nil {
@@ -49,6 +50,9 @@ func TestTaggerHTTPClient_RegisterTagSet(t *testing.T) {
 	}
 	if got.Name != "clinic_record" {
 		t.Errorf("expected set name clinic_record, got %q", got.Name)
+	}
+	if got.Prompt != "tag the text" {
+		t.Errorf("expected prompt in payload, got %q", got.Prompt)
 	}
 	if len(got.Tags) != 1 || got.Tags[0].Name != "换风扇" || got.Tags[0].ApplyRule != "fan noise" {
 		t.Errorf("unexpected tags payload: %+v", got.Tags)
@@ -113,7 +117,7 @@ func TestTaggerHTTPClient_RegisterTagSetError(t *testing.T) {
 	defer srv.Close()
 
 	client := handlers.NewTaggerHTTPClient(srv.URL, "secret", time.Second)
-	err := client.RegisterTagSet(context.Background(), "clinic_record", []services.TaggerTag{
+	err := client.RegisterTagSet(context.Background(), "clinic_record", "tag the text", []services.TaggerTag{
 		{Name: "换风扇", ApplyRule: "fan noise"},
 	})
 	if err == nil {

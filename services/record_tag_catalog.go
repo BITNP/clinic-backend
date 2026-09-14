@@ -15,3 +15,13 @@ func (s *RecordTagService) SeedCatalog() error {
 	}
 	return nil
 }
+
+// SeedPrompt ensures the singleton tag-set prompt exists with the current
+// value. The statement lives in the standalone sql/ package so it can also be
+// run directly against the database.
+func (s *RecordTagService) SeedPrompt() error {
+	if err := s.db.Exec(recordsql.RecordTagPrompt).Error; err != nil {
+		return fmt.Errorf("seed record tag prompt: %w", err)
+	}
+	return nil
+}
