@@ -18,6 +18,7 @@ const DefaultRecordTagTitle = "no_pending"
 // in-memory maps are written once during boot and only read afterwards.
 type RecordTagService struct {
 	db        *gorm.DB
+	tags      []models.ClinicRecordTag
 	byID      map[uint]models.ClinicRecordTag
 	byTitle   map[string]models.ClinicRecordTag
 	defaultID uint
@@ -50,6 +51,7 @@ func (s *RecordTagService) Load() error {
 		byTitle[t.Title] = t
 	}
 
+	s.tags = tags
 	s.byID = byID
 	s.byTitle = byTitle
 	if t, ok := byTitle[DefaultRecordTagTitle]; ok {
@@ -71,6 +73,11 @@ func (s *RecordTagService) BackfillRecords() error {
 // DefaultID returns the cached id of the default tag.
 func (s *RecordTagService) DefaultID() uint {
 	return s.defaultID
+}
+
+// All returns every tag in id order, as loaded at startup.
+func (s *RecordTagService) All() []models.ClinicRecordTag {
+	return s.tags
 }
 
 // ByID returns the tag with the given id, if loaded.

@@ -45,6 +45,10 @@ services:
       SESSION_TTL: ${SESSION_TTL:-336h}
       KEYCLOAK_REALM_URL: ${KEYCLOAK_REALM_URL:-}
       KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-}
+      TAGGER_URL: ${TAGGER_URL:-http://127.0.0.1:4514}
+      TAGGER_API_TOKEN: ${TAGGER_API_TOKEN:-}
+      TAGGER_TAG_SET: ${TAGGER_TAG_SET:-clinic_record}
+      TAGGER_TIMEOUT: ${TAGGER_TIMEOUT:-15s}
     restart: unless-stopped
 
   admin-frontend:

@@ -103,6 +103,17 @@ func main() {
 		log.Fatalf("failed to backfill record tag_id: %v", err)
 	}
 
+	taggerURL := envString("TAGGER_URL", "http://127.0.0.1:4514")
+	taggerToken := os.Getenv("TAGGER_API_TOKEN")
+	taggerTagSet := envString("TAGGER_TAG_SET", "clinic_record")
+	var taggerSvc *services.TaggerService
+	if taggerURL != "" && taggerToken != "" {
+		taggerClient := handlers.NewTaggerHTTPClient(taggerURL, taggerToken, envDuration("TAGGER_TIMEOUT", 15*time.Second))
+		taggerSvc = services.NewTaggerService(taggerClient, taggerTagSet, db, recordTagSvc)
+	} else {
+		log.Println("tagger disabled: set TAGGER_URL and TAGGER_API_TOKEN to enable")
+	}
+
 	announcementSvc := services.NewAnnouncementService(db)
 	announcementH := handlers.NewAnnouncementHandler(announcementSvc)
 
@@ -115,6 +126,9 @@ func main() {
 
 	ticketSvc := services.NewTicketService(db, serviceDateLoc)
 	ticketSvc.SetDefaultTagID(recordTagSvc.DefaultID())
+	if taggerSvc != nil {
+		ticketSvc.SetTagger(taggerSvc)
+	}
 	ticketH := handlers.NewTicketHandler(ticketSvc)
 	legacyH := handlers.NewLegacyHandler(ticketSvc, serviceDateSvc, roomSvc, announcementSvc)
 
@@ -391,6 +405,10 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if taggerSvc != nil {
+		go taggerSvc.Run(ctx)
+	}
 
 	go func() {
 		runCleanup := func() {

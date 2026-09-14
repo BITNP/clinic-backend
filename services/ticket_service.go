@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"clinic-backend/models"
@@ -50,6 +51,13 @@ type TicketService struct {
 	db           *gorm.DB
 	loc          *time.Location
 	defaultTagID uint
+	tagger       TicketTagger
+}
+
+// TicketTagger asynchronously classifies a newly created record. Enqueue must
+// not block; callers fall back to the default tag if tagging cannot keep up.
+type TicketTagger interface {
+	Enqueue(recordID uint, text string)
 }
 
 func NewTicketService(db *gorm.DB, loc *time.Location) *TicketService {
@@ -62,6 +70,11 @@ func NewTicketService(db *gorm.DB, loc *time.Location) *TicketService {
 // SetDefaultTagID sets the tag id assigned to newly created records.
 func (s *TicketService) SetDefaultTagID(id uint) {
 	s.defaultTagID = id
+}
+
+// SetTagger enables asynchronous tagging of newly created records.
+func (s *TicketService) SetTagger(t TicketTagger) {
+	s.tagger = t
 }
 
 // todayCutoff returns 00:00:00 UTC for the current calendar day in the service
@@ -146,7 +159,20 @@ func (s *TicketService) Create(in CreateTicketInput) (models.ClinicRecord, error
 	if err != nil {
 		return models.ClinicRecord{}, err
 	}
+	if s.tagger != nil {
+		s.tagger.Enqueue(rec.ID, taggerText(in.Description, in.Model))
+	}
 	return rec, nil
+}
+
+// taggerText builds the text sent to the tagger: the customer's problem
+// description plus, when present, the laptop model.
+func taggerText(description, model string) string {
+	text := strings.TrimSpace(description)
+	if m := strings.TrimSpace(model); m != "" {
+		text += "\n笔记本型号: " + m
+	}
+	return text
 }
 
 // validateCreate runs steps 1-4 in order. Returns the first failure, if any.
