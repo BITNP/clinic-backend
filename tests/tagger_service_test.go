@@ -240,3 +240,37 @@ func TestTaggerService_WorkerKeepsDefaultOnError(t *testing.T) {
 		t.Errorf("expected default tag %d, got %d", def.ID, got.TagID)
 	}
 }
+
+func TestTaggerService_RunRegistersWhenUnregistered(t *testing.T) {
+	_, tagSvc := seedTaggerTags(t)
+	client := &fakeTaggerClient{}
+	svc := services.NewTaggerService(client, "clinic_record", nil, tagSvc)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	svc.Run(ctx)
+
+	_, _, _, registerHits, _ := client.snapshot()
+	if registerHits != 1 {
+		t.Errorf("expected the tag set registered once, got %d", registerHits)
+	}
+}
+
+func TestTaggerService_RunSkipsRegistrationWhenAlreadyRegistered(t *testing.T) {
+	_, tagSvc := seedTaggerTags(t)
+	client := &fakeTaggerClient{}
+	svc := services.NewTaggerService(client, "clinic_record", nil, tagSvc)
+
+	if err := svc.RegisterTagSet(context.Background()); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	svc.Run(ctx)
+
+	_, _, _, registerHits, _ := client.snapshot()
+	if registerHits != 1 {
+		t.Errorf("expected no redundant registration, got %d", registerHits)
+	}
+}

@@ -45,8 +45,9 @@ type tagJob struct {
 // TaggerService tags newly created records by calling an external tagger API.
 // Work is queued by Enqueue and processed asynchronously by a single worker
 // started with Run, so ticket creation never blocks on the tagger. Tag sets
-// live in memory on the tagger side, so the set is registered on boot and again
-// whenever the tagger reports it is missing.
+// live in memory on the tagger side, so the set is registered once at startup
+// by the caller (main) and again by Tag whenever the tagger reports it is
+// missing.
 type TaggerService struct {
 	client     TaggerClient
 	tagSetName string
@@ -156,9 +157,13 @@ func (s *TaggerService) Enqueue(recordID uint, text string) {
 
 // Run processes queued jobs until ctx is cancelled. It is intended to be
 // started as a single goroutine, which keeps the registered flag race-free.
+// The tag set is normally registered by the caller at startup; when that has
+// not happened yet, the worker registers it before processing jobs.
 func (s *TaggerService) Run(ctx context.Context) {
-	if err := s.RegisterTagSet(ctx); err != nil {
-		log.Printf("tagger: initial tag-set registration failed: %v", err)
+	if !s.registered {
+		if err := s.RegisterTagSet(ctx); err != nil {
+			log.Printf("tagger: initial tag-set registration failed: %v", err)
+		}
 	}
 
 	for {

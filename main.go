@@ -411,6 +411,11 @@ func main() {
 	defer stop()
 
 	if taggerSvc != nil {
+		if err := taggerSvc.RegisterTagSet(ctx); err != nil {
+			log.Printf("tagger: not connected at startup (tag set %q, url %s): %v", taggerTagSet, taggerURL, err)
+		} else {
+			log.Printf("tagger: connected at startup (tag set %q, url %s)", taggerTagSet, taggerURL)
+		}
 		go taggerSvc.Run(ctx)
 	}
 
