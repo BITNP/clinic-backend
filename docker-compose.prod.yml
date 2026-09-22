@@ -3,7 +3,8 @@ version: "3"
 # Production deployment: pulls the pre-built images from GHCR — no local build.
 # Runs the backend and the admin frontend as a single stack.
 # Uses the Postgres already running on the server (host.containers.internal:5432),
-# same as the other clinic services.
+# same as the other clinic services. Redis is expected the same way, on
+# host.containers.internal:6379 (override with REDIS_ADDR).
 #
 # Podman alternative (rootless, same compose file):
 #   systemctl --user enable --now podman.socket
@@ -34,6 +35,9 @@ services:
       CLINIC_API_KEY: ${CLINIC_API_KEY:?set CLINIC_API_KEY in .env}
       CLINIC_TIMEZONE: ${CLINIC_TIMEZONE:-Asia/Shanghai}
       TZ: ${TZ:-Asia/Shanghai}
+      REDIS_ADDR: ${REDIS_ADDR:-host.containers.internal:6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5173}
       CAS_SERVER_URL: ${CAS_SERVER_URL:-}
       CAS_HTTP_TIMEOUT: ${CAS_HTTP_TIMEOUT:-10s}

@@ -90,6 +90,23 @@ func main() {
 		log.Fatalf("failed to create enabled-schedule unique index: %v", err)
 	}
 
+	// Redis is required infrastructure: fail fast if it is not configured or
+	// not reachable.
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		log.Fatal("REDIS_ADDR not set")
+	}
+	redisPingCtx, cancelRedisPing := context.WithTimeout(context.Background(), 5*time.Second)
+	redisClient, err := newRedisClient(redisPingCtx, redisConfig{
+		addr:     redisAddr,
+		password: os.Getenv("REDIS_PASSWORD"),
+		db:       envInt("REDIS_DB", 0),
+	})
+	cancelRedisPing()
+	if err != nil {
+		log.Fatalf("failed to connect to redis: %v", err)
+	}
+
 	recordTagSvc := services.NewRecordTagService(db)
 	if _, err := recordTagSvc.SeedDefault(); err != nil {
 		log.Fatalf("failed to seed default record tag: %v", err)
@@ -205,6 +222,9 @@ func main() {
 
 	r := gin.Default()
 	r.RedirectTrailingSlash = false
+
+	// ── Health ────────────────────────────────────────────────────────────
+	r.GET("/healthz", redisHealthHandler(redisClient))
 
 	// ── CAS login/logout ─────────────────────────────────────────────────
 	r.GET("/login", casHandler.Login)
@@ -465,6 +485,9 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("server shutdown error: %v", err)
+	}
+	if err := redisClient.Close(); err != nil {
+		log.Printf("redis close error: %v", err)
 	}
 }
 

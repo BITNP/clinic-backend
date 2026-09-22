@@ -45,14 +45,16 @@ echo $PAT | docker login ghcr.io -u Potato-Yao --password-stdin
 
 `docker-compose.prod.yml` is a standalone deploy config — copy it and `.env`
 to the server, no source checkout needed. It pulls the pre-built backend and
-admin-frontend images from GHCR and connects to the Postgres already running
-on the server via `host.containers.internal:5432` (no bundled database), like
-the other clinic services. It refuses to start if `CLINIC_API_KEY` is missing:
+admin-frontend images from GHCR and connects to the Postgres and Redis already
+running on the server via `host.containers.internal` (no bundled database),
+like the other clinic services. It refuses to start if `CLINIC_API_KEY` is
+missing:
 
 ```bash
 cp .env.example .env   # set CLINIC_API_KEY, APP_BASE_URL, CAS_SERVER_URL, ...
 # set CLINIC_DB_DSN in .env to override the default
 # (postgres://clinic:clinic@host.containers.internal:5432/clinic?sslmode=disable)
+# set REDIS_ADDR=host.containers.internal:6379 (the prod default) or your Redis
 docker compose -f docker-compose.prod.yml up -d --pull always
 ```
 
@@ -60,6 +62,7 @@ The frontend (Caddy on `:5173`) proxies `/api`, `/login`, `/logout` to the
 backend over the compose network, so the backend needs no host port.
 
 - Postgres: `:5432` (user/db/password all `clinic`, persisted in a volume).
+- Redis: `:6379` (required; the backend refuses to start without it).
 - Admin frontend: `:5173`.
 - Backend: `:8080` (compose-internal; expose a host port if you need to reach
   it directly).
@@ -111,8 +114,12 @@ is needed — requests stay same-origin from the browser's perspective.
 # 1. Start the fake CAS server (gives admin role)
 go run fake/fake_cas.go        # runs on :9999
 
-# 2. Start the backend
+# 2. Start Redis (required; see docker-compose.yml for the dev service)
+docker run --rm -p 6379:6379 redis:7-alpine
+
+# 3. Start the backend
 export CLINIC_API_KEY=local-dev-key
+export REDIS_ADDR=127.0.0.1:6379
 export CAS_SERVER_URL=http://127.0.0.1:9999
 export APP_BASE_URL=http://127.0.0.1:5173
 export CAS_DEFAULT_REDIRECT=/
@@ -121,7 +128,7 @@ export SESSION_COOKIE_SAMESITE=lax
 export STAFF_VERSION=0
 go run main.go                 # runs on :8080
 
-# 3. Start the frontend (separate terminal)
+# 4. Start the frontend (separate terminal)
 cd path/to/clinic_admin_frontend
 pnpm dev                       # runs on :5173
 ```
