@@ -136,3 +136,23 @@ pnpm dev                       # runs on :5173
 ```
 
 Sessions whose staff `version` differs from `STAFF_VERSION` are rejected until the staff log in again, so each time you raise `STAFF_VERSION` all staff are forced through the login page once.
+
+## Data sync counters
+
+The backend keeps one change counter per data group in Redis
+(`clinic:sync:<group>`), incremented whenever that group's data changes:
+
+| Group | Key | Changed by |
+| --- | --- | --- |
+| record | `clinic:sync:record` | admin record actions, customer tickets/wechat, nightly cleanup, record tagger |
+| room | `clinic:sync:room` | room create/update/delete |
+| work_schedule | `clinic:sync:work_schedule` | work schedule create/update/delete and staff/weekday edits |
+| service_date | `clinic:sync:service_date` | service date create/update/delete |
+| staff | `clinic:sync:staff` | staff create/update/delete, CAS/Keycloak login upserts |
+| announcement | `clinic:sync:announcement` | announcement create/update/delete |
+
+Clients read the current values from `GET /api/admin/sync` (admin/staff session)
+or `GET /api/sync` (API-key client), keep the values they last saw, and refetch
+their data when a value differs. Counters are best-effort: a Redis failure is
+logged and never fails the underlying write.
+

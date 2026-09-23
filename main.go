@@ -107,6 +107,11 @@ func main() {
 		log.Fatalf("failed to connect to redis: %v", err)
 	}
 
+	// Sync counters live in Redis so every backend replica shares them. Clients
+	// poll Snapshot and refresh when a value differs from their last-seen one.
+	syncSvc := services.NewSyncService(newRedisSyncStore(redisClient))
+	syncH := handlers.NewSyncHandler(syncSvc)
+
 	recordTagSvc := services.NewRecordTagService(db)
 	if _, err := recordTagSvc.SeedDefault(); err != nil {
 		log.Fatalf("failed to seed default record tag: %v", err)
@@ -131,6 +136,7 @@ func main() {
 	if taggerURL != "" && taggerToken != "" {
 		taggerClient := handlers.NewTaggerHTTPClient(taggerURL, taggerToken, envDuration("TAGGER_TIMEOUT", 15*time.Second))
 		taggerSvc = services.NewTaggerService(taggerClient, taggerTagSet, db, recordTagSvc)
+		taggerSvc.SetSyncService(syncSvc)
 	} else {
 		log.Println("tagger disabled: set TAGGER_URL and TAGGER_API_TOKEN to enable")
 	}
@@ -177,6 +183,7 @@ func main() {
 	keycloakRealm := os.Getenv("KEYCLOAK_REALM_URL")
 	keycloakClient := os.Getenv("KEYCLOAK_CLIENT_ID")
 	keycloakAuth := handlers.NewKeycloakAuthenticator(keycloakRealm, keycloakClient, staffSvc)
+	keycloakAuth.SetSyncService(syncSvc)
 
 	// Current required login version. Raise STAFF_VERSION at deploy time to
 	// force every staff member to re-login once.
@@ -200,6 +207,7 @@ func main() {
 		Client:         casClient,
 		SessionService: sessionSvc,
 		StaffService:   staffSvc,
+		SyncService:    syncSvc,
 		BaseURL:        appBaseURL,
 		DefaultNext:    envString("CAS_DEFAULT_REDIRECT", "/manage/"),
 		CookieName:     envString("SESSION_COOKIE_NAME", "sessionid"),
@@ -239,7 +247,7 @@ func main() {
 		annRead.GET("/:id", announcementH.Get)
 	}
 	annWrite := r.Group("/api/admin/announcements")
-	annWrite.Use(adminAuth, handlers.RequireAdmin)
+	annWrite.Use(adminAuth, handlers.RequireAdmin, handlers.SyncBumpMiddleware(syncSvc, services.SyncGroupAnnouncement))
 	{
 		annWrite.POST("", announcementH.Create)
 		annWrite.PUT("/:id", announcementH.Update)
@@ -255,7 +263,7 @@ func main() {
 		sdRead.GET("/:id", serviceDateH.Get)
 	}
 	sdWrite := r.Group("/api/admin/service-dates")
-	sdWrite.Use(adminAuth, handlers.RequireAdmin)
+	sdWrite.Use(adminAuth, handlers.RequireAdmin, handlers.SyncBumpMiddleware(syncSvc, services.SyncGroupServiceDate))
 	{
 		sdWrite.POST("", serviceDateH.Create)
 		sdWrite.PUT("/:id", serviceDateH.Update)
@@ -270,7 +278,7 @@ func main() {
 		roomRead.GET("/:id", roomH.Get)
 	}
 	roomWrite := r.Group("/api/admin/rooms")
-	roomWrite.Use(adminAuth, handlers.RequireAdmin)
+	roomWrite.Use(adminAuth, handlers.RequireAdmin, handlers.SyncBumpMiddleware(syncSvc, services.SyncGroupRoom))
 	{
 		roomWrite.POST("", roomH.Create)
 		roomWrite.PUT("/:id", roomH.Update)
@@ -279,7 +287,7 @@ func main() {
 
 	// ── Admin: Records (staff can read and perform site operations) ───────
 	records := r.Group("/api/admin/records")
-	records.Use(adminAuth, handlers.RequireStaff)
+	records.Use(adminAuth, handlers.RequireStaff, handlers.SyncBumpMiddleware(syncSvc, services.SyncGroupRecord))
 	{
 		records.GET("", adminRecordH.List)
 		records.GET("/:id", adminRecordH.Get)
@@ -292,7 +300,7 @@ func main() {
 	}
 	// ── Admin: Records (admin only — approve / reject) ────────────────────
 	recordsAdmin := r.Group("/api/admin/records")
-	recordsAdmin.Use(adminAuth, handlers.RequireAdmin)
+	recordsAdmin.Use(adminAuth, handlers.RequireAdmin, handlers.SyncBumpMiddleware(syncSvc, services.SyncGroupRecord))
 	{
 		recordsAdmin.POST("/:id/confirm", adminRecordH.Confirm)
 		recordsAdmin.POST("/:id/reject", adminRecordH.Reject)
@@ -300,7 +308,7 @@ func main() {
 
 	// ── Admin: Staff Management (admin only) ──────────────────────────────
 	staffAdm := r.Group("/api/admin/staff")
-	staffAdm.Use(adminAuth, handlers.RequireAdmin)
+	staffAdm.Use(adminAuth, handlers.RequireAdmin, handlers.SyncBumpMiddleware(syncSvc, services.SyncGroupStaff))
 	{
 		staffAdm.GET("", staffH.List)
 		staffAdm.GET("/:id", staffH.Get)
@@ -317,7 +325,7 @@ func main() {
 		wsRead.GET("/:id", workScheduleH.Get)
 	}
 	wsWrite := r.Group("/api/admin/work-schedules")
-	wsWrite.Use(adminAuth, handlers.RequireAdmin)
+	wsWrite.Use(adminAuth, handlers.RequireAdmin, handlers.SyncBumpMiddleware(syncSvc, services.SyncGroupWorkSchedule))
 	{
 		wsWrite.GET("/all", workScheduleH.ListAll)
 		wsWrite.GET("/service-availability", workScheduleH.ServiceAvailability)
@@ -353,7 +361,7 @@ func main() {
 
 	// ── Ticket routes (client) ────────────────────────────────────────────
 	ticket := r.Group("/api/tickets")
-	ticket.Use(clientAuth)
+	ticket.Use(clientAuth, handlers.SyncBumpMiddleware(syncSvc, services.SyncGroupRecord))
 	{
 		ticket.GET("", ticketH.List)
 		ticket.POST("", ticketH.Create)
@@ -373,7 +381,7 @@ func main() {
 	// /api/wechat — ticket lifecycle in old Django DRF shape (int status,
 	// {count,next,previous,results} pagination, /api/wechat/{id}/ url).
 	wechat := r.Group("/api/wechat")
-	wechat.Use(clientAuth)
+	wechat.Use(clientAuth, handlers.SyncBumpMiddleware(syncSvc, services.SyncGroupRecord))
 	{
 		wechat.GET("", legacyH.ListRecords)
 		wechat.GET("/", legacyH.ListRecords)
@@ -421,6 +429,21 @@ func main() {
 		ann.GET("/", legacyH.ListAnnouncements)
 	}
 
+	// ── Sync counters ─────────────────────────────────────────────────────
+	// Clients poll these and refresh when a group's counter differs from the
+	// value they last saw. Staff/admin sessions and API-key clients each get a
+	// route for the same handler.
+	syncAdmin := r.Group("/api/admin/sync")
+	syncAdmin.Use(adminAuth, handlers.RequireStaff)
+	{
+		syncAdmin.GET("", syncH.Get)
+	}
+	syncClient := r.Group("/api/sync")
+	syncClient.Use(clientAuth)
+	{
+		syncClient.GET("", syncH.Get)
+	}
+
 	// ── User endpoints ────────────────────────────────────────────────────
 	r.GET("/api/user", adminAuth, userH.Current)
 	r.GET("/api/user/", adminAuth, userH.Current)
@@ -447,6 +470,9 @@ func main() {
 				log.Printf("cleanup error: %v", err)
 			} else if noShow > 0 || completed > 0 {
 				log.Printf("cleanup: %d no_show, %d completed", noShow, completed)
+				if err := syncSvc.Bump(ctx, services.SyncGroupRecord); err != nil {
+					log.Printf("cleanup: bump record sync counter failed: %v", err)
+				}
 			}
 		}
 

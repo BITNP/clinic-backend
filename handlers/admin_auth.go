@@ -87,9 +87,9 @@ func determineRole(groups []string) StaffRole {
 	return ""
 }
 
-// extractWorkYears parses group names of the form YYYY-XXXX and returns the
+// ExtractWorkYears parses group names of the form YYYY-XXXX and returns the
 // year for each one. Groups that do not match the format are ignored.
-func extractWorkYears(groups []string) []int {
+func ExtractWorkYears(groups []string) []int {
 	var years []int
 	seen := make(map[int]bool)
 	for _, g := range groups {

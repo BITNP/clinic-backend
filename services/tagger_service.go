@@ -53,6 +53,7 @@ type TaggerService struct {
 	tagSetName string
 	tagSvc     *RecordTagService
 	db         *gorm.DB
+	syncSvc    *SyncService
 	jobs       chan tagJob
 	registered bool
 }
@@ -71,6 +72,12 @@ func NewTaggerService(client TaggerClient, tagSetName string, db *gorm.DB, tagSv
 		db:         db,
 		jobs:       make(chan tagJob, taggerQueueSize),
 	}
+}
+
+// SetSyncService wires the sync counter so that tag updates made by the
+// background worker bump the record counter.
+func (s *TaggerService) SetSyncService(syncSvc *SyncService) {
+	s.syncSvc = syncSvc
 }
 
 // buildTags maps the in-memory record tag catalog onto tagger tag definitions.
@@ -195,5 +202,11 @@ func (s *TaggerService) process(ctx context.Context, job tagJob) {
 		Where("id = ?", job.recordID).
 		Update("tag_id", tag.ID).Error; err != nil {
 		log.Printf("tagger: update record %d tag_id failed: %v", job.recordID, err)
+		return
+	}
+	if s.syncSvc != nil {
+		if err := s.syncSvc.Bump(ctx, SyncGroupRecord); err != nil {
+			log.Printf("tagger: bump record sync counter failed: %v", err)
+		}
 	}
 }

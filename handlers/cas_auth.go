@@ -19,6 +19,7 @@ type CASAuthConfig struct {
 	Client         CASClient
 	SessionService *services.SessionService
 	StaffService   *services.StaffService
+	SyncService    *services.SyncService
 	BaseURL        string
 	DefaultNext    string
 	CookieName     string
@@ -91,7 +92,7 @@ func (h *CASAuthHandler) Login(c *gin.Context) {
 		log.Printf("warning: failed to persist role %s for staff %d: %v", role, staff.ID, err)
 	}
 
-	if err := h.cfg.StaffService.EnsureWorkYears(staff.ID, extractWorkYears(attrs.Groups)); err != nil {
+	if err := h.cfg.StaffService.EnsureWorkYears(staff.ID, ExtractWorkYears(attrs.Groups)); err != nil {
 		log.Printf("warning: failed to record work years for staff %d: %v", staff.ID, err)
 	}
 
@@ -99,6 +100,10 @@ func (h *CASAuthHandler) Login(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to finalize login"})
 		return
 	}
+
+	// Login writes staff fields (role, work years, version), so staff clients
+	// should refresh their staff data.
+	h.bumpStaffSync(c)
 
 	sessionToken, csrfToken, err := h.cfg.SessionService.Create(staff.ID, string(role), ticket)
 	if err != nil {
@@ -130,6 +135,17 @@ func (h *CASAuthHandler) Logout(c *gin.Context) {
 		return
 	}
 	c.Redirect(http.StatusFound, h.cfg.Client.LogoutURL(returnURL))
+}
+
+// bumpStaffSync bumps the staff counter when login changed staff data. It is
+// best-effort and only logs failures.
+func (h *CASAuthHandler) bumpStaffSync(c *gin.Context) {
+	if h.cfg.SyncService == nil {
+		return
+	}
+	if err := h.cfg.SyncService.Bump(c.Request.Context(), services.SyncGroupStaff); err != nil {
+		log.Printf("warning: failed to bump staff sync counter: %v", err)
+	}
 }
 
 func (h *CASAuthHandler) validNext(next string) string {

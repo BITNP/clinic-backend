@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
@@ -25,6 +26,7 @@ type KeycloakAuthenticator struct {
 	realmURL string
 	clientID string
 	staffSvc *services.StaffService
+	syncSvc  *services.SyncService
 
 	staffVersion int
 
@@ -39,6 +41,12 @@ func NewKeycloakAuthenticator(realmURL, clientID string, staffSvc *services.Staf
 		clientID: clientID,
 		staffSvc: staffSvc,
 	}
+}
+
+// SetSyncService wires the sync counter so resolving a bearer token, which
+// upserts staff fields, bumps the staff counter.
+func (a *KeycloakAuthenticator) SetSyncService(syncSvc *services.SyncService) {
+	a.syncSvc = syncSvc
 }
 
 // SetStaffVersion sets the currently required login version stamped onto staff.
@@ -85,7 +93,7 @@ func (a *KeycloakAuthenticator) Authenticate(tokenStr string) (models.ClinicStaf
 		log.Printf("warning: failed to persist role %s for staff %d: %v", role, staff.ID, err)
 	}
 
-	if err := a.staffSvc.EnsureWorkYears(staff.ID, extractWorkYears(groups)); err != nil {
+	if err := a.staffSvc.EnsureWorkYears(staff.ID, ExtractWorkYears(groups)); err != nil {
 		log.Printf("warning: failed to record work years for staff %d: %v", staff.ID, err)
 	}
 
@@ -93,7 +101,22 @@ func (a *KeycloakAuthenticator) Authenticate(tokenStr string) (models.ClinicStaf
 		log.Printf("warning: failed to update version for staff %d: %v", staff.ID, err)
 	}
 
+	a.bumpStaffSync()
+
 	return staff, role, nil
+}
+
+// bumpStaffSync bumps the staff counter after a bearer login upserts staff
+// data. It is best-effort and only logs failures.
+func (a *KeycloakAuthenticator) bumpStaffSync() {
+	if a.syncSvc == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), syncBumpTimeout)
+	defer cancel()
+	if err := a.syncSvc.Bump(ctx, services.SyncGroupStaff); err != nil {
+		log.Printf("warning: failed to bump staff sync counter: %v", err)
+	}
 }
 
 func extractGroups(claims jwt.MapClaims) []string {

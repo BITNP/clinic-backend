@@ -26,9 +26,9 @@ func TestExtractWorkYears(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := handlers.extractWorkYears(tt.groups)
+			got := handlers.ExtractWorkYears(tt.groups)
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("extractWorkYears(%v) = %v, want %v", tt.groups, got, tt.want)
+				t.Errorf("ExtractWorkYears(%v) = %v, want %v", tt.groups, got, tt.want)
 			}
 		})
 	}
