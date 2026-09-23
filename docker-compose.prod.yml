@@ -1,20 +1,22 @@
 version: "3"
 
-# Production deployment: pulls the pre-built images from GHCR — no local build.
-# Runs the backend and the admin frontend as a single stack.
+# Production deployment: runs pre-built images — no local build.
+# Runs the backend, the admin frontend and Redis as a single stack.
 # Uses the Postgres already running on the server (host.containers.internal:5432),
-# same as the other clinic services. Redis is expected the same way, on
-# host.containers.internal:6379 (override with REDIS_ADDR).
+# same as the other clinic services. Redis is bundled as a compose service here
+# (reachable at redis:6379 on the compose network, no host port) and is loaded
+# from a locally packaged image tarball rather than pulled from a registry.
 #
 # Podman alternative (rootless, same compose file):
 #   systemctl --user enable --now podman.socket
-#   podman-compose -f docker-compose.prod.yml up -d --pull always
+#   podman-compose -f docker-compose.prod.yml up -d
 #
-# Usage on the server (only this file + .env are needed, no source checkout):
+# Usage on the server (only this file + .env + the image tarball are needed):
+#   docker load -i clinic-images.tar
 #   cp .env.example .env            # then set real secrets:
 #                                   #   CLINIC_API_KEY, APP_BASE_URL,
 #                                   #   CAS_SERVER_URL, CLINIC_DB_DSN, ...
-#   docker compose -f docker-compose.prod.yml up -d --pull always
+#   docker compose -f docker-compose.prod.yml up -d
 #
 # Pin a specific image version with BACKEND_IMAGE_TAG / ADMIN_FRONTEND_IMAGE_TAG,
 # e.g. BACKEND_IMAGE_TAG=1.2.3
@@ -26,16 +28,43 @@ version: "3"
 #     - "8080:8080"
 
 services:
+  redis:
+    image: redis:7-alpine
+    # The image is shipped to the server in the packaged tarball, never pulled.
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command:
+      - sh
+      - -c
+      - |
+        if [ -n "$$REDIS_PASSWORD" ]; then
+          exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"
+        else
+          exec redis-server --appendonly yes
+        fi
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli $${REDIS_PASSWORD:+-a \"$$REDIS_PASSWORD\"} ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   backend:
     image: ghcr.io/bitnp/clinic-backend:${BACKEND_IMAGE_TAG:-latest}
     env_file: .env
+    depends_on:
+      redis:
+        condition: service_healthy
     environment:
       CLINIC_DB_DRIVER: postgres
       CLINIC_DB_DSN: ${CLINIC_DB_DSN:-postgres://${POSTGRES_USER:-clinic}:${POSTGRES_PASSWORD:-clinic}@host.containers.internal:5432/${POSTGRES_DB:-clinic}?sslmode=disable}
       CLINIC_API_KEY: ${CLINIC_API_KEY:?set CLINIC_API_KEY in .env}
       CLINIC_TIMEZONE: ${CLINIC_TIMEZONE:-Asia/Shanghai}
       TZ: ${TZ:-Asia/Shanghai}
-      REDIS_ADDR: ${REDIS_ADDR:-host.containers.internal:6379}
+      REDIS_ADDR: ${REDIS_ADDR:-redis:6379}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       REDIS_DB: ${REDIS_DB:-0}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5173}
@@ -66,3 +95,6 @@ services:
       BACKEND_UPSTREAM: ${BACKEND_UPSTREAM:-http://backend:8080}
     ports:
       - "${ADMIN_FRONTEND_PORT:-5173}:80"
+
+volumes:
+  redisdata:

@@ -43,39 +43,61 @@ echo $PAT | docker login ghcr.io -u Potato-Yao --password-stdin
 
 ## Deploy to a server
 
-`docker-compose.prod.yml` is a standalone deploy config — copy it and `.env`
-to the server, no source checkout needed. It pulls the pre-built backend and
-admin-frontend images from GHCR and connects to the Postgres and Redis already
-running on the server via `host.containers.internal` (no bundled database),
-like the other clinic services. It refuses to start if `CLINIC_API_KEY` is
-missing:
+`docker-compose.prod.yml` is a standalone deploy config — only this file, `.env`
+and the packaged image tarball are needed on the server, no source checkout. It
+runs the backend, the admin frontend and a bundled Redis service, and connects
+to the Postgres already running on the server via `host.containers.internal` (no
+bundled database), like the other clinic services. It refuses to start if
+`CLINIC_API_KEY` is missing.
+
+The server cannot pull the bundled Redis image from Docker Hub, so package the
+images on a machine that can and copy the tarball over:
 
 ```bash
-cp .env.example .env   # set CLINIC_API_KEY, APP_BASE_URL, CAS_SERVER_URL, ...
+# On your local machine: create .env from the example and fill in the secrets
+# (CLINIC_API_KEY, APP_BASE_URL, CAS_SERVER_URL, ...).
+cp .env.example .env
 # set CLINIC_DB_DSN in .env to override the default
 # (postgres://clinic:clinic@host.containers.internal:5432/clinic?sslmode=disable)
-# set REDIS_ADDR=host.containers.internal:6379 (the prod default) or your Redis
-docker compose -f docker-compose.prod.yml up -d --pull always
+
+# Pull and bundle all three images into a single tarball.
+docker pull ghcr.io/bitnp/clinic-backend:${BACKEND_IMAGE_TAG:-latest}
+docker pull ghcr.io/bitnp/clinic_admin_frontend:${ADMIN_FRONTEND_IMAGE_TAG:-latest}
+docker pull redis:7-alpine
+docker save -o clinic-images.tar \
+  ghcr.io/bitnp/clinic-backend:${BACKEND_IMAGE_TAG:-latest} \
+  ghcr.io/bitnp/clinic_admin_frontend:${ADMIN_FRONTEND_IMAGE_TAG:-latest} \
+  redis:7-alpine
+
+scp clinic-images.tar docker-compose.prod.yml .env server:
+
+# On the server: load the images and start the stack.
+docker load -i clinic-images.tar
+docker compose -f docker-compose.prod.yml up -d
 ```
+
+Do not use `--pull always` or `docker compose pull` for this stack: those bypass
+`pull_policy` and would try to fetch Redis from Docker Hub, which the server
+cannot reach. The bundled Redis service has `pull_policy: never` and is served
+from the loaded tarball.
 
 The frontend (Caddy on `:5173`) proxies `/api`, `/login`, `/logout` to the
 backend over the compose network, so the backend needs no host port.
 
-- Postgres: `:5432` (user/db/password all `clinic`, persisted in a volume).
-- Redis: `:6379` (required; the backend refuses to start without it).
+- Postgres: `:5432` on the host (`host.containers.internal`; user/db/password
+  all `clinic` by default).
+- Redis: `:6379` bundled in the stack (compose-internal, persisted in the
+  `redisdata` volume; the backend refuses to start without it). Set
+  `REDIS_PASSWORD` to require a password.
 - Admin frontend: `:5173`.
 - Backend: `:8080` (compose-internal; expose a host port if you need to reach
   it directly).
 - Override any config via `.env` (see `.env.example`) or environment
   variables, e.g. `CLINIC_API_KEY=secret docker compose up --build`.
 
-To pin specific image versions instead of `latest`:
-
-```bash
-echo BACKEND_IMAGE_TAG=1.2.3 >> .env
-echo ADMIN_FRONTEND_IMAGE_TAG=1.2.3 >> .env
-docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
-```
+To pin specific image versions instead of `latest`, set `BACKEND_IMAGE_TAG` and
+`ADMIN_FRONTEND_IMAGE_TAG` in `.env`, and use those same tags in the `docker
+pull` / `docker save` commands above.
 
 The database schema is created automatically on startup via AutoMigrate. To
 load sample data (rooms, service dates, announcements, staff), run the seed
