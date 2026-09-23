@@ -120,13 +120,15 @@ docker run --rm -p 6379:6379 redis:7-alpine
 # 3. Start the backend
 export CLINIC_API_KEY=local-dev-key
 export REDIS_ADDR=127.0.0.1:6379
+export REDIS_PASSWORD=
+export REDIS_DB=0
 export CAS_SERVER_URL=http://127.0.0.1:9999
 export APP_BASE_URL=http://127.0.0.1:5173
 export CAS_DEFAULT_REDIRECT=/
 export SESSION_COOKIE_SAMESITE=lax
 # Optional: raise to force all staff to log in again; defaults to 0
 export STAFF_VERSION=0
-go run main.go                 # runs on :8080
+go run .                       # runs on :8080
 
 # 4. Start the frontend (separate terminal)
 cd path/to/clinic_admin_frontend
