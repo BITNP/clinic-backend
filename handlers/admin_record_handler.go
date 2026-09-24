@@ -28,6 +28,12 @@ type referRecordRequest struct {
 }
 
 func (h *AdminRecordHandler) List(c *gin.Context) {
+	staff, ok := contextStaff(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+
 	f := services.ListAdminRecordFilter{
 		Status:   c.Query("status"),
 		Page:     parseIntDefault(c, "page", 1),
@@ -52,7 +58,7 @@ func (h *AdminRecordHandler) List(c *gin.Context) {
 		}
 	}
 
-	items, total, err := h.svc.List(f)
+	items, total, err := h.svc.List(c.Request.Context(), staff.ID, f)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -70,7 +76,12 @@ func (h *AdminRecordHandler) Get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	v, err := h.svc.GetByID(id)
+	staff, ok := contextStaff(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	v, err := h.svc.GetByID(c.Request.Context(), staff.ID, id)
 	if err != nil {
 		writeRecordError(c, err)
 		return
@@ -88,6 +99,12 @@ func (h *AdminRecordHandler) Update(c *gin.Context) {
 		return
 	}
 
+	staff, ok := contextStaff(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+
 	var req updateRecordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -98,7 +115,7 @@ func (h *AdminRecordHandler) Update(c *gin.Context) {
 		WorkerDesc: req.WorkerDesc,
 	}
 
-	v, err := h.svc.Update(id, in)
+	v, err := h.svc.Update(c.Request.Context(), staff.ID, id, in)
 	if err != nil {
 		writeRecordError(c, err)
 		return
@@ -118,7 +135,7 @@ func (h *AdminRecordHandler) Confirm(c *gin.Context) {
 		return
 	}
 
-	v, err := h.svc.MarkConfirmed(id, uint(staff.ID))
+	v, err := h.svc.MarkConfirmed(c.Request.Context(), id, uint(staff.ID))
 	if err != nil {
 		writeRecordError(c, err)
 		return
@@ -131,7 +148,12 @@ func (h *AdminRecordHandler) Arrive(c *gin.Context) {
 	if !ok {
 		return
 	}
-	v, err := h.svc.MarkArrived(id)
+	staff, ok := contextStaff(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	v, err := h.svc.MarkArrived(c.Request.Context(), staff.ID, id)
 	if err != nil {
 		writeRecordError(c, err)
 		return
@@ -149,7 +171,7 @@ func (h *AdminRecordHandler) InProgress(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "missing staff context"})
 		return
 	}
-	v, err := h.svc.MarkInProgress(id, uint(staff.ID))
+	v, err := h.svc.MarkInProgress(c.Request.Context(), staff.ID, id)
 	if err != nil {
 		writeRecordError(c, err)
 		return
@@ -162,7 +184,12 @@ func (h *AdminRecordHandler) Complete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	v, err := h.svc.MarkCompleted(id)
+	staff, ok := contextStaff(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	v, err := h.svc.MarkCompleted(c.Request.Context(), staff.ID, id)
 	if err != nil {
 		writeRecordError(c, err)
 		return
@@ -188,7 +215,7 @@ func (h *AdminRecordHandler) Reject(c *gin.Context) {
 		return
 	}
 
-	v, err := h.svc.MarkRejected(id, req.Reason, uint(staff.ID))
+	v, err := h.svc.MarkRejected(c.Request.Context(), id, req.Reason, uint(staff.ID))
 	if err != nil {
 		writeRecordError(c, err)
 		return
@@ -214,7 +241,7 @@ func (h *AdminRecordHandler) Refer(c *gin.Context) {
 		return
 	}
 
-	v, err := h.svc.MarkReferred(id, req.Reason, uint(staff.ID))
+	v, err := h.svc.MarkReferred(c.Request.Context(), id, req.Reason, uint(staff.ID))
 	if err != nil {
 		writeRecordError(c, err)
 		return
@@ -227,8 +254,33 @@ func (h *AdminRecordHandler) NoShow(c *gin.Context) {
 	if !ok {
 		return
 	}
+	staff, ok := contextStaff(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
 
-	v, err := h.svc.MarkNoShow(id)
+	v, err := h.svc.MarkNoShow(c.Request.Context(), staff.ID, id)
+	if err != nil {
+		writeRecordError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, v)
+}
+
+// Revert undoes the acting staff member's latest action on a record.
+func (h *AdminRecordHandler) Revert(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	staff, ok := contextStaff(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+
+	v, err := h.svc.Revert(c.Request.Context(), staff.ID, id)
 	if err != nil {
 		writeRecordError(c, err)
 		return
@@ -237,15 +289,18 @@ func (h *AdminRecordHandler) NoShow(c *gin.Context) {
 }
 
 func writeRecordError(c *gin.Context, err error) {
-	if errors.Is(err, services.ErrRecordNotFound) {
+	switch {
+	case errors.Is(err, services.ErrRecordNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-		return
-	}
-	if errors.Is(err, services.ErrRecordInvalidTransition) {
+	case errors.Is(err, services.ErrRecordInvalidTransition):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	case errors.Is(err, services.ErrRevertWindowExpired),
+		errors.Is(err, services.ErrRevertUnavailable),
+		errors.Is(err, services.ErrRevertSuperseded):
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 }
 
 func parseUintQuery(s string) (uint, error) {

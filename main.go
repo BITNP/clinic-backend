@@ -167,6 +167,11 @@ func main() {
 
 	adminRecordSvc := services.NewAdminRecordService(db)
 	adminRecordSvc.SetRecordTagService(recordTagSvc)
+	recordActionSvc := services.NewRecordActionService(
+		newRedisRecordActionStore(redisClient),
+		envDuration("RECORD_ACTION_WINDOW", 5*time.Minute),
+	)
+	adminRecordSvc.SetRecordActionService(recordActionSvc)
 	adminRecordH := handlers.NewAdminRecordHandler(adminRecordSvc)
 
 	workScheduleSvc := services.NewWorkScheduleService(db)
@@ -297,6 +302,7 @@ func main() {
 		records.POST("/:id/complete", adminRecordH.Complete)
 		records.POST("/:id/refer", adminRecordH.Refer)
 		records.POST("/:id/no-show", adminRecordH.NoShow)
+		records.POST("/:id/revert", adminRecordH.Revert)
 	}
 	// ── Admin: Records (admin only — approve / reject) ────────────────────
 	recordsAdmin := r.Group("/api/admin/records")
