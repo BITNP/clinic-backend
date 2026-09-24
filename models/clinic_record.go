@@ -29,6 +29,11 @@ type ClinicRecord struct {
 	RoomID          uint         `gorm:"not null;column:room" json:"room"`
 	ApproverID      *uint        `gorm:"column:approver_id" json:"approver_id"`
 	TagID           uint         `gorm:"column:tag_id" json:"tag_id"`
+	// ActionSeq is bumped on every journaled staff action and on system
+	// transitions. A revert is only allowed while it still matches the
+	// sequence stamped on the action being undone, which prevents undoing an
+	// action that has since been superseded.
+	ActionSeq uint `gorm:"not null;default:0;column:action_seq" json:"-"`
 }
 
 // TableName overrides GORM's default pluralized table name.
