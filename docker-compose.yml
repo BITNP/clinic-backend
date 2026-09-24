@@ -60,6 +60,7 @@ services:
       TAGGER_API_TOKEN: ${TAGGER_API_TOKEN:-}
       TAGGER_TAG_SET: ${TAGGER_TAG_SET:-clinic_record}
       TAGGER_TIMEOUT: ${TAGGER_TIMEOUT:-15s}
+      RECORD_ACTION_WINDOW: ${RECORD_ACTION_WINDOW:-5m}
     ports:
       - "8080:8080"
 
