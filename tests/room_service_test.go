@@ -353,11 +353,30 @@ func TestRoomService_Delete_InUse_Record(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create room: %v", err)
 	}
-	if err := db.Create(&models.ClinicRecord{RoomID: room.ID, Status: models.RecordStatusPending}).Error; err != nil {
+	// A finished record still references the room, so deletion stays blocked
+	// by the broader in-use check.
+	if err := db.Create(&models.ClinicRecord{RoomID: room.ID, Status: models.RecordStatusCompleted}).Error; err != nil {
 		t.Fatalf("seed record: %v", err)
 	}
 
 	if err := svc.Delete(room.ID); !errors.Is(err, services.ErrRoomInUse) {
 		t.Fatalf("expected ErrRoomInUse, got %v", err)
+	}
+}
+
+func TestRoomService_Delete_UnfinishedRecord(t *testing.T) {
+	db := setupRoomServiceDB(t)
+	svc := services.NewRoomService(db)
+
+	room, err := svc.Create(services.CreateRoomInput{Name: "R", Address: "a"})
+	if err != nil {
+		t.Fatalf("create room: %v", err)
+	}
+	if err := db.Create(&models.ClinicRecord{RoomID: room.ID, Status: models.RecordStatusPending}).Error; err != nil {
+		t.Fatalf("seed record: %v", err)
+	}
+
+	if err := svc.Delete(room.ID); !errors.Is(err, services.ErrRoomHasUnfinishedRecords) {
+		t.Fatalf("expected ErrRoomHasUnfinishedRecords, got %v", err)
 	}
 }

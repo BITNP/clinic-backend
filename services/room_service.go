@@ -192,6 +192,15 @@ func (s *RoomService) Delete(id uint) error {
 	}
 
 	return s.db.Transaction(func(tx *gorm.DB) error {
+		// A room with unfinished tickets cannot be removed.
+		unfinished, err := s.hasUnfinishedRecords(tx, id)
+		if err != nil {
+			return err
+		}
+		if unfinished {
+			return ErrRoomHasUnfinishedRecords
+		}
+
 		inUse, err := s.isRoomInUse(tx, id)
 		if err != nil {
 			return err

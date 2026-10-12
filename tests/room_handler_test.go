@@ -202,6 +202,22 @@ func TestRoomHandler_Update_Disable_UnfinishedRecord(t *testing.T) {
 	}
 }
 
+func TestRoomHandler_Delete_UnfinishedRecord(t *testing.T) {
+	r, svc, db := setupRoomHandlerRouter(t)
+	room, err := svc.Create(services.CreateRoomInput{Name: "X", Address: "y"})
+	if err != nil {
+		t.Fatalf("seed failed: %v", err)
+	}
+	if err := db.Create(&models.ClinicRecord{RoomID: room.ID, Status: models.RecordStatusInProgress}).Error; err != nil {
+		t.Fatalf("seed record: %v", err)
+	}
+
+	w := doRequest(t, r, http.MethodDelete, "/api/admin/rooms/"+itoa(room.ID), nil)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestRoomHandler_Delete_Success(t *testing.T) {
 	r, svc, _ := setupRoomHandlerRouter(t)
 	room, err := svc.Create(services.CreateRoomInput{Name: "X", Address: "y"})
