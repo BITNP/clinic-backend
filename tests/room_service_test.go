@@ -203,6 +203,66 @@ func TestRoomService_Update_ToggleEnabled(t *testing.T) {
 	}
 }
 
+func TestRoomService_Update_Disable_UnfinishedRecordRejected(t *testing.T) {
+	db := setupRoomServiceDB(t)
+	svc := services.NewRoomService(db)
+
+	r, err := svc.Create(services.CreateRoomInput{Name: "X", Address: "y"})
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+	if err := db.Create(&models.ClinicRecord{RoomID: r.ID, Status: models.RecordStatusPending}).Error; err != nil {
+		t.Fatalf("seed record: %v", err)
+	}
+
+	_, err = svc.Update(r.ID, services.UpdateRoomInput{Enabled: boolPtr(false)})
+	if !errors.Is(err, services.ErrRoomHasUnfinishedRecords) {
+		t.Fatalf("expected ErrRoomHasUnfinishedRecords, got %v", err)
+	}
+}
+
+func TestRoomService_Update_Disable_FinishedRecordAllowed(t *testing.T) {
+	db := setupRoomServiceDB(t)
+	svc := services.NewRoomService(db)
+
+	r, err := svc.Create(services.CreateRoomInput{Name: "X", Address: "y"})
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+	if err := db.Create(&models.ClinicRecord{RoomID: r.ID, Status: models.RecordStatusCompleted}).Error; err != nil {
+		t.Fatalf("seed record: %v", err)
+	}
+
+	updated, err := svc.Update(r.ID, services.UpdateRoomInput{Enabled: boolPtr(false)})
+	if err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+	if updated.Enabled {
+		t.Errorf("expected room disabled, got enabled")
+	}
+}
+
+func TestRoomService_Update_Enable_UnfinishedRecordAllowed(t *testing.T) {
+	db := setupRoomServiceDB(t)
+	svc := services.NewRoomService(db)
+
+	r, err := svc.Create(services.CreateRoomInput{Name: "X", Address: "y", Enabled: boolPtr(false)})
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+	if err := db.Create(&models.ClinicRecord{RoomID: r.ID, Status: models.RecordStatusInProgress}).Error; err != nil {
+		t.Fatalf("seed record: %v", err)
+	}
+
+	updated, err := svc.Update(r.ID, services.UpdateRoomInput{Enabled: boolPtr(true)})
+	if err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+	if !updated.Enabled {
+		t.Errorf("expected room enabled, got disabled")
+	}
+}
+
 func TestRoomService_Update_DuplicateName(t *testing.T) {
 	db := setupRoomServiceDB(t)
 	svc := services.NewRoomService(db)

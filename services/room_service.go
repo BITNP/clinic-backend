@@ -20,6 +20,10 @@ var ErrRoomNameTaken = errors.New("room name already taken")
 // repair records or service dates still reference it.
 var ErrRoomInUse = errors.New("room has existing service dates or records and cannot be deleted")
 
+// ErrRoomHasUnfinishedRecords is returned when a room cannot be disabled
+// because it still has tickets in an unfinished (working) state.
+var ErrRoomHasUnfinishedRecords = errors.New("room has unfinished tickets and cannot be disabled")
+
 // RoomService contains the business logic for clinic room CRUD.
 type RoomService struct {
 	db *gorm.DB
@@ -128,35 +132,52 @@ func (s *RoomService) List(f ListRoomFilter) ([]models.ClinicRoom, int64, error)
 
 func (s *RoomService) Update(id uint, in UpdateRoomInput) (models.ClinicRoom, error) {
 	var r models.ClinicRoom
-	if err := s.db.First(&r, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return models.ClinicRoom{}, ErrRoomNotFound
-		}
-		return models.ClinicRoom{}, fmt.Errorf("get room %d for update: %w", id, err)
-	}
-
-	updates := map[string]any{}
-	if in.Name != nil {
-		updates["name"] = *in.Name
-	}
-	if in.Address != nil {
-		updates["address"] = *in.Address
-	}
-	if in.Enabled != nil {
-		updates["enabled"] = *in.Enabled
-	}
-
-	if len(updates) > 0 {
-		if err := s.db.Model(&r).Updates(updates).Error; err != nil {
-			if isUniqueViolation(err) {
-				return models.ClinicRoom{}, ErrRoomNameTaken
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.First(&r, id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrRoomNotFound
 			}
-			return models.ClinicRoom{}, fmt.Errorf("update room %d: %w", id, err)
+			return fmt.Errorf("get room %d for update: %w", id, err)
 		}
-	}
 
-	if err := s.db.First(&r, id).Error; err != nil {
-		return models.ClinicRoom{}, fmt.Errorf("reload room %d: %w", id, err)
+		// Disabling a room is refused while it still has unfinished tickets.
+		if in.Enabled != nil && !*in.Enabled {
+			unfinished, err := s.hasUnfinishedRecords(tx, id)
+			if err != nil {
+				return err
+			}
+			if unfinished {
+				return ErrRoomHasUnfinishedRecords
+			}
+		}
+
+		updates := map[string]any{}
+		if in.Name != nil {
+			updates["name"] = *in.Name
+		}
+		if in.Address != nil {
+			updates["address"] = *in.Address
+		}
+		if in.Enabled != nil {
+			updates["enabled"] = *in.Enabled
+		}
+
+		if len(updates) > 0 {
+			if err := tx.Model(&r).Updates(updates).Error; err != nil {
+				if isUniqueViolation(err) {
+					return ErrRoomNameTaken
+				}
+				return fmt.Errorf("update room %d: %w", id, err)
+			}
+		}
+
+		if err := tx.First(&r, id).Error; err != nil {
+			return fmt.Errorf("reload room %d: %w", id, err)
+		}
+		return nil
+	})
+	if err != nil {
+		return models.ClinicRoom{}, err
 	}
 	return r, nil
 }
@@ -183,6 +204,18 @@ func (s *RoomService) Delete(id uint) error {
 		}
 		return nil
 	})
+}
+
+// hasUnfinishedRecords reports whether any ticket referencing the room is still
+// in an unfinished (working) state. Shared by the room disable/remove guards.
+func (s *RoomService) hasUnfinishedRecords(tx *gorm.DB, roomID uint) (bool, error) {
+	var n int64
+	if err := tx.Model(&models.ClinicRecord{}).
+		Where("room = ? AND status IN ?", roomID, workingStatuses).
+		Count(&n).Error; err != nil {
+		return false, fmt.Errorf("count unfinished records for room %d: %w", roomID, err)
+	}
+	return n > 0, nil
 }
 
 // isRoomInUse reports whether any service date or repair record references the room.

@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func setupRoomHandlerRouter(t *testing.T) (*gin.Engine, *services.RoomService) {
+func setupRoomHandlerRouter(t *testing.T) (*gin.Engine, *services.RoomService, *gorm.DB) {
 	gin.SetMode(gin.TestMode)
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
@@ -35,11 +35,11 @@ func setupRoomHandlerRouter(t *testing.T) (*gin.Engine, *services.RoomService) {
 		g.PUT("/:id", h.Update)
 		g.DELETE("/:id", h.Delete)
 	}
-	return r, svc
+	return r, svc, db
 }
 
 func TestRoomHandler_Create_Success(t *testing.T) {
-	r, _ := setupRoomHandlerRouter(t)
+	r, _, _ := setupRoomHandlerRouter(t)
 
 	w := doRequest(t, r, http.MethodPost, "/api/admin/rooms", map[string]any{
 		"name":    "Main Campus",
@@ -58,7 +58,7 @@ func TestRoomHandler_Create_Success(t *testing.T) {
 }
 
 func TestRoomHandler_Create_Disabled(t *testing.T) {
-	r, _ := setupRoomHandlerRouter(t)
+	r, _, _ := setupRoomHandlerRouter(t)
 
 	w := doRequest(t, r, http.MethodPost, "/api/admin/rooms", map[string]any{
 		"name":    "Closed Room",
@@ -78,7 +78,7 @@ func TestRoomHandler_Create_Disabled(t *testing.T) {
 }
 
 func TestRoomHandler_Create_Validation(t *testing.T) {
-	r, _ := setupRoomHandlerRouter(t)
+	r, _, _ := setupRoomHandlerRouter(t)
 
 	cases := []struct {
 		name string
@@ -99,7 +99,7 @@ func TestRoomHandler_Create_Validation(t *testing.T) {
 }
 
 func TestRoomHandler_Create_DuplicateName(t *testing.T) {
-	r, _ := setupRoomHandlerRouter(t)
+	r, _, _ := setupRoomHandlerRouter(t)
 
 	if w := doRequest(t, r, http.MethodPost, "/api/admin/rooms", map[string]any{"name": "A", "address": "x"}); w.Code != http.StatusCreated {
 		t.Fatalf("first create failed: %d %s", w.Code, w.Body.String())
@@ -112,7 +112,7 @@ func TestRoomHandler_Create_DuplicateName(t *testing.T) {
 }
 
 func TestRoomHandler_Get_NotFound(t *testing.T) {
-	r, _ := setupRoomHandlerRouter(t)
+	r, _, _ := setupRoomHandlerRouter(t)
 
 	w := doRequest(t, r, http.MethodGet, "/api/admin/rooms/999", nil)
 	if w.Code != http.StatusNotFound {
@@ -121,7 +121,7 @@ func TestRoomHandler_Get_NotFound(t *testing.T) {
 }
 
 func TestRoomHandler_List(t *testing.T) {
-	r, svc := setupRoomHandlerRouter(t)
+	r, svc, _ := setupRoomHandlerRouter(t)
 	for _, in := range []services.CreateRoomInput{
 		{Name: "Alpha", Address: "a"},
 		{Name: "Beta", Address: "b", Enabled: boolPtr(false)},
@@ -151,7 +151,7 @@ func TestRoomHandler_List(t *testing.T) {
 }
 
 func TestRoomHandler_Update_Partial(t *testing.T) {
-	r, svc := setupRoomHandlerRouter(t)
+	r, svc, _ := setupRoomHandlerRouter(t)
 	room, err := svc.Create(services.CreateRoomInput{Name: "Old", Address: "Old"})
 	if err != nil {
 		t.Fatalf("seed failed: %v", err)
@@ -171,7 +171,7 @@ func TestRoomHandler_Update_Partial(t *testing.T) {
 }
 
 func TestRoomHandler_Update_DuplicateName(t *testing.T) {
-	r, svc := setupRoomHandlerRouter(t)
+	r, svc, _ := setupRoomHandlerRouter(t)
 	if _, err := svc.Create(services.CreateRoomInput{Name: "A", Address: "x"}); err != nil {
 		t.Fatalf("seed A failed: %v", err)
 	}
@@ -186,8 +186,24 @@ func TestRoomHandler_Update_DuplicateName(t *testing.T) {
 	}
 }
 
+func TestRoomHandler_Update_Disable_UnfinishedRecord(t *testing.T) {
+	r, svc, db := setupRoomHandlerRouter(t)
+	room, err := svc.Create(services.CreateRoomInput{Name: "X", Address: "y"})
+	if err != nil {
+		t.Fatalf("seed failed: %v", err)
+	}
+	if err := db.Create(&models.ClinicRecord{RoomID: room.ID, Status: models.RecordStatusPending}).Error; err != nil {
+		t.Fatalf("seed record: %v", err)
+	}
+
+	w := doRequest(t, r, http.MethodPut, "/api/admin/rooms/"+itoa(room.ID), map[string]any{"enabled": false})
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestRoomHandler_Delete_Success(t *testing.T) {
-	r, svc := setupRoomHandlerRouter(t)
+	r, svc, _ := setupRoomHandlerRouter(t)
 	room, err := svc.Create(services.CreateRoomInput{Name: "X", Address: "y"})
 	if err != nil {
 		t.Fatalf("seed failed: %v", err)
@@ -200,7 +216,7 @@ func TestRoomHandler_Delete_Success(t *testing.T) {
 }
 
 func TestRoomHandler_InvalidID(t *testing.T) {
-	r, _ := setupRoomHandlerRouter(t)
+	r, _, _ := setupRoomHandlerRouter(t)
 	w := doRequest(t, r, http.MethodGet, "/api/admin/rooms/abc", nil)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())

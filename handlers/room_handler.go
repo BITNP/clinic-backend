@@ -115,6 +115,7 @@ var roomErrorMappings = []errStatus{
 	{services.ErrRoomNotFound, http.StatusNotFound},
 	{services.ErrRoomNameTaken, http.StatusConflict},
 	{services.ErrRoomInUse, http.StatusConflict},
+	{services.ErrRoomHasUnfinishedRecords, http.StatusConflict},
 }
 
 func writeRoomError(c *gin.Context, err error) {
