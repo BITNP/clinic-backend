@@ -1,11 +1,12 @@
 version: "3"
 
 # Production deployment: runs pre-built images — no local build.
-# Runs the backend, the admin frontend and Redis as a single stack.
+# Runs the backend, the admin frontend, Redis and RustFS as a single stack.
 # Uses the Postgres already running on the server (host.containers.internal:5432),
-# same as the other clinic services. Redis is bundled as a compose service here
-# (reachable at redis:6379 on the compose network, no host port) and is loaded
-# from a locally packaged image tarball rather than pulled from a registry.
+# same as the other clinic services. Redis and RustFS are bundled as compose
+# services here (reachable at redis:6379 and rustfs:9000 on the compose network,
+# no host ports) and are loaded from locally packaged image tarballs rather than
+# pulled from a registry.
 #
 # Podman alternative (rootless, same compose file):
 #   systemctl --user enable --now podman.socket
@@ -52,11 +53,36 @@ services:
       timeout: 5s
       retries: 10
 
+  rustfs:
+    image: rustfs/rustfs:latest
+    # The image is shipped to the server in the packaged tarball, never pulled.
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      RUSTFS_ADDRESS: "0.0.0.0:9000"
+      RUSTFS_CONSOLE_ADDRESS: "0.0.0.0:9001"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      # Override these in .env so the backend does not run with the public
+      # defaults. RustFS has no host port here (compose network only), but the
+      # credentials still guard the stored objects.
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-clinic}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-clinic-secret}
+      RUSTFS_REGION: ${RUSTFS_REGION:-us-east-1}
+    volumes:
+      - rustfsdata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   backend:
     image: ghcr.io/bitnp/clinic-backend:${BACKEND_IMAGE_TAG:-latest}
     env_file: .env
     depends_on:
       redis:
+        condition: service_healthy
+      rustfs:
         condition: service_healthy
     environment:
       CLINIC_DB_DRIVER: postgres
@@ -67,6 +93,11 @@ services:
       REDIS_ADDR: ${REDIS_ADDR:-redis:6379}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       REDIS_DB: ${REDIS_DB:-0}
+      RUSTFS_ENDPOINT: ${RUSTFS_ENDPOINT:-http://rustfs:9000}
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-clinic}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-clinic-secret}
+      RUSTFS_REGION: ${RUSTFS_REGION:-us-east-1}
+      RUSTFS_BUCKET: ${RUSTFS_BUCKET:-clinic}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5173}
       CAS_SERVER_URL: ${CAS_SERVER_URL:-}
       CAS_HTTP_TIMEOUT: ${CAS_HTTP_TIMEOUT:-10s}
@@ -99,3 +130,4 @@ services:
 
 volumes:
   redisdata:
+  rustfsdata:

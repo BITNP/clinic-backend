@@ -107,6 +107,26 @@ func main() {
 		log.Fatalf("failed to connect to redis: %v", err)
 	}
 
+	// RustFS (S3-compatible object storage) is optional: it is enabled only
+	// when RUSTFS_ENDPOINT is set, and then fails fast if it is not reachable,
+	// mirroring the Redis check above.
+	storageCfg, storageEnabled, err := storageConfigFromEnv()
+	if err != nil {
+		log.Fatalf("invalid object storage configuration: %v", err)
+	}
+	var store *objectStore
+	if storageEnabled {
+		storageCtx, cancelStorage := context.WithTimeout(context.Background(), 5*time.Second)
+		store, err = newObjectStore(storageCtx, storageCfg)
+		cancelStorage()
+		if err != nil {
+			log.Fatalf("failed to connect to rustfs: %v", err)
+		}
+		log.Printf("rustfs: connected at %s (bucket %q)", storageCfg.endpoint, storageCfg.bucket)
+	} else {
+		log.Println("object storage disabled: set RUSTFS_ENDPOINT to enable")
+	}
+
 	// Sync counters live in Redis so every backend replica shares them. Clients
 	// poll Snapshot and refresh when a value differs from their last-seen one.
 	syncSvc := services.NewSyncService(newRedisSyncStore(redisClient))
@@ -238,6 +258,7 @@ func main() {
 
 	// ── Health ────────────────────────────────────────────────────────────
 	r.GET("/healthz", redisHealthHandler(redisClient))
+	r.GET("/healthz/storage", store.healthHandler())
 
 	// ── CAS login/logout ─────────────────────────────────────────────────
 	r.GET("/login", casHandler.Login)

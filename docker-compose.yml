@@ -28,6 +28,27 @@ services:
       timeout: 5s
       retries: 10
 
+  rustfs:
+    image: rustfs/rustfs:latest
+    restart: unless-stopped
+    environment:
+      RUSTFS_ADDRESS: "0.0.0.0:9000"
+      RUSTFS_CONSOLE_ADDRESS: "0.0.0.0:9001"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-clinic}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-clinic-secret}
+      RUSTFS_REGION: ${RUSTFS_REGION:-us-east-1}
+    ports:
+      - "${RUSTFS_S3_PORT:-9000}:9000"
+      - "${RUSTFS_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - rustfsdata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   backend:
     image: ghcr.io/bitnp/clinic-backend:latest
     build: .
@@ -37,6 +58,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      rustfs:
+        condition: service_healthy
     environment:
       CLINIC_DB_DRIVER: ${CLINIC_DB_DRIVER:-postgres}
       CLINIC_DB_DSN: ${CLINIC_DB_DSN:-postgres://clinic:clinic@db:5432/clinic?sslmode=disable}
@@ -45,6 +68,11 @@ services:
       REDIS_ADDR: ${REDIS_ADDR:-redis:6379}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       REDIS_DB: ${REDIS_DB:-0}
+      RUSTFS_ENDPOINT: ${RUSTFS_ENDPOINT:-http://rustfs:9000}
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-clinic}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-clinic-secret}
+      RUSTFS_REGION: ${RUSTFS_REGION:-us-east-1}
+      RUSTFS_BUCKET: ${RUSTFS_BUCKET:-clinic}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5173}
       CAS_SERVER_URL: ${CAS_SERVER_URL:-}
       CAS_HTTP_TIMEOUT: ${CAS_HTTP_TIMEOUT:-10s}
@@ -67,3 +95,4 @@ services:
 volumes:
   pgdata:
   redisdata:
+  rustfsdata:

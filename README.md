@@ -45,13 +45,13 @@ echo $PAT | docker login ghcr.io -u Potato-Yao --password-stdin
 
 `docker-compose.prod.yml` is a standalone deploy config — only this file, `.env`
 and the packaged image tarball are needed on the server, no source checkout. It
-runs the backend, the admin frontend and a bundled Redis service, and connects
-to the Postgres already running on the server via `host.containers.internal` (no
-bundled database), like the other clinic services. It refuses to start if
-`CLINIC_API_KEY` is missing.
+runs the backend, the admin frontend and the bundled Redis and RustFS services,
+and connects to the Postgres already running on the server via
+`host.containers.internal` (no bundled database), like the other clinic
+services. It refuses to start if `CLINIC_API_KEY` is missing.
 
-The server cannot pull the bundled Redis image from Docker Hub, so package the
-images on a machine that can and copy the tarball over:
+The server cannot pull the bundled Redis and RustFS images from Docker Hub, so
+package the images on a machine that can and copy the tarball over:
 
 ```bash
 # On your local machine: create .env from the example and fill in the secrets
@@ -60,14 +60,16 @@ cp .env.example .env
 # set CLINIC_DB_DSN in .env to override the default
 # (postgres://clinic:clinic@host.containers.internal:5432/clinic?sslmode=disable)
 
-# Pull and bundle all three images into a single tarball.
+# Pull and bundle all four images into a single tarball.
 docker pull ghcr.io/bitnp/clinic-backend:${BACKEND_IMAGE_TAG:-latest}
 docker pull ghcr.io/bitnp/clinic_admin_frontend:${ADMIN_FRONTEND_IMAGE_TAG:-latest}
 docker pull redis:7-alpine
+docker pull rustfs/rustfs:latest
 docker save -o clinic-images.tar \
   ghcr.io/bitnp/clinic-backend:${BACKEND_IMAGE_TAG:-latest} \
   ghcr.io/bitnp/clinic_admin_frontend:${ADMIN_FRONTEND_IMAGE_TAG:-latest} \
-  redis:7-alpine
+  redis:7-alpine \
+  rustfs/rustfs:latest
 
 scp clinic-images.tar docker-compose.prod.yml .env server:
 
@@ -77,9 +79,9 @@ docker compose -f docker-compose.prod.yml up -d
 ```
 
 Do not use `--pull always` or `docker compose pull` for this stack: those bypass
-`pull_policy` and would try to fetch Redis from Docker Hub, which the server
-cannot reach. The bundled Redis service has `pull_policy: never` and is served
-from the loaded tarball.
+`pull_policy` and would try to fetch Redis and RustFS from Docker Hub, which the
+server cannot reach. Both bundled services have `pull_policy: never` and are
+served from the loaded tarball.
 
 The frontend (Caddy on `:5173`) proxies `/api`, `/login`, `/logout` to the
 backend over the compose network, so the backend needs no host port.
@@ -89,6 +91,9 @@ backend over the compose network, so the backend needs no host port.
 - Redis: `:6379` bundled in the stack (compose-internal, persisted in the
   `redisdata` volume; the backend refuses to start without it). Set
   `REDIS_PASSWORD` to require a password.
+- RustFS: `:9000` bundled in the stack (compose-internal, persisted in the
+  `rustfsdata` volume; the backend stores objects there when `RUSTFS_ENDPOINT`
+  is set). Change `RUSTFS_ACCESS_KEY` / `RUSTFS_SECRET_KEY` in production.
 - Admin frontend: `:5173`.
 - Backend: `:8080` (compose-internal; expose a host port if you need to reach
   it directly).
@@ -139,11 +144,21 @@ go run fake/fake_cas.go        # runs on :9999
 # 2. Start Redis (required; see docker-compose.yml for the dev service)
 docker run --rm -p 6379:6379 redis:7-alpine
 
+# 2b. (Optional) Start RustFS for object storage; skip to run without it.
+docker run --rm -p 9000:9000 -p 9001:9001 \
+  -e RUSTFS_ACCESS_KEY=clinic -e RUSTFS_SECRET_KEY=clinic-secret \
+  rustfs/rustfs:latest
+
 # 3. Start the backend
 export CLINIC_API_KEY=local-dev-key
 export REDIS_ADDR=127.0.0.1:6379
 export REDIS_PASSWORD=
 export REDIS_DB=0
+# Optional: object storage. Set these only if you started RustFS in step 2b;
+# leaving RUSTFS_ENDPOINT unset disables object storage.
+# export RUSTFS_ENDPOINT=http://127.0.0.1:9000
+# export RUSTFS_ACCESS_KEY=clinic
+# export RUSTFS_SECRET_KEY=clinic-secret
 export CAS_SERVER_URL=http://127.0.0.1:9999
 export APP_BASE_URL=http://127.0.0.1:5173
 export CAS_DEFAULT_REDIRECT=/
@@ -158,6 +173,25 @@ pnpm dev                       # runs on :5173
 ```
 
 Sessions whose staff `version` differs from `STAFF_VERSION` are rejected until the staff log in again, so each time you raise `STAFF_VERSION` all staff are forced through the login page once.
+
+## Object storage (RustFS)
+
+Object storage is backed by [RustFS](https://rustfs.com), an S3-compatible
+object store addressable with the standard S3 API and AWS SigV4 credentials. On
+startup the backend connects to `RUSTFS_ENDPOINT` using `RUSTFS_ACCESS_KEY` /
+`RUSTFS_SECRET_KEY` and creates `RUSTFS_BUCKET` if it does not exist yet.
+
+Storage is optional: leave `RUSTFS_ENDPOINT` unset to disable it. When it is set,
+the backend refuses to start if RustFS is unreachable, the same way it already
+requires Redis. `GET /healthz/storage` reports the current bucket status.
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `RUSTFS_ENDPOINT` | S3 API URL; empty disables storage | `http://rustfs:9000` |
+| `RUSTFS_ACCESS_KEY` | S3 access key | `clinic` |
+| `RUSTFS_SECRET_KEY` | S3 secret key | `clinic-secret` |
+| `RUSTFS_REGION` | Signing region | `us-east-1` |
+| `RUSTFS_BUCKET` | Bucket for stored objects | `clinic` |
 
 ## Data sync counters
 
