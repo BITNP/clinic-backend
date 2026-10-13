@@ -113,8 +113,10 @@ func (s *AdminRecordService) List(ctx context.Context, actorID int, f ListAdminR
 	offset := (f.Page - 1) * f.PageSize
 
 	var records []models.ClinicRecord
+	// Match the admin sidebar's newest-ID-first order before pagination so
+	// newer tickets cannot be hidden behind older tickets with later appointments.
 	if err := q.
-		Order("appointment_time DESC, id DESC").
+		Order("id DESC").
 		Offset(offset).
 		Limit(f.PageSize).
 		Find(&records).Error; err != nil {

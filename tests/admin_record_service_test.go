@@ -222,6 +222,74 @@ func (l *countingGormLogger) Trace(ctx context.Context, begin time.Time, fc func
 	l.Interface.Trace(ctx, begin, fc, err)
 }
 
+func TestAdminRecordServiceListNewestIDsFirst(t *testing.T) {
+	db := setupAdminRecordTestDB(t)
+	svc := services.NewAdminRecordService(db)
+	room := models.ClinicRoom{Name: "Room", Enabled: true}
+	if err := db.Create(&room).Error; err != nil {
+		t.Fatalf("seed room: %v", err)
+	}
+
+	appointment := time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC)
+	// Twenty older tickets have later appointments. Sorting by appointment
+	// would make page one stop at #605 even though #619 already exists.
+	for id := uint(586); id <= 619; id++ {
+		date := appointment
+		if id <= 605 {
+			date = date.AddDate(0, 0, 7)
+		}
+		if err := db.Create(&models.ClinicRecord{
+			ID: id, User: "u", Realname: "r", PhoneNum: "p",
+			Status: models.RecordStatusPending, AppointmentTime: date,
+			QuestionDesc: "broken", RoomID: room.ID,
+		}).Error; err != nil {
+			t.Fatalf("seed record %d: %v", id, err)
+		}
+	}
+
+	for _, tc := range []struct {
+		page  int
+		count int
+		first uint
+	}{
+		{page: 1, count: 20, first: 619},
+		{page: 2, count: 14, first: 599},
+	} {
+		views, total, err := svc.List(context.Background(), 0, services.ListAdminRecordFilter{Page: tc.page})
+		if err != nil {
+			t.Fatalf("list page %d: %v", tc.page, err)
+		}
+		if total != 34 || len(views) != tc.count {
+			t.Fatalf("page %d: total=%d, count=%d; want total=34, count=%d", tc.page, total, len(views), tc.count)
+		}
+		for i, view := range views {
+			if want := tc.first - uint(i); view.ID != want {
+				t.Fatalf("page %d item %d: ID=%d, want %d", tc.page, i, view.ID, want)
+			}
+		}
+	}
+
+	// A subsequent refresh must include a newly created ticket even when
+	// its appointment is earlier than every previously loaded ticket.
+	if err := db.Create(&models.ClinicRecord{
+		ID: 620, User: "u", Realname: "r", PhoneNum: "p",
+		Status: models.RecordStatusPending, AppointmentTime: appointment.AddDate(0, 0, -1),
+		QuestionDesc: "broken", RoomID: room.ID,
+	}).Error; err != nil {
+		t.Fatalf("seed newest record: %v", err)
+	}
+	views, total, err := svc.List(context.Background(), 0, services.ListAdminRecordFilter{Page: 1})
+	if err != nil {
+		t.Fatalf("refresh page one: %v", err)
+	}
+	if total != 35 || len(views) != 20 {
+		t.Fatalf("refresh: total=%d, count=%d; want total=35, count=20", total, len(views))
+	}
+	if views[0].ID != 620 {
+		t.Errorf("refresh first ID=%d, want 620", views[0].ID)
+	}
+}
+
 func TestAdminRecordServiceListBatchedViews(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	svc := services.NewAdminRecordService(db)
