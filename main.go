@@ -21,6 +21,7 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func main() {
@@ -39,7 +40,21 @@ func main() {
 	default:
 		log.Fatalf("invalid CLINIC_DB_DRIVER %q: must be sqlite or postgres", driver)
 	}
-	db, err := gorm.Open(dialector, &gorm.Config{})
+	// The application uses gorm.ErrRecordNotFound as a normal control-flow
+	// signal when probing optional side tables, so silence those logs while
+	// keeping real errors and slow-query warnings. Colorful is disabled to
+	// avoid ANSI escapes in journald/syslog.
+	db, err := gorm.Open(dialector, &gorm.Config{
+		Logger: logger.New(
+			log.New(os.Stdout, "\r\n", log.LstdFlags),
+			logger.Config{
+				SlowThreshold:             envDuration("DB_SLOW_QUERY", 500*time.Millisecond),
+				LogLevel:                  logger.Warn,
+				IgnoreRecordNotFoundError: true,
+				Colorful:                  false,
+			},
+		),
+	})
 	if err != nil {
 		log.Fatalf("failed to open database: %v", err)
 	}

@@ -10,6 +10,7 @@ import (
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func setupAdminRecordTestDB(t *testing.T) *gorm.DB {
@@ -206,5 +207,159 @@ func TestCloseExpiredRecords_IgnoresFutureTickets(t *testing.T) {
 	}
 	if completed != 0 {
 		t.Errorf("expected 0 completed, got %d", completed)
+	}
+}
+
+// countingGormLogger counts how many SQL statements GORM traces while
+// delegating the actual logging to the default logger.
+type countingGormLogger struct {
+	logger.Interface
+	n int
+}
+
+func (l *countingGormLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
+	l.n++
+	l.Interface.Trace(ctx, begin, fc, err)
+}
+
+func TestAdminRecordServiceListBatchedViews(t *testing.T) {
+	db := setupAdminRecordTestDB(t)
+	svc := services.NewAdminRecordService(db)
+
+	roomA := models.ClinicRoom{Name: "Room A", Address: "addr-a", Enabled: true}
+	roomB := models.ClinicRoom{Name: "Room B", Address: "addr-b", Enabled: true}
+	if err := db.Create(&roomA).Error; err != nil {
+		t.Fatalf("seed room A: %v", err)
+	}
+	if err := db.Create(&roomB).Error; err != nil {
+		t.Fatalf("seed room B: %v", err)
+	}
+
+	appt := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	full := models.ClinicRecord{
+		User: "u1", Realname: "r1", PhoneNum: "p1",
+		Status: models.RecordStatusCompleted, AppointmentTime: appt,
+		QuestionDesc: "broken", RoomID: roomA.ID,
+	}
+	sparse := models.ClinicRecord{
+		User: "u2", Realname: "r2", PhoneNum: "p2",
+		Status: models.RecordStatusPending, AppointmentTime: appt.Add(-time.Hour),
+		QuestionDesc: "screen", RoomID: roomB.ID,
+	}
+	if err := db.Create(&full).Error; err != nil {
+		t.Fatalf("seed full record: %v", err)
+	}
+	if err := db.Create(&sparse).Error; err != nil {
+		t.Fatalf("seed sparse record: %v", err)
+	}
+
+	arriveTime := appt.Add(time.Hour)
+	finishTime := appt.Add(2 * time.Hour)
+	sideRows := []any{
+		&models.ClinicRecordDevice{RecordID: full.ID, LaptopModel: "ThinkPad", Password: "pw"},
+		&models.ClinicRecordWorker{RecordID: full.ID, WorkerID: 42, WorkerDesc: "fixed", FinishTime: finishTime},
+		&models.ClinicRecordRejection{RecordID: full.ID, RejectReason: "nope"},
+		&models.ClinicRecordReferral{RecordID: full.ID, ReferralReason: "elsewhere"},
+		&models.ClinicRecordArrival{RecordID: full.ID, ArriveTime: arriveTime},
+	}
+	for _, row := range sideRows {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatalf("seed side row %T: %v", row, err)
+		}
+	}
+
+	views, total, err := svc.List(context.Background(), 0, services.ListAdminRecordFilter{Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if total != 2 {
+		t.Fatalf("expected total 2, got %d", total)
+	}
+	if len(views) != 2 {
+		t.Fatalf("expected 2 views, got %d", len(views))
+	}
+
+	byID := make(map[uint]services.AdminRecordView, len(views))
+	for _, v := range views {
+		byID[v.ID] = v
+	}
+
+	got := byID[full.ID]
+	if got.Campus != "Room A" {
+		t.Errorf("full campus = %q, want Room A", got.Campus)
+	}
+	if got.Model != "ThinkPad" || got.Password != "pw" {
+		t.Errorf("full device = %q/%q, want ThinkPad/pw", got.Model, got.Password)
+	}
+	if got.WorkerDesc != "fixed" {
+		t.Errorf("full worker_desc = %q, want fixed", got.WorkerDesc)
+	}
+	if got.WorkerID == nil || *got.WorkerID != 42 {
+		t.Errorf("full worker_id = %v, want 42", got.WorkerID)
+	}
+	if want := finishTime.UTC().Format(time.RFC3339); got.FinishTime == nil || *got.FinishTime != want {
+		t.Errorf("full finish_time = %v, want %s", got.FinishTime, want)
+	}
+	if got.RejectReason != "nope" {
+		t.Errorf("full reject_reason = %q, want nope", got.RejectReason)
+	}
+	if got.ReferralReason != "elsewhere" {
+		t.Errorf("full referral_reason = %q, want elsewhere", got.ReferralReason)
+	}
+	if want := arriveTime.UTC().Format(time.RFC3339); got.ArriveTime == nil || *got.ArriveTime != want {
+		t.Errorf("full arrive_time = %v, want %s", got.ArriveTime, want)
+	}
+	if want := appt.UTC().Format("2006-01-02"); got.AppointmentTime != want {
+		t.Errorf("full appointment_time = %q, want %s", got.AppointmentTime, want)
+	}
+
+	empty := byID[sparse.ID]
+	if empty.Campus != "Room B" {
+		t.Errorf("sparse campus = %q, want Room B", empty.Campus)
+	}
+	if empty.Model != "" || empty.Password != "" {
+		t.Errorf("sparse device = %q/%q, want empty", empty.Model, empty.Password)
+	}
+	if empty.WorkerDesc != "" || empty.WorkerID != nil || empty.FinishTime != nil {
+		t.Errorf("sparse worker = %q/%v/%v, want empty", empty.WorkerDesc, empty.WorkerID, empty.FinishTime)
+	}
+	if empty.RejectReason != "" || empty.ReferralReason != "" || empty.ArriveTime != nil {
+		t.Errorf("sparse side fields = %q/%q/%v, want empty", empty.RejectReason, empty.ReferralReason, empty.ArriveTime)
+	}
+}
+
+func TestAdminRecordServiceListBatchedQueryCount(t *testing.T) {
+	db := setupAdminRecordTestDB(t)
+	svc := services.NewAdminRecordService(db)
+
+	room := models.ClinicRoom{Name: "Room", Address: "addr", Enabled: true}
+	if err := db.Create(&room).Error; err != nil {
+		t.Fatalf("seed room: %v", err)
+	}
+
+	appt := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 5; i++ {
+		if err := db.Create(&models.ClinicRecord{
+			User: "u", Realname: "r", PhoneNum: "p",
+			Status:          models.RecordStatusPending,
+			AppointmentTime: appt.Add(time.Duration(i) * time.Hour),
+			QuestionDesc:    "x",
+			RoomID:          room.ID,
+		}).Error; err != nil {
+			t.Fatalf("seed record %d: %v", i, err)
+		}
+	}
+
+	counter := &countingGormLogger{Interface: logger.Default}
+	db.Logger = counter
+
+	if _, _, err := svc.List(context.Background(), 0, services.ListAdminRecordFilter{Page: 1, PageSize: 10}); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+
+	// count + page find + room + device + worker + rejection + referral + arrival.
+	const want = 8
+	if counter.n != want {
+		t.Errorf("List issued %d queries, want %d (per-record loads likely regressed)", counter.n, want)
 	}
 }
