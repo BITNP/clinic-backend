@@ -8,3 +8,9 @@ import _ "embed"
 //
 //go:embed data/liquid-metal-laptops.csv
 var liquidMetalCSV []byte
+
+// liquidMetalPromptTemplate is the tagger prompt with a {{TABLE}} placeholder
+// where the rendered liquid-metal laptop rows are inserted.
+//
+//go:embed data/liquid_metal_prompt.txt
+var liquidMetalPromptTemplate string
