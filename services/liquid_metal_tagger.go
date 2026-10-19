@@ -199,8 +199,8 @@ func liquidMetalLookupTags() []TaggerTag {
 		},
 		{
 			Name:        LiquidMetalTagToVerify,
-			Description: "液金使用情况尚未确认，需要进一步核实。",
-			ApplyRule:   "命中待核实附表，或配置边界、证据、改装情况无法确认时输出。",
+			Description: "液金使用情况尚未确认，或型号与表中记录接近但未精确匹配。",
+			ApplyRule:   "命中待核实附表、配置边界/证据/改装情况无法确认，或型号未精确命中但同系列、同代码前缀/后缀、配置相近且可能使用液金时输出。",
 		},
 		{
 			Name:        LiquidMetalTagNone,
@@ -209,8 +209,8 @@ func liquidMetalLookupTags() []TaggerTag {
 		},
 		{
 			Name:        LiquidMetalTagUnmatched,
-			Description: "表中没有匹配记录，无法判断。",
-			ApplyRule:   "没有匹配记录，或型号缺失、无法识别时输出。",
+			Description: "表中没有相关记录，无法判断。",
+			ApplyRule:   "完全没有任何相关线索、型号缺失或无法识别时输出；不要用于同系列或配置接近的疑似液金机型。",
 		},
 	}
 }
