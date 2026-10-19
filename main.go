@@ -73,7 +73,6 @@ func main() {
 		&models.ClinicStaffWorkyear{},
 		&models.ClinicRecord{},
 		&models.ClinicRecordTag{},
-		&models.ClinicRecordTagPrompt{},
 		&models.ClinicRecordDevice{},
 		&models.ClinicRecordWorker{},
 		&models.ClinicRecordArrival{},
@@ -134,9 +133,6 @@ func main() {
 	if err := recordTagSvc.SeedCatalog(); err != nil {
 		log.Fatalf("failed to seed record tag catalog: %v", err)
 	}
-	if err := recordTagSvc.SeedPrompt(); err != nil {
-		log.Fatalf("failed to seed record tag prompt: %v", err)
-	}
 	if err := recordTagSvc.Load(); err != nil {
 		log.Fatalf("failed to load record tags: %v", err)
 	}
@@ -149,12 +145,12 @@ func main() {
 	taggerTagSet := envString("TAGGER_TAG_SET", "clinic_record")
 	liquidMetalTagSet := envString("LM_TAGGER_TAG_SET", "clinic_laptop_liquid_metal")
 	var taggerClient services.TaggerClient
-	var taggerSvc *services.TaggerService
+	var recordTagger *services.RecordTagger
 	var liquidMetalTagger *services.LiquidMetalTagger
 	if taggerURL != "" && taggerToken != "" {
 		taggerClient = handlers.NewTaggerHTTPClient(taggerURL, taggerToken, envDuration("TAGGER_TIMEOUT", 15*time.Second))
-		taggerSvc = services.NewTaggerService(taggerClient, taggerTagSet, db, recordTagSvc)
-		taggerSvc.SetSyncService(syncSvc)
+		recordTagger = services.NewRecordTagger(taggerClient, taggerTagSet, db, recordTagSvc)
+		recordTagger.SetSyncService(syncSvc)
 
 		lm, lmErr := services.NewLiquidMetalTagger(taggerClient, liquidMetalTagSet)
 		if lmErr != nil {
@@ -177,8 +173,8 @@ func main() {
 
 	ticketSvc := services.NewTicketService(db, serviceDateLoc)
 	ticketSvc.SetDefaultTagID(recordTagSvc.DefaultID())
-	if taggerSvc != nil {
-		ticketSvc.SetTagger(taggerSvc)
+	if recordTagger != nil {
+		ticketSvc.SetTagger(recordTagger)
 	}
 	ticketH := handlers.NewTicketHandler(ticketSvc)
 	legacyH := handlers.NewLegacyHandler(ticketSvc, serviceDateSvc, roomSvc, announcementSvc)
@@ -483,13 +479,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if taggerSvc != nil {
-		if err := taggerSvc.RegisterTagSet(ctx); err != nil {
-			log.Printf("tagger: not connected at startup (tag set %q, url %s): %v", taggerTagSet, taggerURL, err)
+	if recordTagger != nil {
+		if err := recordTagger.RegisterTagSet(ctx); err != nil {
+			log.Printf("record tagger: not connected at startup (tag set %q, url %s): %v", taggerTagSet, taggerURL, err)
 		} else {
-			log.Printf("tagger: connected at startup (tag set %q, url %s)", taggerTagSet, taggerURL)
+			log.Printf("record tagger: connected at startup (tag set %q, url %s)", taggerTagSet, taggerURL)
 		}
-		go taggerSvc.Run(ctx)
+		go recordTagger.Run(ctx)
 	}
 
 	if liquidMetalTagger != nil {

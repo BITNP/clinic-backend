@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// fakeTaggerClient records the calls made by TaggerService and lets each test
+// fakeTaggerClient records the calls made by the taggers and lets each test
 // script the behavior of Tag.
 type fakeTaggerClient struct {
 	mu           sync.Mutex
@@ -66,19 +66,16 @@ func seedTaggerTags(t *testing.T) (*gorm.DB, *services.RecordTagService) {
 	if err := tagSvc.SeedCatalog(); err != nil {
 		t.Fatalf("seed catalog: %v", err)
 	}
-	if err := tagSvc.SeedPrompt(); err != nil {
-		t.Fatalf("seed prompt: %v", err)
-	}
 	if err := tagSvc.Load(); err != nil {
 		t.Fatalf("load tags: %v", err)
 	}
 	return db, tagSvc
 }
 
-func TestTaggerService_RegisterTagSet(t *testing.T) {
+func TestRecordTagger_RegisterTagSet(t *testing.T) {
 	_, tagSvc := seedTaggerTags(t)
 	client := &fakeTaggerClient{}
-	svc := services.NewTaggerService(client, "clinic_record", nil, tagSvc)
+	svc := services.NewRecordTagger(client, "clinic_record", nil, tagSvc)
 
 	if err := svc.RegisterTagSet(context.Background()); err != nil {
 		t.Fatalf("register: %v", err)
@@ -88,8 +85,8 @@ func TestTaggerService_RegisterTagSet(t *testing.T) {
 	if name != "clinic_record" {
 		t.Errorf("expected set name clinic_record, got %q", name)
 	}
-	if prompt != tagSvc.Prompt() || prompt == "" {
-		t.Errorf("expected the loaded prompt to be registered, got %q", prompt)
+	if prompt != strings.TrimSpace(tagSvc.Prompt()) || prompt == "" {
+		t.Errorf("expected the embedded prompt to be registered, got %q", prompt)
 	}
 	if len(tags) != 16 {
 		t.Errorf("expected 16 tags, got %d", len(tags))
@@ -109,7 +106,7 @@ func TestTaggerService_RegisterTagSet(t *testing.T) {
 	}
 }
 
-func TestTaggerService_Tag_RetriesAfterNotFound(t *testing.T) {
+func TestRecordTagger_Tag_RetriesAfterNotFound(t *testing.T) {
 	_, tagSvc := seedTaggerTags(t)
 	client := &fakeTaggerClient{}
 	attempts := 0
@@ -120,7 +117,7 @@ func TestTaggerService_Tag_RetriesAfterNotFound(t *testing.T) {
 		}
 		return "风扇故障", nil
 	}
-	svc := services.NewTaggerService(client, "clinic_record", nil, tagSvc)
+	svc := services.NewRecordTagger(client, "clinic_record", nil, tagSvc)
 
 	name, err := svc.Tag(context.Background(), "风扇异响")
 	if err != nil {
@@ -138,7 +135,7 @@ func TestTaggerService_Tag_RetriesAfterNotFound(t *testing.T) {
 	}
 }
 
-func TestTaggerService_WorkerAssignsTag(t *testing.T) {
+func TestRecordTagger_WorkerAssignsTag(t *testing.T) {
 	db, tagSvc := seedTaggerTags(t)
 	matched, ok := tagSvc.ByTitle("风扇故障")
 	if !ok {
@@ -150,7 +147,7 @@ func TestTaggerService_WorkerAssignsTag(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	tagger := services.NewTaggerService(client, "clinic_record", db, tagSvc)
+	tagger := services.NewRecordTagger(client, "clinic_record", db, tagSvc)
 	go tagger.Run(ctx)
 
 	seedOpenServiceDate(t, db, time.UTC, futureTruncatedDate(7), 5)
@@ -187,7 +184,7 @@ func TestTaggerService_WorkerAssignsTag(t *testing.T) {
 	}
 }
 
-func TestTaggerService_WorkerKeepsDefaultOnError(t *testing.T) {
+func TestRecordTagger_WorkerKeepsDefaultOnError(t *testing.T) {
 	db, tagSvc := seedTaggerTags(t)
 	def, ok := tagSvc.ByTitle(services.DefaultRecordTagTitle)
 	if !ok {
@@ -206,7 +203,7 @@ func TestTaggerService_WorkerKeepsDefaultOnError(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	tagger := services.NewTaggerService(client, "clinic_record", db, tagSvc)
+	tagger := services.NewRecordTagger(client, "clinic_record", db, tagSvc)
 	go tagger.Run(ctx)
 
 	seedOpenServiceDate(t, db, time.UTC, futureTruncatedDate(7), 5)
@@ -241,10 +238,10 @@ func TestTaggerService_WorkerKeepsDefaultOnError(t *testing.T) {
 	}
 }
 
-func TestTaggerService_RunRegistersWhenUnregistered(t *testing.T) {
+func TestRecordTagger_RunRegistersWhenUnregistered(t *testing.T) {
 	_, tagSvc := seedTaggerTags(t)
 	client := &fakeTaggerClient{}
-	svc := services.NewTaggerService(client, "clinic_record", nil, tagSvc)
+	svc := services.NewRecordTagger(client, "clinic_record", nil, tagSvc)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -256,10 +253,10 @@ func TestTaggerService_RunRegistersWhenUnregistered(t *testing.T) {
 	}
 }
 
-func TestTaggerService_RunSkipsRegistrationWhenAlreadyRegistered(t *testing.T) {
+func TestRecordTagger_RunSkipsRegistrationWhenAlreadyRegistered(t *testing.T) {
 	_, tagSvc := seedTaggerTags(t)
 	client := &fakeTaggerClient{}
-	svc := services.NewTaggerService(client, "clinic_record", nil, tagSvc)
+	svc := services.NewRecordTagger(client, "clinic_record", nil, tagSvc)
 
 	if err := svc.RegisterTagSet(context.Background()); err != nil {
 		t.Fatalf("register: %v", err)

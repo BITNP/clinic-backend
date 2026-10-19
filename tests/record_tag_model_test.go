@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -23,7 +24,6 @@ func setupTagTestDB(t *testing.T) *gorm.DB {
 		&models.ClinicRecord{},
 		&models.ClinicRecordDevice{},
 		&models.ClinicRecordTag{},
-		&models.ClinicRecordTagPrompt{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -83,6 +83,10 @@ func TestRecordTagService_SeedCatalog(t *testing.T) {
 	db := setupTagTestDB(t)
 	svc := services.NewRecordTagService(db)
 
+	def, err := svc.SeedDefault()
+	if err != nil {
+		t.Fatalf("seed default: %v", err)
+	}
 	if err := svc.SeedCatalog(); err != nil {
 		t.Fatalf("seed catalog: %v", err)
 	}
@@ -108,34 +112,58 @@ func TestRecordTagService_SeedCatalog(t *testing.T) {
 			t.Errorf("expected tag %q in memory after load", title)
 		}
 	}
-	if int(count) != len(titles) {
-		t.Errorf("expected %d tags, got %d", len(titles), count)
+	// The default tag is seeded separately and is not part of the CSV catalog.
+	if int(count) != len(titles)+1 {
+		t.Errorf("expected %d tags, got %d", len(titles)+1, count)
+	}
+
+	stale := models.ClinicRecordTag{Title: "legacy", ApplyRule: "legacy rule"}
+	if err := db.Create(&stale).Error; err != nil {
+		t.Fatalf("create stale tag: %v", err)
+	}
+	rec := models.ClinicRecord{
+		Realname:        "A",
+		PhoneNum:        "p",
+		Status:          models.RecordStatusPending,
+		AppointmentTime: time.Now().UTC().Truncate(24 * time.Hour),
+		QuestionDesc:    "x",
+		RoomID:          1,
+		TagID:           stale.ID,
+	}
+	if err := db.Create(&rec).Error; err != nil {
+		t.Fatalf("create record: %v", err)
+	}
+
+	if err := svc.SeedCatalog(); err != nil {
+		t.Fatalf("reseed catalog with stale tag: %v", err)
+	}
+	var got models.ClinicRecord
+	if err := db.First(&got, rec.ID).Error; err != nil {
+		t.Fatalf("reload record: %v", err)
+	}
+	if got.TagID != def.ID {
+		t.Errorf("expected stale record moved to default tag %d, got %d", def.ID, got.TagID)
+	}
+	var staleCount int64
+	if err := db.Model(&models.ClinicRecordTag{}).Where("id = ?", stale.ID).Count(&staleCount).Error; err != nil {
+		t.Fatalf("count stale tag: %v", err)
+	}
+	if staleCount != 0 {
+		t.Errorf("expected stale tag to be deleted, found %d rows", staleCount)
 	}
 }
 
-func TestRecordTagService_SeedPrompt(t *testing.T) {
-	db := setupTagTestDB(t)
-	svc := services.NewRecordTagService(db)
+func TestRecordTagService_Prompt(t *testing.T) {
+	svc := services.NewRecordTagService(setupTagTestDB(t))
 
-	if err := svc.SeedPrompt(); err != nil {
-		t.Fatalf("seed prompt: %v", err)
+	prompt := svc.Prompt()
+	if prompt == "" {
+		t.Fatal("expected a non-empty embedded prompt")
 	}
-	if err := svc.SeedPrompt(); err != nil {
-		t.Fatalf("reseed prompt: %v", err)
-	}
-	if err := svc.Load(); err != nil {
-		t.Fatalf("load: %v", err)
-	}
-
-	var count int64
-	if err := db.Model(&models.ClinicRecordTagPrompt{}).Count(&count).Error; err != nil {
-		t.Fatalf("count prompts: %v", err)
-	}
-	if count != 1 {
-		t.Errorf("expected 1 prompt row, got %d", count)
-	}
-	if svc.Prompt() == "" {
-		t.Error("expected non-empty prompt after load")
+	for _, want := range []string{"电脑维修报修分类助手", "【分类目标】", "【输出要求】"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt missing %q", want)
+		}
 	}
 }
 
