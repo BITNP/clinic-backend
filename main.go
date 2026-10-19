@@ -124,7 +124,11 @@ func main() {
 	// Sync counters live in Redis so every backend replica shares them. Clients
 	// poll Snapshot and refresh when a value differs from their last-seen one.
 	syncSvc := services.NewSyncService(newRedisSyncStore(redisClient))
-	syncH := handlers.NewSyncHandler(syncSvc)
+	syncPollInterval := envDuration("SYNC_POLL_INTERVAL", 10*time.Second)
+	if syncPollInterval < 0 {
+		log.Fatalf("invalid SYNC_POLL_INTERVAL: must not be negative")
+	}
+	syncH := handlers.NewSyncHandler(syncSvc, syncPollInterval)
 
 	recordTagSvc := services.NewRecordTagService(db)
 	if _, err := recordTagSvc.SeedDefault(); err != nil {
@@ -464,11 +468,13 @@ func main() {
 	syncAdmin.Use(adminAuth, handlers.RequireStaff)
 	{
 		syncAdmin.GET("", syncH.Get)
+		syncAdmin.GET("/config", syncH.GetConfig)
 	}
 	syncClient := r.Group("/api/sync")
 	syncClient.Use(clientAuth)
 	{
 		syncClient.GET("", syncH.Get)
+		syncClient.GET("/config", syncH.GetConfig)
 	}
 
 	// ── User endpoints ────────────────────────────────────────────────────

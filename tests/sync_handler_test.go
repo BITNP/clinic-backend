@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"clinic-backend/handlers"
 	"clinic-backend/services"
@@ -18,7 +19,7 @@ func setupSyncHandlerRouter(t *testing.T) (*gin.Engine, *services.SyncService) {
 	gin.SetMode(gin.TestMode)
 
 	svc := services.NewSyncService(newFakeSyncStore())
-	h := handlers.NewSyncHandler(svc)
+	h := handlers.NewSyncHandler(svc, 10*time.Second)
 
 	r := gin.New()
 
@@ -29,6 +30,7 @@ func setupSyncHandlerRouter(t *testing.T) (*gin.Engine, *services.SyncService) {
 	})
 	{
 		syncAdmin.GET("", h.Get)
+		syncAdmin.GET("/config", h.GetConfig)
 	}
 
 	records := r.Group("/api/admin/records")
@@ -53,6 +55,43 @@ func getSyncCounters(t *testing.T, r *gin.Engine) map[string]int64 {
 		t.Fatalf("decode failed: %v", err)
 	}
 	return counters
+}
+
+func TestSyncHandler_ConfigReturnsInterval(t *testing.T) {
+	tests := []struct {
+		name     string
+		interval time.Duration
+		want     int64
+	}{
+		{"default", 10 * time.Second, 10000},
+		{"custom", 1500 * time.Millisecond, 1500},
+		{"disabled", 0, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			h := handlers.NewSyncHandler(services.NewSyncService(newFakeSyncStore()), tt.interval)
+
+			r := gin.New()
+			r.GET("/api/admin/sync/config", h.GetConfig)
+
+			w := doRequest(t, r, http.MethodGet, "/api/admin/sync/config", nil)
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+			}
+
+			var body struct {
+				IntervalMS int64 `json:"interval_ms"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode failed: %v", err)
+			}
+			if body.IntervalMS != tt.want {
+				t.Errorf("expected interval_ms=%d, got %d", tt.want, body.IntervalMS)
+			}
+		})
+	}
 }
 
 func TestSyncHandler_SnapshotReturnsAllGroups(t *testing.T) {

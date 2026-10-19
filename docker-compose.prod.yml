@@ -63,6 +63,7 @@ services:
       CLINIC_DB_DSN: ${CLINIC_DB_DSN:-postgres://${POSTGRES_USER:-clinic}:${POSTGRES_PASSWORD:-clinic}@host.containers.internal:5432/${POSTGRES_DB:-clinic}?sslmode=disable}
       CLINIC_API_KEY: ${CLINIC_API_KEY:?set CLINIC_API_KEY in .env}
       CLINIC_TIMEZONE: ${CLINIC_TIMEZONE:-Asia/Shanghai}
+      SYNC_POLL_INTERVAL: ${SYNC_POLL_INTERVAL:-10s}
       TZ: ${TZ:-Asia/Shanghai}
       REDIS_ADDR: ${REDIS_ADDR:-redis:6379}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
