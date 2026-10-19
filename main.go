@@ -157,6 +157,7 @@ func main() {
 			log.Fatalf("failed to build liquid metal tagger: %v", lmErr)
 		}
 		liquidMetalTagger = lm
+		recordTagger.SetLiquidMetalTagger(lm)
 	} else {
 		log.Println("tagger disabled: set TAGGER_URL and TAGGER_API_TOKEN to enable")
 	}

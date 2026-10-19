@@ -17,14 +17,17 @@ import (
 // fakeTaggerClient records the calls made by the taggers and lets each test
 // script the behavior of Tag.
 type fakeTaggerClient struct {
-	mu           sync.Mutex
-	registerName string
-	registerPrmt string
-	registered   []services.TaggerTag
-	registerHits int
-	registerErr  error
-	tagHits      int
-	tagFn        func(text string) (string, error)
+	mu            sync.Mutex
+	registerName  string
+	registerPrmt  string
+	registered    []services.TaggerTag
+	registerHits  int
+	registerErr   error
+	tagHits       int
+	tagHitsByName map[string]int
+	lastTagText   map[string]string
+	tagFn         func(text string) (string, error)
+	tagFnByName   func(name, text string) (string, error)
 }
 
 func (f *fakeTaggerClient) RegisterTagSet(_ context.Context, name, prompt string, tags []services.TaggerTag) error {
@@ -37,15 +40,41 @@ func (f *fakeTaggerClient) RegisterTagSet(_ context.Context, name, prompt string
 	return f.registerErr
 }
 
-func (f *fakeTaggerClient) Tag(_ context.Context, _, text string) (string, error) {
+func (f *fakeTaggerClient) Tag(_ context.Context, name, text string) (string, error) {
 	f.mu.Lock()
 	f.tagHits++
+	if f.tagHitsByName == nil {
+		f.tagHitsByName = make(map[string]int)
+	}
+	f.tagHitsByName[name]++
+	if f.lastTagText == nil {
+		f.lastTagText = make(map[string]string)
+	}
+	f.lastTagText[name] = text
 	fn := f.tagFn
+	byName := f.tagFnByName
 	f.mu.Unlock()
+	if byName != nil {
+		return byName(name, text)
+	}
 	if fn != nil {
 		return fn(text)
 	}
 	return "", nil
+}
+
+// lastTextFor returns the last text sent to the tag set with the given name.
+func (f *fakeTaggerClient) lastTextFor(name string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastTagText[name]
+}
+
+// hitsFor returns how many Tag calls were made for the named tag set.
+func (f *fakeTaggerClient) hitsFor(name string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.tagHitsByName[name]
 }
 
 func (f *fakeTaggerClient) snapshot() (name, prompt string, tags []services.TaggerTag, registerHits, tagHits int) {
@@ -269,5 +298,186 @@ func TestRecordTagger_RunSkipsRegistrationWhenAlreadyRegistered(t *testing.T) {
 	_, _, _, registerHits, _ := client.snapshot()
 	if registerHits != 1 {
 		t.Errorf("expected no redundant registration, got %d", registerHits)
+	}
+}
+
+func TestRecordTagger_WorkerAssignsTagAndLiquidMetalStatus(t *testing.T) {
+	db, tagSvc := seedTaggerTags(t)
+	matched, ok := tagSvc.ByTitle("风扇故障")
+	if !ok {
+		t.Fatal("expected 风扇故障 tag in catalog")
+	}
+
+	client := &fakeTaggerClient{}
+	client.tagFnByName = func(name, _ string) (string, error) {
+		if name == "clinic_laptop_liquid_metal" {
+			return services.LiquidMetalTagCPU, nil
+		}
+		return "风扇故障", nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tagger := services.NewRecordTagger(client, "clinic_record", db, tagSvc)
+	tagger.SetLiquidMetalTagger(newLiquidMetalTagger(t, client))
+	go tagger.Run(ctx)
+
+	seedOpenServiceDate(t, db, time.UTC, futureTruncatedDate(7), 5)
+	svc := services.NewTicketService(db, nil)
+	svc.SetDefaultTagID(tagSvc.DefaultID())
+	svc.SetTagger(tagger)
+
+	rec, err := svc.Create(services.CreateTicketInput{
+		User:            "u",
+		Realname:        "r",
+		PhoneNum:        "p",
+		Campus:          "中关村",
+		AppointmentTime: futureTruncatedDate(7),
+		Description:     "风扇一直响",
+		Model:           "GX701L",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	wantStatus := services.LiquidMetalStatusIndex(services.LiquidMetalStatusYes)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		var got models.ClinicRecord
+		if err := db.First(&got, rec.ID).Error; err != nil {
+			t.Fatalf("reload record: %v", err)
+		}
+		if got.TagID == matched.ID && got.LiquidMetalStatusIndex == wantStatus {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("record not tagged: tag_id=%d want %d, liquid_metal_status=%d want %d",
+				got.TagID, matched.ID, got.LiquidMetalStatusIndex, wantStatus)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	text := client.lastTextFor("clinic_laptop_liquid_metal")
+	if !strings.Contains(text, "型号: GX701L") || !strings.Contains(text, "其他信息: 风扇一直响") {
+		t.Errorf("liquid metal text = %q, want model and question description", text)
+	}
+}
+
+func TestRecordTagger_LiquidMetalRunsWhenRecordTagFails(t *testing.T) {
+	db, tagSvc := seedTaggerTags(t)
+	def, ok := tagSvc.ByTitle(services.DefaultRecordTagTitle)
+	if !ok {
+		t.Fatal("expected default tag")
+	}
+
+	client := &fakeTaggerClient{}
+	client.tagFnByName = func(name, _ string) (string, error) {
+		if name == "clinic_laptop_liquid_metal" {
+			return services.LiquidMetalTagCPU, nil
+		}
+		return "", errors.New("record tagger down")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tagger := services.NewRecordTagger(client, "clinic_record", db, tagSvc)
+	tagger.SetLiquidMetalTagger(newLiquidMetalTagger(t, client))
+	go tagger.Run(ctx)
+
+	seedOpenServiceDate(t, db, time.UTC, futureTruncatedDate(7), 5)
+	svc := services.NewTicketService(db, nil)
+	svc.SetDefaultTagID(def.ID)
+	svc.SetTagger(tagger)
+
+	rec, err := svc.Create(services.CreateTicketInput{
+		User:            "u",
+		Realname:        "r",
+		PhoneNum:        "p",
+		Campus:          "中关村",
+		AppointmentTime: futureTruncatedDate(7),
+		Description:     "风扇一直响",
+		Model:           "GX701L",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	wantStatus := services.LiquidMetalStatusIndex(services.LiquidMetalStatusYes)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		var got models.ClinicRecord
+		if err := db.First(&got, rec.ID).Error; err != nil {
+			t.Fatalf("reload record: %v", err)
+		}
+		if got.LiquidMetalStatusIndex == wantStatus {
+			if got.TagID != def.ID {
+				t.Errorf("tag_id = %d, want default %d", got.TagID, def.ID)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("liquid_metal_status = %d, want %d", got.LiquidMetalStatusIndex, wantStatus)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestRecordTagger_NoModelSkipsLiquidMetal(t *testing.T) {
+	db, tagSvc := seedTaggerTags(t)
+	matched, ok := tagSvc.ByTitle("风扇故障")
+	if !ok {
+		t.Fatal("expected 风扇故障 tag in catalog")
+	}
+
+	client := &fakeTaggerClient{}
+	client.tagFn = func(string) (string, error) { return "风扇故障", nil }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tagger := services.NewRecordTagger(client, "clinic_record", db, tagSvc)
+	tagger.SetLiquidMetalTagger(newLiquidMetalTagger(t, client))
+	go tagger.Run(ctx)
+
+	seedOpenServiceDate(t, db, time.UTC, futureTruncatedDate(7), 5)
+	svc := services.NewTicketService(db, nil)
+	svc.SetDefaultTagID(tagSvc.DefaultID())
+	svc.SetTagger(tagger)
+
+	rec, err := svc.Create(services.CreateTicketInput{
+		User:            "u",
+		Realname:        "r",
+		PhoneNum:        "p",
+		Campus:          "中关村",
+		AppointmentTime: futureTruncatedDate(7),
+		Description:     "风扇一直响",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		var got models.ClinicRecord
+		if err := db.First(&got, rec.ID).Error; err != nil {
+			t.Fatalf("reload record: %v", err)
+		}
+		if got.TagID == matched.ID {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("tag_id not updated: got %d, want %d", got.TagID, matched.ID)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if hits := client.hitsFor("clinic_laptop_liquid_metal"); hits != 0 {
+		t.Errorf("liquid metal tagger called %d times without a model", hits)
+	}
+	got := models.ClinicRecord{}
+	if err := db.First(&got, rec.ID).Error; err != nil {
+		t.Fatalf("reload record: %v", err)
+	}
+	if got.LiquidMetalStatusIndex != services.LiquidMetalStatusIndex(services.LiquidMetalStatusUnknown) {
+		t.Errorf("liquid_metal_status = %d, want unknown", got.LiquidMetalStatusIndex)
 	}
 }

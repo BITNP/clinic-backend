@@ -448,6 +448,7 @@ func TestTicketService_View_Shape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
+	rec.LiquidMetalStatusIndex = services.LiquidMetalStatusIndex(services.LiquidMetalStatusYes)
 	v, err := svc.View(rec)
 	if err != nil {
 		t.Fatalf("view: %v", err)
@@ -466,6 +467,9 @@ func TestTicketService_View_Shape(t *testing.T) {
 	}
 	if v.Description != "笔电不开机" || v.Model != "ThinkPad X1" || v.Password != "pw" {
 		t.Errorf("device/desc fields: %+v", v)
+	}
+	if v.LiquidMetalStatus != string(services.LiquidMetalStatusYes) {
+		t.Errorf("liquid metal status = %q, want %q", v.LiquidMetalStatus, services.LiquidMetalStatusYes)
 	}
 	_ = roomID
 }

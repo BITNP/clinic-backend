@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strings"
 
@@ -19,18 +20,22 @@ const (
 type recordTagJob struct {
 	recordID uint
 	text     string
+	model    string
+	extra    string
 }
 
-// RecordTagger tags newly created records by calling an external tagger API.
-// Work is queued by Enqueue and processed asynchronously by a single worker
-// started with Run, so ticket creation never blocks on the tagger. Tag-set
-// registration and tag calls are handled by the shared GeneralTagger.
+// RecordTagger tags newly created records by calling an external tagger API
+// and, when configured, classifies their laptop for liquid metal. Work is
+// queued by Enqueue and processed asynchronously by a single worker started
+// with Run, so ticket creation never blocks on the tagger. Tag-set registration
+// and tag calls are handled by the shared GeneralTagger.
 type RecordTagger struct {
-	tagger  *GeneralTagger
-	tagSvc  *RecordTagService
-	db      *gorm.DB
-	syncSvc *SyncService
-	jobs    chan recordTagJob
+	tagger      *GeneralTagger
+	liquidMetal *LiquidMetalTagger
+	tagSvc      *RecordTagService
+	db          *gorm.DB
+	syncSvc     *SyncService
+	jobs        chan recordTagJob
 }
 
 // NewRecordTagger builds a record tagger worker. client performs the actual
@@ -52,6 +57,11 @@ func NewRecordTagger(client TaggerClient, tagSetName string, db *gorm.DB, tagSvc
 // background worker bump the record counter.
 func (s *RecordTagger) SetSyncService(syncSvc *SyncService) {
 	s.syncSvc = syncSvc
+}
+
+// SetLiquidMetalTagger enables liquid-metal classification for queued records.
+func (s *RecordTagger) SetLiquidMetalTagger(t *LiquidMetalTagger) {
+	s.liquidMetal = t
 }
 
 // buildRecordTags maps the in-memory record tag catalog onto tagger tag
@@ -96,14 +106,19 @@ func (s *RecordTagger) Tag(ctx context.Context, text string) (string, error) {
 	return s.tagger.Tag(ctx, text)
 }
 
-// Enqueue schedules a record for tagging. It never blocks the caller: if the
-// queue is full the job is dropped and the record keeps its default tag.
-func (s *RecordTagger) Enqueue(recordID uint, text string) {
-	if s == nil || strings.TrimSpace(text) == "" {
+// Enqueue schedules a record for tagging. text is used by the record tagger;
+// model and extra (the record's question description) are used by the
+// liquid-metal tagger. It never blocks the caller: if the queue is full the job
+// is dropped and the record keeps its default tag.
+func (s *RecordTagger) Enqueue(recordID uint, text, model, extra string) {
+	if s == nil {
+		return
+	}
+	if strings.TrimSpace(text) == "" && strings.TrimSpace(model) == "" {
 		return
 	}
 	select {
-	case s.jobs <- recordTagJob{recordID: recordID, text: text}:
+	case s.jobs <- recordTagJob{recordID: recordID, text: text, model: model, extra: extra}:
 	default:
 		log.Printf("tagger: queue full, dropping record %d", recordID)
 	}
@@ -129,29 +144,68 @@ func (s *RecordTagger) Run(ctx context.Context) {
 }
 
 func (s *RecordTagger) process(ctx context.Context, job recordTagJob) {
+	// Run both classifiers independently: a failure in one must not prevent the
+	// other from updating the record.
+	updated := s.applyRecordTag(ctx, job)
+	if s.applyLiquidMetal(ctx, job) {
+		updated = true
+	}
+	if updated && s.syncSvc != nil {
+		if err := s.syncSvc.Bump(ctx, SyncGroupRecord); err != nil {
+			log.Printf("tagger: bump record sync counter failed: %v", err)
+		}
+	}
+}
+
+// applyRecordTag runs the record tagger and stores the matched tag id. It
+// reports whether the record was updated.
+func (s *RecordTagger) applyRecordTag(ctx context.Context, job recordTagJob) bool {
+	if strings.TrimSpace(job.text) == "" {
+		return false
+	}
 	name, err := s.Tag(ctx, job.text)
 	if err != nil {
 		log.Printf("tagger: tag record %d failed: %v", job.recordID, err)
-		return
+		return false
 	}
 	if name == "" {
-		return
+		return false
 	}
 
 	tag, ok := s.tagSvc.ByTitle(name)
 	if !ok {
 		log.Printf("tagger: record %d matched unknown tag %q", job.recordID, name)
-		return
+		return false
 	}
 	if err := s.db.Model(&models.ClinicRecord{}).
 		Where("id = ?", job.recordID).
 		Update("tag_id", tag.ID).Error; err != nil {
 		log.Printf("tagger: update record %d tag_id failed: %v", job.recordID, err)
-		return
+		return false
 	}
-	if s.syncSvc != nil {
-		if err := s.syncSvc.Bump(ctx, SyncGroupRecord); err != nil {
-			log.Printf("tagger: bump record sync counter failed: %v", err)
-		}
+	return true
+}
+
+// applyLiquidMetal classifies the record's laptop and stores the status index.
+// It reports whether the record was updated. Records without a model cannot be
+// classified and keep the default unknown index.
+func (s *RecordTagger) applyLiquidMetal(ctx context.Context, job recordTagJob) bool {
+	if s.liquidMetal == nil {
+		return false
 	}
+	result, err := s.liquidMetal.Classify(ctx, job.model, "", job.extra)
+	if errors.Is(err, ErrLiquidMetalModelRequired) {
+		return false
+	}
+	if err != nil {
+		log.Printf("tagger: liquid metal record %d failed: %v", job.recordID, err)
+		return false
+	}
+	if err := s.db.Model(&models.ClinicRecord{}).
+		Where("id = ?", job.recordID).
+		Update("liquid_metal_status", LiquidMetalStatusIndex(result.Status)).Error; err != nil {
+		log.Printf("tagger: update record %d liquid_metal_status failed: %v", job.recordID, err)
+		return false
+	}
+	return true
 }

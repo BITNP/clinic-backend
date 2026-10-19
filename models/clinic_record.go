@@ -29,6 +29,9 @@ type ClinicRecord struct {
 	RoomID          uint         `gorm:"not null;column:room" json:"room"`
 	ApproverID      *uint        `gorm:"column:approver_id" json:"approver_id"`
 	TagID           uint         `gorm:"column:tag_id" json:"tag_id"`
+	// LiquidMetalStatusIndex is the persisted index of the record's
+	// liquid-metal verdict. Zero means unknown or not classified yet.
+	LiquidMetalStatusIndex uint `gorm:"not null;default:0;column:liquid_metal_status" json:"liquid_metal_status"`
 	// ActionSeq is bumped on every journaled staff action and on system
 	// transitions. A revert is only allowed while it still matches the
 	// sequence stamped on the action being undone, which prevents undoing an

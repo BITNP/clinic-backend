@@ -56,24 +56,25 @@ type UpdateAdminRecordInput struct {
 }
 
 type AdminRecordView struct {
-	ID              uint    `json:"id"`
-	User            string  `json:"user"`
-	Realname        string  `json:"realname"`
-	PhoneNum        string  `json:"phone_num"`
-	Status          string  `json:"status"`
-	AppointmentTime string  `json:"appointment_time"`
-	Description     string  `json:"description"`
-	Campus          string  `json:"campus"`
-	WorkerDesc      string  `json:"worker_desc"`
-	RejectReason    string  `json:"reject_reason"`
-	ReferralReason  string  `json:"referral_reason"`
-	Model           string  `json:"model"`
-	Password        string  `json:"password"`
-	Tag             string  `json:"tag"`
-	ArriveTime      *string `json:"arrive_time,omitempty"`
-	FinishTime      *string `json:"finish_time,omitempty"`
-	WorkerID        *uint   `json:"worker_id,omitempty"`
-	ApproverID      *uint   `json:"approver_id,omitempty"`
+	ID                uint    `json:"id"`
+	User              string  `json:"user"`
+	Realname          string  `json:"realname"`
+	PhoneNum          string  `json:"phone_num"`
+	Status            string  `json:"status"`
+	AppointmentTime   string  `json:"appointment_time"`
+	Description       string  `json:"description"`
+	Campus            string  `json:"campus"`
+	WorkerDesc        string  `json:"worker_desc"`
+	RejectReason      string  `json:"reject_reason"`
+	ReferralReason    string  `json:"referral_reason"`
+	Model             string  `json:"model"`
+	Password          string  `json:"password"`
+	Tag               string  `json:"tag"`
+	LiquidMetalStatus string  `json:"liquid_metal_status"`
+	ArriveTime        *string `json:"arrive_time,omitempty"`
+	FinishTime        *string `json:"finish_time,omitempty"`
+	WorkerID          *uint   `json:"worker_id,omitempty"`
+	ApproverID        *uint   `json:"approver_id,omitempty"`
 
 	// Revert fields describe whether the requesting staff member can undo their
 	// latest action on this record.
@@ -886,15 +887,16 @@ func (s *AdminRecordService) buildViewTx(tx *gorm.DB, rec models.ClinicRecord) (
 // assembleView maps a record and its preloaded relations onto the view.
 func (s *AdminRecordService) assembleView(rec models.ClinicRecord, rel recordViewRelations) AdminRecordView {
 	v := AdminRecordView{
-		ID:              rec.ID,
-		User:            rec.User,
-		Realname:        rec.Realname,
-		PhoneNum:        rec.PhoneNum,
-		Status:          string(rec.Status),
-		AppointmentTime: rec.AppointmentTime.UTC().Format("2006-01-02"),
-		Description:     rec.QuestionDesc,
-		Campus:          rel.rooms[rec.RoomID],
-		ApproverID:      rec.ApproverID,
+		ID:                rec.ID,
+		User:              rec.User,
+		Realname:          rec.Realname,
+		PhoneNum:          rec.PhoneNum,
+		Status:            string(rec.Status),
+		AppointmentTime:   rec.AppointmentTime.UTC().Format("2006-01-02"),
+		Description:       rec.QuestionDesc,
+		Campus:            rel.rooms[rec.RoomID],
+		ApproverID:        rec.ApproverID,
+		LiquidMetalStatus: string(LiquidMetalStatusFromIndex(rec.LiquidMetalStatusIndex)),
 	}
 	if s.tagSvc != nil {
 		if tag, ok := s.tagSvc.ByID(rec.TagID); ok {

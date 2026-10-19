@@ -32,6 +32,36 @@ const (
 	LiquidMetalStatusUnknown LiquidMetalStatus = "unknown"
 )
 
+// liquidMetalStatusOrder is the persisted order of LiquidMetalStatus values.
+// The indexes are stored on records, so append new statuses at the end and
+// never reorder this slice.
+var liquidMetalStatusOrder = []LiquidMetalStatus{
+	LiquidMetalStatusUnknown,
+	LiquidMetalStatusYes,
+	LiquidMetalStatusVerify,
+	LiquidMetalStatusNo,
+}
+
+// LiquidMetalStatusIndex returns the persisted index for a status. Unknown or
+// unrecognized statuses use index 0.
+func LiquidMetalStatusIndex(s LiquidMetalStatus) uint {
+	for i, v := range liquidMetalStatusOrder {
+		if v == s {
+			return uint(i)
+		}
+	}
+	return 0
+}
+
+// LiquidMetalStatusFromIndex returns the status for a persisted index. Values
+// outside the table are reported as unknown.
+func LiquidMetalStatusFromIndex(i uint) LiquidMetalStatus {
+	if i >= uint(len(liquidMetalStatusOrder)) {
+		return LiquidMetalStatusUnknown
+	}
+	return liquidMetalStatusOrder[i]
+}
+
 // LiquidMetalComponent identifies which parts use liquid metal.
 type LiquidMetalComponent string
 

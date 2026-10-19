@@ -102,6 +102,32 @@ func TestLiquidMetalTagger_ClassifyMapsTags(t *testing.T) {
 	}
 }
 
+func TestLiquidMetalStatusIndexRoundTrip(t *testing.T) {
+	cases := []struct {
+		status services.LiquidMetalStatus
+		index  uint
+	}{
+		{services.LiquidMetalStatusUnknown, 0},
+		{services.LiquidMetalStatusYes, 1},
+		{services.LiquidMetalStatusVerify, 2},
+		{services.LiquidMetalStatusNo, 3},
+	}
+	for _, tc := range cases {
+		if got := services.LiquidMetalStatusIndex(tc.status); got != tc.index {
+			t.Errorf("index of %q = %d, want %d", tc.status, got, tc.index)
+		}
+		if got := services.LiquidMetalStatusFromIndex(tc.index); got != tc.status {
+			t.Errorf("status at index %d = %q, want %q", tc.index, got, tc.status)
+		}
+	}
+	if got := services.LiquidMetalStatusFromIndex(99); got != services.LiquidMetalStatusUnknown {
+		t.Errorf("out-of-range index = %q, want unknown", got)
+	}
+	if got := services.LiquidMetalStatusIndex("not-a-status"); got != 0 {
+		t.Errorf("unknown status index = %d, want 0", got)
+	}
+}
+
 func TestLiquidMetalTagger_ClassifyRequiresModel(t *testing.T) {
 	client := &fakeTaggerClient{}
 	svc := newLiquidMetalTagger(t, client)

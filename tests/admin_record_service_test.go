@@ -308,6 +308,7 @@ func TestAdminRecordServiceListBatchedViews(t *testing.T) {
 		User: "u1", Realname: "r1", PhoneNum: "p1",
 		Status: models.RecordStatusCompleted, AppointmentTime: appt,
 		QuestionDesc: "broken", RoomID: roomA.ID,
+		LiquidMetalStatusIndex: services.LiquidMetalStatusIndex(services.LiquidMetalStatusYes),
 	}
 	sparse := models.ClinicRecord{
 		User: "u2", Realname: "r2", PhoneNum: "p2",
@@ -380,6 +381,9 @@ func TestAdminRecordServiceListBatchedViews(t *testing.T) {
 	if want := appt.UTC().Format("2006-01-02"); got.AppointmentTime != want {
 		t.Errorf("full appointment_time = %q, want %s", got.AppointmentTime, want)
 	}
+	if got.LiquidMetalStatus != string(services.LiquidMetalStatusYes) {
+		t.Errorf("full liquid_metal_status = %q, want %q", got.LiquidMetalStatus, services.LiquidMetalStatusYes)
+	}
 
 	empty := byID[sparse.ID]
 	if empty.Campus != "Room B" {
@@ -393,6 +397,9 @@ func TestAdminRecordServiceListBatchedViews(t *testing.T) {
 	}
 	if empty.RejectReason != "" || empty.ReferralReason != "" || empty.ArriveTime != nil {
 		t.Errorf("sparse side fields = %q/%q/%v, want empty", empty.RejectReason, empty.ReferralReason, empty.ArriveTime)
+	}
+	if empty.LiquidMetalStatus != string(services.LiquidMetalStatusUnknown) {
+		t.Errorf("sparse liquid_metal_status = %q, want %q", empty.LiquidMetalStatus, services.LiquidMetalStatusUnknown)
 	}
 }
 

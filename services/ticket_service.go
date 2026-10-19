@@ -57,7 +57,7 @@ type TicketService struct {
 // TicketTagger asynchronously classifies a newly created record. Enqueue must
 // not block; callers fall back to the default tag if tagging cannot keep up.
 type TicketTagger interface {
-	Enqueue(recordID uint, text string)
+	Enqueue(recordID uint, text, model, extra string)
 }
 
 func NewTicketService(db *gorm.DB, loc *time.Location) *TicketService {
@@ -160,7 +160,7 @@ func (s *TicketService) Create(in CreateTicketInput) (models.ClinicRecord, error
 		return models.ClinicRecord{}, err
 	}
 	if s.tagger != nil {
-		s.tagger.Enqueue(rec.ID, taggerText(in.Description, in.Model))
+		s.tagger.Enqueue(rec.ID, taggerText(in.Description, in.Model), in.Model, in.Description)
 	}
 	return rec, nil
 }
@@ -533,6 +533,7 @@ type TicketView struct {
 	Model             string `json:"model"`
 	RejectReason      string `json:"reject_reason"`
 	Password          string `json:"password"`
+	LiquidMetalStatus string `json:"liquid_metal_status"`
 }
 
 // View assembles the wire representation of a record by joining the Room name
@@ -576,14 +577,15 @@ func (s *TicketService) View(rec models.ClinicRecord) (TicketView, error) {
 	}
 
 	v := TicketView{
-		URL:             fmt.Sprintf("/api/tickets/%d", rec.ID),
-		User:            rec.User,
-		Status:          string(rec.Status),
-		Realname:        rec.Realname,
-		PhoneNum:        rec.PhoneNum,
-		Campus:          room.Name,
-		AppointmentTime: rec.AppointmentTime.UTC().Format("2006-01-02"),
-		Description:     rec.QuestionDesc,
+		URL:               fmt.Sprintf("/api/tickets/%d", rec.ID),
+		User:              rec.User,
+		Status:            string(rec.Status),
+		Realname:          rec.Realname,
+		PhoneNum:          rec.PhoneNum,
+		Campus:            room.Name,
+		AppointmentTime:   rec.AppointmentTime.UTC().Format("2006-01-02"),
+		Description:       rec.QuestionDesc,
+		LiquidMetalStatus: string(LiquidMetalStatusFromIndex(rec.LiquidMetalStatusIndex)),
 	}
 	if hasDevice {
 		v.Model = device.LaptopModel
