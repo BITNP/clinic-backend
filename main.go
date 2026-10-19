@@ -147,11 +147,20 @@ func main() {
 	taggerURL := envString("TAGGER_URL", "http://127.0.0.1:4514")
 	taggerToken := os.Getenv("TAGGER_API_TOKEN")
 	taggerTagSet := envString("TAGGER_TAG_SET", "clinic_record")
+	liquidMetalTagSet := envString("LM_TAGGER_TAG_SET", "clinic_laptop_liquid_metal")
+	var taggerClient services.TaggerClient
 	var taggerSvc *services.TaggerService
+	var liquidMetalTagger *services.LiquidMetalTagger
 	if taggerURL != "" && taggerToken != "" {
-		taggerClient := handlers.NewTaggerHTTPClient(taggerURL, taggerToken, envDuration("TAGGER_TIMEOUT", 15*time.Second))
+		taggerClient = handlers.NewTaggerHTTPClient(taggerURL, taggerToken, envDuration("TAGGER_TIMEOUT", 15*time.Second))
 		taggerSvc = services.NewTaggerService(taggerClient, taggerTagSet, db, recordTagSvc)
 		taggerSvc.SetSyncService(syncSvc)
+
+		lm, lmErr := services.NewLiquidMetalTagger(taggerClient, liquidMetalTagSet)
+		if lmErr != nil {
+			log.Fatalf("failed to build liquid metal tagger: %v", lmErr)
+		}
+		liquidMetalTagger = lm
 	} else {
 		log.Println("tagger disabled: set TAGGER_URL and TAGGER_API_TOKEN to enable")
 	}
@@ -481,6 +490,14 @@ func main() {
 			log.Printf("tagger: connected at startup (tag set %q, url %s)", taggerTagSet, taggerURL)
 		}
 		go taggerSvc.Run(ctx)
+	}
+
+	if liquidMetalTagger != nil {
+		if err := liquidMetalTagger.RegisterTagSet(ctx); err != nil {
+			log.Printf("liquid metal tagger: not connected at startup (tag set %q, url %s): %v", liquidMetalTagSet, taggerURL, err)
+		} else {
+			log.Printf("liquid metal tagger: connected at startup (tag set %q, url %s)", liquidMetalTagSet, taggerURL)
+		}
 	}
 
 	go func() {

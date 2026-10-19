@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	defaultLiquidMetalTagSetName = "laptop_liquid_metal"
+	defaultLiquidMetalTagSetName = "clinic_laptop_liquid_metal"
 
 	LiquidMetalTagCPU       = "liquid_metal_cpu"
 	LiquidMetalTagGPU       = "liquid_metal_gpu"
@@ -79,7 +79,7 @@ type LiquidMetalTagger struct {
 
 // NewLiquidMetalTagger builds a tagger from the embedded liquid-metal table.
 // client performs the calls to the tagger API; tagSetName defaults to
-// "laptop_liquid_metal" when empty.
+// "clinic_laptop_liquid_metal" when empty.
 func NewLiquidMetalTagger(client TaggerClient, tagSetName string) (*LiquidMetalTagger, error) {
 	if tagSetName == "" {
 		tagSetName = defaultLiquidMetalTagSetName

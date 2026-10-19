@@ -59,6 +59,7 @@ services:
       TAGGER_URL: ${TAGGER_URL:-http://127.0.0.1:4514}
       TAGGER_API_TOKEN: ${TAGGER_API_TOKEN:-}
       TAGGER_TAG_SET: ${TAGGER_TAG_SET:-clinic_record}
+      LM_TAGGER_TAG_SET: ${LM_TAGGER_TAG_SET:-clinic_laptop_liquid_metal}
       TAGGER_TIMEOUT: ${TAGGER_TIMEOUT:-15s}
       RECORD_ACTION_WINDOW: ${RECORD_ACTION_WINDOW:-5m}
     ports:
