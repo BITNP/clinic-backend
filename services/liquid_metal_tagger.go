@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 )
 
 const (
@@ -64,17 +63,10 @@ type LiquidMetalResult struct {
 }
 
 // LiquidMetalTagger classifies laptops through the external tagger API using a
-// tag set built from the embedded liquid-metal table. The tag set lives in
-// memory on the tagger side, so it is registered once at startup and again
-// whenever the tagger reports it is missing.
+// tag set built from the embedded liquid-metal table. Registration and tag
+// calls are handled by the shared GeneralTagger.
 type LiquidMetalTagger struct {
-	client     TaggerClient
-	tagSetName string
-	prompt     string
-	tags       []TaggerTag
-
-	mu         sync.Mutex
-	registered bool
+	tagger *GeneralTagger
 }
 
 // NewLiquidMetalTagger builds a tagger from the embedded liquid-metal table.
@@ -93,26 +85,14 @@ func NewLiquidMetalTagger(client TaggerClient, tagSetName string) (*LiquidMetalT
 		return nil, fmt.Errorf("build liquid metal tagger: %w", err)
 	}
 	return &LiquidMetalTagger{
-		client:     client,
-		tagSetName: tagSetName,
-		prompt:     prompt,
-		tags:       liquidMetalLookupTags(),
+		tagger: NewGeneralTagger(client, tagSetName, prompt, liquidMetalLookupTags()),
 	}, nil
 }
 
 // RegisterTagSet registers (or replaces) the liquid-metal tag set on the
 // tagger API.
 func (t *LiquidMetalTagger) RegisterTagSet(ctx context.Context) error {
-	if strings.TrimSpace(t.prompt) == "" {
-		return errors.New("liquid metal tagger: empty prompt")
-	}
-	if err := t.client.RegisterTagSet(ctx, t.tagSetName, t.prompt, t.tags); err != nil {
-		return err
-	}
-	t.mu.Lock()
-	t.registered = true
-	t.mu.Unlock()
-	return nil
+	return t.tagger.RegisterTagSet(ctx)
 }
 
 // Classify asks the tagger whether the described laptop uses liquid metal.
@@ -123,18 +103,8 @@ func (t *LiquidMetalTagger) Classify(ctx context.Context, model, gpu, extra stri
 	if model == "" {
 		return LiquidMetalResult{}, ErrLiquidMetalModelRequired
 	}
-	if err := t.ensureRegistered(ctx); err != nil {
-		return LiquidMetalResult{}, err
-	}
-
 	text := liquidMetalInputText(model, gpu, extra)
-	name, err := t.client.Tag(ctx, t.tagSetName, text)
-	if errors.Is(err, ErrTagSetNotFound) {
-		if regErr := t.RegisterTagSet(ctx); regErr != nil {
-			return LiquidMetalResult{}, fmt.Errorf("liquid metal tagger: re-register tag set: %w", regErr)
-		}
-		name, err = t.client.Tag(ctx, t.tagSetName, text)
-	}
+	name, err := t.tagger.Tag(ctx, text)
 	if err != nil {
 		return LiquidMetalResult{}, err
 	}
@@ -143,22 +113,12 @@ func (t *LiquidMetalTagger) Classify(ctx context.Context, model, gpu, extra stri
 
 // Tags returns the tag definitions registered with the tagger.
 func (t *LiquidMetalTagger) Tags() []TaggerTag {
-	return t.tags
+	return t.tagger.Tags()
 }
 
 // Prompt returns the rendered prompt registered with the tagger.
 func (t *LiquidMetalTagger) Prompt() string {
-	return t.prompt
-}
-
-func (t *LiquidMetalTagger) ensureRegistered(ctx context.Context) error {
-	t.mu.Lock()
-	registered := t.registered
-	t.mu.Unlock()
-	if registered {
-		return nil
-	}
-	return t.RegisterTagSet(ctx)
+	return t.tagger.Prompt()
 }
 
 // liquidMetalInputText builds the text sent to the tagger. Empty optional
