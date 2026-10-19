@@ -7,7 +7,11 @@ import (
 	"log"
 	"time"
 
-	"clinic-backend/models"
+	"clinic-backend/internal/announcement"
+	recordmodel "clinic-backend/internal/record/model"
+	roommodel "clinic-backend/internal/room/model"
+	schedulingmodel "clinic-backend/internal/scheduling/model"
+	staffmodel "clinic-backend/internal/staff/model"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -20,20 +24,20 @@ func main() {
 	}
 
 	if err := db.AutoMigrate(
-		&models.ClinicAnnouncement{},
-		&models.ClinicServiceDate{},
-		&models.ClinicRoom{},
-		&models.ClinicStaff{},
-		&models.ClinicStaffWorkyear{},
-		&models.ClinicWorkSchedule{},
-		&models.ClinicWorkScheduleWeekday{},
-		&models.ClinicWorkScheduleStaff{},
-		&models.ClinicRecord{},
-		&models.ClinicRecordDevice{},
-		&models.ClinicRecordWorker{},
-		&models.ClinicRecordArrival{},
-		&models.ClinicRecordRejection{},
-		&models.ClinicRecordReferral{},
+		&announcement.ClinicAnnouncement{},
+		&schedulingmodel.ClinicServiceDate{},
+		&roommodel.ClinicRoom{},
+		&staffmodel.ClinicStaff{},
+		&staffmodel.ClinicStaffWorkyear{},
+		&schedulingmodel.ClinicWorkSchedule{},
+		&schedulingmodel.ClinicWorkScheduleWeekday{},
+		&schedulingmodel.ClinicWorkScheduleStaff{},
+		&recordmodel.ClinicRecord{},
+		&recordmodel.ClinicRecordDevice{},
+		&recordmodel.ClinicRecordWorker{},
+		&recordmodel.ClinicRecordArrival{},
+		&recordmodel.ClinicRecordRejection{},
+		&recordmodel.ClinicRecordReferral{},
 	); err != nil {
 		log.Fatalf("failed to migrate: %v", err)
 	}
@@ -54,7 +58,7 @@ func main() {
 	}
 	var roomIDs []uint
 	for _, rd := range roomDefs {
-		r := models.ClinicRoom{Name: rd.Name, Address: rd.Address, Enabled: true}
+		r := roommodel.ClinicRoom{Name: rd.Name, Address: rd.Address, Enabled: true}
 		if err := db.Where("name = ?", r.Name).FirstOrCreate(&r).Error; err != nil {
 			log.Fatalf("seed room %s: %v", r.Name, err)
 		}
@@ -65,7 +69,7 @@ func main() {
 	// Build name→ID lookup.
 	roomByName := make(map[string]uint)
 	for _, rd := range roomDefs {
-		var r models.ClinicRoom
+		var r roommodel.ClinicRoom
 		db.Where("name = ?", rd.Name).First(&r)
 		roomByName[rd.Name] = r.ID
 	}
@@ -79,7 +83,7 @@ func main() {
 	tomorrow := today.AddDate(0, 0, 1)
 	dayAfter := today.AddDate(0, 0, 2)
 
-	sdZG := models.ClinicServiceDate{
+	sdZG := schedulingmodel.ClinicServiceDate{
 		Capacity:  15,
 		RoomID:    &roomZG,
 		Date:      tomorrow,
@@ -92,7 +96,7 @@ func main() {
 	}
 	fmt.Printf("service-date: %s room=%d (id=%d)\n", sdZG.Date.Format("2006-01-02"), *sdZG.RoomID, sdZG.ID)
 
-	sdSH := models.ClinicServiceDate{
+	sdSH := schedulingmodel.ClinicServiceDate{
 		Capacity:  10,
 		RoomID:    &roomSH,
 		Date:      dayAfter,
@@ -123,7 +127,7 @@ func main() {
 	}
 	staffByAccount := make(map[string]int)
 	for _, sd := range staffDefs {
-		s := models.ClinicStaff{
+		s := staffmodel.ClinicStaff{
 			AccountID: sd.AccountID,
 			Realname:  sd.Realname,
 			Email:     sd.Email,
@@ -136,7 +140,7 @@ func main() {
 		staffByAccount[s.AccountID] = s.ID
 
 		for _, year := range sd.WorkYears {
-			wy := models.ClinicStaffWorkyear{StaffID: s.ID, WorkYear: year}
+			wy := staffmodel.ClinicStaffWorkyear{StaffID: s.ID, WorkYear: year}
 			if err := db.Where("staff_id = ? AND work_year = ?", wy.StaffID, wy.WorkYear).FirstOrCreate(&wy).Error; err != nil {
 				log.Fatalf("seed workyear %d %d: %v", s.ID, year, err)
 			}
@@ -156,8 +160,8 @@ func main() {
 	weekFromNow := today.AddDate(0, 0, 7)
 	twoWeeksFromNow := today.AddDate(0, 0, 14)
 
-	createSchedule := func(name string, startDate, endDate time.Time, weekdayDefs []weekdayDef, assignments map[int][]string) *models.ClinicWorkSchedule {
-		sch := models.ClinicWorkSchedule{
+	createSchedule := func(name string, startDate, endDate time.Time, weekdayDefs []weekdayDef, assignments map[int][]string) *schedulingmodel.ClinicWorkSchedule {
+		sch := schedulingmodel.ClinicWorkSchedule{
 			Name:      name,
 			StartDate: startDate,
 			EndDate:   endDate,
@@ -167,10 +171,10 @@ func main() {
 		}
 		fmt.Printf("work-schedule: %s (id=%d, %s ~ %s)\n", sch.Name, sch.ID, sch.StartDate.Format("2006-01-02"), sch.EndDate.Format("2006-01-02"))
 
-		var savedWeekdays []models.ClinicWorkScheduleWeekday
+		var savedWeekdays []schedulingmodel.ClinicWorkScheduleWeekday
 		for _, wd := range weekdayDefs {
 			day := startDate.AddDate(0, 0, wd.Weekday-1)
-			entry := models.ClinicWorkScheduleWeekday{
+			entry := schedulingmodel.ClinicWorkScheduleWeekday{
 				WorkScheduleID: sch.ID,
 				Weekday:        wd.Weekday,
 				StartTime:      day.Add(time.Duration(wd.StartHour)*time.Hour + time.Duration(wd.StartMin)*time.Minute),
@@ -196,7 +200,7 @@ func main() {
 				if !ok {
 					log.Fatalf("staff account %s not found", account)
 				}
-				ss := models.ClinicWorkScheduleStaff{
+				ss := schedulingmodel.ClinicWorkScheduleStaff{
 					WeekdayID:  weekdayEntry.ID,
 					StaffID:    staffID,
 					ScheduleID: sch.ID,
@@ -252,10 +256,10 @@ func main() {
 	)
 
 	// ── Announcement ──────────────────────────────────────────────────────
-	ann := models.ClinicAnnouncement{
+	ann := announcement.ClinicAnnouncement{
 		Title:          "欢迎使用诊所管理系统",
 		Content:        "这是诊所管理系统的测试实例。\n\n请查看公告、服务时间和管理工单。",
-		Tag:            models.AnnouncementTagPinned,
+		Tag:            announcement.AnnouncementTagPinned,
 		CreatedTime:    now,
 		LastEditedTime: now,
 		ExpireDate:     today.AddDate(0, 0, 30),
@@ -272,25 +276,25 @@ func main() {
 		User            string
 		Realname        string
 		PhoneNum        string
-		Status          models.RecordStatus
+		Status          recordmodel.RecordStatus
 		AppointmentDate time.Time
 		QuestionDesc    string
 		RoomID          uint
 	}
 
 	ticketDefs := []ticketDef{
-		{User: "student01", Realname: "学生A", PhoneNum: "18800000001", Status: models.RecordStatusPending, AppointmentDate: tomorrow, QuestionDesc: "电脑无法开机，按下电源键无反应", RoomID: roomZG},
-		{User: "student02", Realname: "学生B", PhoneNum: "18800000002", Status: models.RecordStatusConfirmed, AppointmentDate: today.AddDate(0, 0, 3), QuestionDesc: "屏幕间歇性闪烁，外接显示器正常", RoomID: roomSH},
-		{User: "student03", Realname: "学生C", PhoneNum: "18800000003", Status: models.RecordStatusArrived, AppointmentDate: today.AddDate(0, 0, 2), QuestionDesc: "键盘部分按键失灵，尤其是空格键", RoomID: roomZG},
-		{User: "student04", Realname: "学生D", PhoneNum: "18800000004", Status: models.RecordStatusInProgress, AppointmentDate: tomorrow, QuestionDesc: "系统反复蓝屏，错误代码 0x0000001a", RoomID: roomXYL},
-		{User: "student05", Realname: "学生E", PhoneNum: "18800000005", Status: models.RecordStatusCompleted, AppointmentDate: today.AddDate(0, 0, -1), QuestionDesc: "电池续航严重下降，需更换电池", RoomID: roomWJ},
-		{User: "student06", Realname: "学生F", PhoneNum: "18800000006", Status: models.RecordStatusRejected, AppointmentDate: today.AddDate(0, 0, 4), QuestionDesc: "电源适配器损坏", RoomID: roomCY},
-		{User: "student07", Realname: "学生G", PhoneNum: "18800000007", Status: models.RecordStatusReferred, AppointmentDate: today.AddDate(0, 0, 5), QuestionDesc: "疑似主板短路，需专业检测", RoomID: roomZG},
+		{User: "student01", Realname: "学生A", PhoneNum: "18800000001", Status: recordmodel.RecordStatusPending, AppointmentDate: tomorrow, QuestionDesc: "电脑无法开机，按下电源键无反应", RoomID: roomZG},
+		{User: "student02", Realname: "学生B", PhoneNum: "18800000002", Status: recordmodel.RecordStatusConfirmed, AppointmentDate: today.AddDate(0, 0, 3), QuestionDesc: "屏幕间歇性闪烁，外接显示器正常", RoomID: roomSH},
+		{User: "student03", Realname: "学生C", PhoneNum: "18800000003", Status: recordmodel.RecordStatusArrived, AppointmentDate: today.AddDate(0, 0, 2), QuestionDesc: "键盘部分按键失灵，尤其是空格键", RoomID: roomZG},
+		{User: "student04", Realname: "学生D", PhoneNum: "18800000004", Status: recordmodel.RecordStatusInProgress, AppointmentDate: tomorrow, QuestionDesc: "系统反复蓝屏，错误代码 0x0000001a", RoomID: roomXYL},
+		{User: "student05", Realname: "学生E", PhoneNum: "18800000005", Status: recordmodel.RecordStatusCompleted, AppointmentDate: today.AddDate(0, 0, -1), QuestionDesc: "电池续航严重下降，需更换电池", RoomID: roomWJ},
+		{User: "student06", Realname: "学生F", PhoneNum: "18800000006", Status: recordmodel.RecordStatusRejected, AppointmentDate: today.AddDate(0, 0, 4), QuestionDesc: "电源适配器损坏", RoomID: roomCY},
+		{User: "student07", Realname: "学生G", PhoneNum: "18800000007", Status: recordmodel.RecordStatusReferred, AppointmentDate: today.AddDate(0, 0, 5), QuestionDesc: "疑似主板短路，需专业检测", RoomID: roomZG},
 	}
 
 	var savedRecordIDs []uint
 	for _, td := range ticketDefs {
-		rec := models.ClinicRecord{
+		rec := recordmodel.ClinicRecord{
 			User:            td.User,
 			Realname:        td.Realname,
 			PhoneNum:        td.PhoneNum,
@@ -308,7 +312,7 @@ func main() {
 
 	// Attach optional side tables for specific tickets.
 	// Ticket 3 (student03, arrived) → arrival time
-	if err := db.Where("record_id = ?", savedRecordIDs[2]).FirstOrCreate(&models.ClinicRecordArrival{
+	if err := db.Where("record_id = ?", savedRecordIDs[2]).FirstOrCreate(&recordmodel.ClinicRecordArrival{
 		RecordID: savedRecordIDs[2], ArriveTime: now.Add(-30 * time.Minute),
 	}).Error; err != nil {
 		log.Fatalf("seed arrival: %v", err)
@@ -316,7 +320,7 @@ func main() {
 	fmt.Printf("ticket-arrival: record_id=%d\n", savedRecordIDs[2])
 
 	// Ticket 4 (student04, in_progress) → worker assignment, no finish time
-	if err := db.Where("record_id = ?", savedRecordIDs[3]).FirstOrCreate(&models.ClinicRecordWorker{
+	if err := db.Where("record_id = ?", savedRecordIDs[3]).FirstOrCreate(&recordmodel.ClinicRecordWorker{
 		RecordID: savedRecordIDs[3], WorkerID: uint(mustGetID(staffByAccount, "zhangsan")), WorkerDesc: "诊断中，疑似内存故障",
 	}).Error; err != nil {
 		log.Fatalf("seed worker: %v", err)
@@ -324,7 +328,7 @@ func main() {
 	fmt.Printf("ticket-worker: record_id=%d\n", savedRecordIDs[3])
 
 	// Ticket 5 (student05, completed) → worker assignment with finish time and device info
-	if err := db.Where("record_id = ?", savedRecordIDs[4]).FirstOrCreate(&models.ClinicRecordWorker{
+	if err := db.Where("record_id = ?", savedRecordIDs[4]).FirstOrCreate(&recordmodel.ClinicRecordWorker{
 		RecordID: savedRecordIDs[4], WorkerID: uint(mustGetID(staffByAccount, "lisi")),
 		WorkerDesc: "已更换电池，测试正常", FinishTime: now,
 	}).Error; err != nil {
@@ -332,7 +336,7 @@ func main() {
 	}
 	fmt.Printf("ticket-worker: record_id=%d\n", savedRecordIDs[4])
 
-	if err := db.Where("record_id = ?", savedRecordIDs[4]).FirstOrCreate(&models.ClinicRecordDevice{
+	if err := db.Where("record_id = ?", savedRecordIDs[4]).FirstOrCreate(&recordmodel.ClinicRecordDevice{
 		RecordID: savedRecordIDs[4], LaptopModel: "ThinkPad X1 Carbon Gen 9",
 	}).Error; err != nil {
 		log.Fatalf("seed device: %v", err)
@@ -340,7 +344,7 @@ func main() {
 	fmt.Printf("ticket-device: record_id=%d\n", savedRecordIDs[4])
 
 	// Ticket 6 (student06, rejected) → rejection reason
-	if err := db.Where("record_id = ?", savedRecordIDs[5]).FirstOrCreate(&models.ClinicRecordRejection{
+	if err := db.Where("record_id = ?", savedRecordIDs[5]).FirstOrCreate(&recordmodel.ClinicRecordRejection{
 		RecordID: savedRecordIDs[5], RejectReason: "非维修范围：电源适配器需自行购买",
 	}).Error; err != nil {
 		log.Fatalf("seed rejection: %v", err)
@@ -348,7 +352,7 @@ func main() {
 	fmt.Printf("ticket-rejection: record_id=%d\n", savedRecordIDs[5])
 
 	// Ticket 7 (student07, referred) → referral reason
-	if err := db.Where("record_id = ?", savedRecordIDs[6]).FirstOrCreate(&models.ClinicRecordReferral{
+	if err := db.Where("record_id = ?", savedRecordIDs[6]).FirstOrCreate(&recordmodel.ClinicRecordReferral{
 		RecordID: savedRecordIDs[6], ReferralReason: "主板级维修需转至官方售后服务中心",
 	}).Error; err != nil {
 		log.Fatalf("seed referral: %v", err)

@@ -11,7 +11,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"clinic-backend/models"
+	"clinic-backend/internal/announcement"
+	authmodel "clinic-backend/internal/auth/model"
+	recordmodel "clinic-backend/internal/record/model"
+	roommodel "clinic-backend/internal/room/model"
+	schedulingmodel "clinic-backend/internal/scheduling/model"
+	staffmodel "clinic-backend/internal/staff/model"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -69,12 +74,12 @@ func main() {
 	}
 
 	if err := db.AutoMigrate(
-		&models.ClinicAnnouncement{},
-		&models.ClinicServiceDate{},
-		&models.ClinicRoom{},
-		&models.ClinicStaff{},
-		&models.ClinicRecord{},
-		&models.AuthSession{},
+		&announcement.ClinicAnnouncement{},
+		&schedulingmodel.ClinicServiceDate{},
+		&roommodel.ClinicRoom{},
+		&staffmodel.ClinicStaff{},
+		&recordmodel.ClinicRecord{},
+		&authmodel.AuthSession{},
 	); err != nil {
 		log.Fatalf("failed to migrate: %v", err)
 	}
@@ -83,10 +88,10 @@ func main() {
 	today := now.Truncate(24 * time.Hour)
 
 	// Rooms
-	rooms := make([]models.ClinicRoom, 0, roomCount)
+	rooms := make([]roommodel.ClinicRoom, 0, roomCount)
 	roomByName := make(map[string]uint)
 	for _, name := range roomNames {
-		r := models.ClinicRoom{Name: name, Address: roomAddrs[name], Enabled: true}
+		r := roommodel.ClinicRoom{Name: name, Address: roomAddrs[name], Enabled: true}
 		if err := db.Create(&r).Error; err != nil {
 			log.Fatalf("create room %s: %v", name, err)
 		}
@@ -96,14 +101,14 @@ func main() {
 
 	// Service dates: 10 days distributed across 3 rooms.
 	distribution := []int{0, 0, 0, 0, 1, 1, 1, 2, 2, 2}
-	dates := make([]models.ClinicServiceDate, 0, dateCount)
+	dates := make([]schedulingmodel.ClinicServiceDate, 0, dateCount)
 	dateStrings := make([]string, 0, dateCount)
 	dateRooms := make(map[string]string, dateCount)
 	for i, roomIdx := range distribution {
 		d := today.AddDate(0, 0, i+1)
 		roomID := rooms[roomIdx].ID
 		roomName := roomNames[roomIdx]
-		sd := models.ClinicServiceDate{
+		sd := schedulingmodel.ClinicServiceDate{
 			Capacity:  10000,
 			RoomID:    &roomID,
 			Date:      d,
@@ -120,10 +125,10 @@ func main() {
 	}
 
 	// Announcement
-	ann := models.ClinicAnnouncement{
+	ann := announcement.ClinicAnnouncement{
 		Title:          "欢迎使用诊所管理系统",
 		Content:        "这是诊所管理系统的性能测试实例。",
-		Tag:            models.AnnouncementTagPinned,
+		Tag:            announcement.AnnouncementTagPinned,
 		CreatedTime:    now,
 		LastEditedTime: now,
 		ExpireDate:     today.AddDate(0, 0, 30),
@@ -135,7 +140,7 @@ func main() {
 	}
 
 	// Admin staff
-	staff := models.ClinicStaff{
+	staff := staffmodel.ClinicStaff{
 		AccountID: adminAccount,
 		Realname:  "Benchmark Admin",
 		Email:     "benchmark-admin@example.com",
@@ -146,14 +151,14 @@ func main() {
 	}
 
 	// Records
-	statuses := []models.RecordStatus{
-		models.RecordStatusPending,
-		models.RecordStatusConfirmed,
-		models.RecordStatusConfirmed,
-		models.RecordStatusArrived,
-		models.RecordStatusArrived,
-		models.RecordStatusInProgress,
-		models.RecordStatusCompleted,
+	statuses := []recordmodel.RecordStatus{
+		recordmodel.RecordStatusPending,
+		recordmodel.RecordStatusConfirmed,
+		recordmodel.RecordStatusConfirmed,
+		recordmodel.RecordStatusArrived,
+		recordmodel.RecordStatusArrived,
+		recordmodel.RecordStatusInProgress,
+		recordmodel.RecordStatusCompleted,
 	}
 	problems := []string{
 		"电脑无法开机，按下电源键无反应",
@@ -168,13 +173,13 @@ func main() {
 		"硬盘读写速度明显下降",
 	}
 
-	records := make([]models.ClinicRecord, 0, recordCount)
+	records := make([]recordmodel.ClinicRecord, 0, recordCount)
 	userList := make([]string, 0, recordCount)
 	for n := 1; n <= recordCount; n++ {
 		username := fmt.Sprintf("user%03d", n)
 		userList = append(userList, username)
 		sd := dates[rand.Intn(len(dates))]
-		records = append(records, models.ClinicRecord{
+		records = append(records, recordmodel.ClinicRecord{
 			User:            username,
 			Realname:        fmt.Sprintf("学生%d", n),
 			PhoneNum:        fmt.Sprintf("188%08d", n),
@@ -191,7 +196,7 @@ func main() {
 
 	// Map username -> record id.
 	recordMap := make(map[string]uint, recordCount)
-	var saved []models.ClinicRecord
+	var saved []recordmodel.ClinicRecord
 	if err := db.Where(`"user" LIKE ?`, "user%").Order("id").Find(&saved).Error; err != nil {
 		log.Fatalf("fetch saved records: %v", err)
 	}
@@ -247,7 +252,7 @@ func createAdminSession(db *gorm.DB, staffID int) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	sess := models.AuthSession{
+	sess := authmodel.AuthSession{
 		TokenHash:     hashToken(sessionToken),
 		StaffID:       staffID,
 		Role:          adminRole,

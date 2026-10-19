@@ -7,6 +7,37 @@ Backend for the clinic management system, built with Go and Gin.
 - Prod: `docker-compose.prod.yml` deploys both as a single stack, pulling
   pre-built images from GHCR (backend on `:8080`, admin frontend on `:5173`).
 
+## Project organization
+
+Business features live under `internal/`, with customer tickets and staff repair
+operations together in `record`, and service dates and work schedules together
+in `scheduling`.
+
+```text
+main.go                 # small entry point; go run . still works
+cmd/benchseed/          # benchmark data generator
+internal/
+  app/                 # startup, configuration, database setup, routes, shutdown
+  auth/                # handler/, service/, model/, client/
+  record/              # handler/, service/, model/
+  scheduling/          # handler/, service/, model/
+  room/                # handler/, service/, model/
+  staff/               # handler/, service/, model/
+  announcement/        # small module with model, service, and handler files
+  tagging/             # service/, model/, client/; embedded catalogs in service/data/
+  changes/             # refresh counters, middleware, and Redis storage
+  legacy/              # old customer API compatibility
+  calendar/            # shared calendar-date rules
+  database/            # shared database helpers
+  httpx/               # shared HTTP parsing and response helpers
+  testutil/            # shared test fixtures and request helpers
+```
+
+Tests sit beside their owning packages. Larger modules use subdirectories by
+responsibility; when a category grows beyond three production files, move that
+category into `handler/`, `service/`, `model/`, or `client/`. See [AGENTS.md](AGENTS.md)
+for the file-placement and dependency rules to follow when extending the backend.
+
 ## Deploy the backend
 
 ```bash
