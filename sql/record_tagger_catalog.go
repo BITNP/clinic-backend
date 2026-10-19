@@ -7,5 +7,5 @@ import _ "embed"
 // natural-language apply rules. It is idempotent across SQLite and Postgres
 // via ON CONFLICT.
 //
-//go:embed record_tag_catalog.sql
+//go:embed record_tagger_catalog.sql
 var RecordTagCatalog string
