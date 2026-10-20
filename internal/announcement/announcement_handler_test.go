@@ -158,6 +158,81 @@ func TestAnnouncementHandler_Update_Partial(t *testing.T) {
 	}
 }
 
+func TestAnnouncementHandler_Create_Enabled(t *testing.T) {
+	r, svc := setupAnnouncementHandlerRouter(t)
+
+	t.Run("default enabled", func(t *testing.T) {
+		w := testutil.DoRequest(t, r, http.MethodPost, "/api/admin/announcements", map[string]any{
+			"title":      "Enabled",
+			"content":    "body",
+			"brief":      "short",
+			"expireDate": testutil.FutureDate(7).Format("2006-01-02"),
+		})
+		if w.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+		}
+		var got announcement.ClinicAnnouncement
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode failed: %v", err)
+		}
+		if !got.Enabled {
+			t.Error("expected created announcement to be enabled by default")
+		}
+	})
+
+	t.Run("explicitly disabled", func(t *testing.T) {
+		w := testutil.DoRequest(t, r, http.MethodPost, "/api/admin/announcements", map[string]any{
+			"title":      "Disabled",
+			"content":    "body",
+			"brief":      "short",
+			"enabled":    false,
+			"expireDate": testutil.FutureDate(7).Format("2006-01-02"),
+		})
+		if w.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+		}
+		var got announcement.ClinicAnnouncement
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode failed: %v", err)
+		}
+		if got.Enabled {
+			t.Error("expected created announcement to be disabled")
+		}
+		stored, err := svc.GetByID(got.ID)
+		if err != nil {
+			t.Fatalf("get failed: %v", err)
+		}
+		if stored.Enabled {
+			t.Error("expected stored announcement to stay disabled")
+		}
+	})
+}
+
+func TestAnnouncementHandler_Update_Enabled(t *testing.T) {
+	r, svc := setupAnnouncementHandlerRouter(t)
+	a, err := svc.Create(announcement.CreateAnnouncementInput{
+		Title: "Old", Content: "c", Tag: "normal", Brief: "b", ExpireDate: testutil.FutureDate(2),
+	})
+	if err != nil {
+		t.Fatalf("seed failed: %v", err)
+	}
+
+	w := testutil.DoRequest(t, r, http.MethodPut, "/api/admin/announcements/"+testutil.Itoa(a.ID), map[string]any{"enabled": false})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var got announcement.ClinicAnnouncement
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if got.Enabled {
+		t.Error("expected announcement to be disabled")
+	}
+	if got.Title != "Old" {
+		t.Errorf("expected title to stay %q, got %q", "Old", got.Title)
+	}
+}
+
 func TestAnnouncementHandler_Delete_Success(t *testing.T) {
 	r, svc := setupAnnouncementHandlerRouter(t)
 	a, err := svc.Create(announcement.CreateAnnouncementInput{

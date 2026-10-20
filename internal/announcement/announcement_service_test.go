@@ -23,6 +23,8 @@ func setupAnnouncementServiceDB(t *testing.T) *gorm.DB {
 	return db
 }
 
+func boolPtr(v bool) *bool { return &v }
+
 func TestAnnouncementService_Create(t *testing.T) {
 	db := setupAnnouncementServiceDB(t)
 	svc := announcement.NewAnnouncementService(db)
@@ -47,6 +49,37 @@ func TestAnnouncementService_Create(t *testing.T) {
 	}
 	if !a.LastEditedTime.Equal(a.CreatedTime) {
 		t.Errorf("expected LastEditedTime == CreatedTime on create, got %v vs %v", a.LastEditedTime, a.CreatedTime)
+	}
+	if !a.Enabled {
+		t.Error("expected announcement to be enabled by default")
+	}
+}
+
+func TestAnnouncementService_Create_Disabled(t *testing.T) {
+	db := setupAnnouncementServiceDB(t)
+	svc := announcement.NewAnnouncementService(db)
+
+	a, err := svc.Create(announcement.CreateAnnouncementInput{
+		Title:      "Disabled",
+		Content:    "c",
+		Tag:        "normal",
+		Enabled:    boolPtr(false),
+		Brief:      "b",
+		ExpireDate: testutil.FutureDate(3),
+	})
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+	if a.Enabled {
+		t.Error("expected returned announcement to be disabled")
+	}
+
+	stored, err := svc.GetByID(a.ID)
+	if err != nil {
+		t.Fatalf("get failed: %v", err)
+	}
+	if stored.Enabled {
+		t.Error("expected stored announcement to stay disabled")
 	}
 }
 
@@ -114,6 +147,75 @@ func TestAnnouncementService_List_FilterAndSort(t *testing.T) {
 			t.Fatalf("expected 1 alert item, got %d (total %d)", len(items), total)
 		}
 	})
+}
+
+func TestAnnouncementService_List_ActiveOnly_Enabled(t *testing.T) {
+	db := setupAnnouncementServiceDB(t)
+	svc := announcement.NewAnnouncementService(db)
+
+	seed := []announcement.CreateAnnouncementInput{
+		{Title: "active", Content: "c", Tag: "normal", Brief: "b", ExpireDate: testutil.FutureDate(5)},
+		{Title: "disabled", Content: "c", Tag: "normal", Brief: "b", Enabled: boolPtr(false), ExpireDate: testutil.FutureDate(5)},
+		{Title: "disabled-expired", Content: "c", Tag: "normal", Brief: "b", Enabled: boolPtr(false), ExpireDate: testutil.FutureDate(-1)},
+		{Title: "disabled-tos", Content: "c", Tag: "tos", Brief: "b", Enabled: boolPtr(false), ExpireDate: testutil.FutureDate(5)},
+	}
+	for _, in := range seed {
+		if _, err := svc.Create(in); err != nil {
+			t.Fatalf("seed create failed: %v", err)
+		}
+	}
+
+	items, total, err := svc.List(announcement.ListAnnouncementFilter{ActiveOnly: true})
+	if err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	if total != 1 || len(items) != 1 {
+		t.Fatalf("expected only the enabled, unexpired item, got %d (total %d)", len(items), total)
+	}
+	if items[0].Title != "active" {
+		t.Errorf("expected %q, got %q", "active", items[0].Title)
+	}
+
+	// Without ActiveOnly, disabled announcements stay visible to staff.
+	all, allTotal, err := svc.List(announcement.ListAnnouncementFilter{})
+	if err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	if allTotal != 4 || len(all) != 4 {
+		t.Fatalf("expected 4 items, got %d (total %d)", len(all), allTotal)
+	}
+}
+
+func TestAnnouncementService_Update_Enabled(t *testing.T) {
+	db := setupAnnouncementServiceDB(t)
+	svc := announcement.NewAnnouncementService(db)
+
+	a, err := svc.Create(announcement.CreateAnnouncementInput{
+		Title:      "T",
+		Content:    "c",
+		Tag:        "normal",
+		Brief:      "b",
+		ExpireDate: testutil.FutureDate(3),
+	})
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+
+	updated, err := svc.Update(a.ID, announcement.UpdateAnnouncementInput{Enabled: boolPtr(false)})
+	if err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+	if updated.Enabled {
+		t.Error("expected announcement to be disabled")
+	}
+
+	updated, err = svc.Update(a.ID, announcement.UpdateAnnouncementInput{Enabled: boolPtr(true)})
+	if err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+	if !updated.Enabled {
+		t.Error("expected announcement to be enabled again")
+	}
 }
 
 func TestAnnouncementService_List_Pagination(t *testing.T) {

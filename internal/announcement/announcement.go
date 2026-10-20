@@ -22,12 +22,15 @@ func (t AnnouncementTag) Valid() bool {
 }
 
 // ClinicAnnouncement represents a staff-published announcement or terms of service
-// with an expiration date and a display priority.
+// with an expiration date and a display priority. Enabled is the staff-facing
+// on/off switch: only enabled announcements are considered active, and the
+// expiration date only gates announcements that are enabled.
 type ClinicAnnouncement struct {
 	ID             uint            `gorm:"primaryKey;autoIncrement;column:id" json:"id"`
 	Title          string          `gorm:"size:20;not null;column:title" json:"title"`
 	Content        string          `gorm:"type:text;not null;column:content" json:"content"`
 	Tag            AnnouncementTag `gorm:"size:16;not null;default:normal;column:tag" json:"tag"`
+	Enabled        bool            `gorm:"not null;default:true;column:enabled" json:"enabled"`
 	CreatedTime    time.Time       `gorm:"not null;column:created_time" json:"createdTime"`
 	LastEditedTime time.Time       `gorm:"not null;column:last_edited_time" json:"lastEditedTime"`
 	ExpireDate     time.Time       `gorm:"type:date;not null;column:expire_date" json:"expireDate"`

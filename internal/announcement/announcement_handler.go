@@ -22,6 +22,7 @@ type createAnnouncementRequest struct {
 	Title      string `json:"title" binding:"required,max=20"`
 	Content    string `json:"content" binding:"required"`
 	Tag        string `json:"tag" binding:"max=16"`
+	Enabled    *bool  `json:"enabled"`
 	Brief      string `json:"brief" binding:"required,max=64"`
 	ExpireDate string `json:"expireDate" binding:"required"`
 	Priority   uint   `json:"priority"`
@@ -31,6 +32,7 @@ type updateAnnouncementRequest struct {
 	Title      *string `json:"title" binding:"omitempty,max=20"`
 	Content    *string `json:"content"`
 	Tag        *string `json:"tag" binding:"omitempty,max=16"`
+	Enabled    *bool   `json:"enabled"`
 	Brief      *string `json:"brief" binding:"omitempty,max=64"`
 	ExpireDate *string `json:"expireDate"`
 	Priority   *uint   `json:"priority"`
@@ -56,6 +58,7 @@ func (h *AnnouncementHandler) Create(c *gin.Context) {
 		Title:      req.Title,
 		Content:    req.Content,
 		Tag:        AnnouncementTag(req.Tag),
+		Enabled:    req.Enabled,
 		Brief:      req.Brief,
 		ExpireDate: expireDate,
 		Priority:   req.Priority,
@@ -129,6 +132,7 @@ func (h *AnnouncementHandler) Update(c *gin.Context) {
 		Title:      req.Title,
 		Content:    req.Content,
 		Tag:        tag,
+		Enabled:    req.Enabled,
 		Brief:      req.Brief,
 		ExpireDate: expireDate,
 		Priority:   req.Priority,

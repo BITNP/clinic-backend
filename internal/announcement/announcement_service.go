@@ -27,10 +27,12 @@ func NewAnnouncementService(db *gorm.DB) *AnnouncementService {
 
 // CreateAnnouncementInput carries the fields a caller may set on creation.
 // Server-controlled fields (ID, CreatedTime, LastEditedTime) are not included.
+// A nil Enabled means the announcement starts enabled.
 type CreateAnnouncementInput struct {
 	Title      string
 	Content    string
 	Tag        AnnouncementTag
+	Enabled    *bool
 	Brief      string
 	ExpireDate time.Time
 	Priority   uint
@@ -41,6 +43,7 @@ type UpdateAnnouncementInput struct {
 	Title      *string
 	Content    *string
 	Tag        *AnnouncementTag
+	Enabled    *bool
 	Brief      *string
 	ExpireDate *time.Time
 	Priority   *uint
@@ -72,6 +75,10 @@ func (s *AnnouncementService) Create(in CreateAnnouncementInput) (ClinicAnnounce
 	}
 
 	now := time.Now().UTC()
+	enabled := true
+	if in.Enabled != nil {
+		enabled = *in.Enabled
+	}
 	a := ClinicAnnouncement{
 		Title:          in.Title,
 		Content:        in.Content,
@@ -84,6 +91,15 @@ func (s *AnnouncementService) Create(in CreateAnnouncementInput) (ClinicAnnounce
 	}
 	if err := s.db.Create(&a).Error; err != nil {
 		return ClinicAnnouncement{}, fmt.Errorf("create announcement: %w", err)
+	}
+	// GORM writes the column default (true) instead of the zero value when a
+	// field declares a default, so a disabled announcement has to be stored
+	// explicitly after the insert.
+	if !enabled {
+		if err := s.db.Model(&a).UpdateColumn("enabled", false).Error; err != nil {
+			return ClinicAnnouncement{}, fmt.Errorf("disable announcement %d: %w", a.ID, err)
+		}
+		a.Enabled = false
 	}
 	return a, nil
 }
@@ -116,7 +132,10 @@ func (s *AnnouncementService) List(f ListAnnouncementFilter) ([]ClinicAnnounceme
 		q = q.Where("tag = ?", f.Tag)
 	}
 	if f.ActiveOnly {
-		q = q.Where("(expire_date >= ? OR tag = ?)", calendar.DateInLocation(time.Now(), nil), AnnouncementTagTOS)
+		// A disabled announcement is never active, and its expiration date only
+		// applies while it is enabled. Terms of service never expire.
+		q = q.Where("enabled = ?", true).
+			Where("(tag = ? OR expire_date >= ?)", AnnouncementTagTOS, calendar.DateInLocation(time.Now(), nil))
 	}
 
 	var total int64
@@ -178,6 +197,9 @@ func (s *AnnouncementService) Update(id uint, in UpdateAnnouncementInput) (Clini
 	}
 	if in.Tag != nil {
 		updates["tag"] = *in.Tag
+	}
+	if in.Enabled != nil {
+		updates["enabled"] = *in.Enabled
 	}
 	if in.Brief != nil {
 		updates["brief"] = *in.Brief
