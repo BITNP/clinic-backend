@@ -440,3 +440,89 @@ func TestAdminRecordServiceListBatchedQueryCount(t *testing.T) {
 		t.Errorf("List issued %d queries, want %d (per-record loads likely regressed)", counter.n, want)
 	}
 }
+
+func TestAdminRecordServiceListSearchByRealname(t *testing.T) {
+	db := setupAdminRecordTestDB(t)
+	svc := recordservice.NewAdminRecordService(db)
+
+	room := roommodel.ClinicRoom{Name: "Room", Enabled: true}
+	if err := db.Create(&room).Error; err != nil {
+		t.Fatalf("seed room: %v", err)
+	}
+
+	appt := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	records := []recordmodel.ClinicRecord{
+		{ID: 1, Realname: "张三"},
+		{ID: 2, Realname: "李四"},
+		{ID: 3, Realname: "张三丰"},
+		{ID: 4, Realname: "王五"},
+		{ID: 5, Realname: "张三妹"},
+		{ID: 6, Realname: "Zhang San"},
+		{ID: 7, Realname: "100%"},
+		{ID: 8, Realname: "100x"},
+		{ID: 9, Realname: "a_b"},
+		{ID: 10, Realname: "axb"},
+	}
+	for i := range records {
+		records[i].User = "u"
+		records[i].PhoneNum = "p"
+		records[i].Status = recordmodel.RecordStatusPending
+		records[i].AppointmentTime = appt
+		records[i].QuestionDesc = "x"
+		records[i].RoomID = room.ID
+		if err := db.Create(&records[i]).Error; err != nil {
+			t.Fatalf("seed record %d: %v", records[i].ID, err)
+		}
+	}
+
+	listIDs := func(f recordservice.ListAdminRecordFilter) ([]uint, int64) {
+		t.Helper()
+		views, total, err := svc.List(context.Background(), 0, f)
+		if err != nil {
+			t.Fatalf("List(%+v): %v", f, err)
+		}
+		ids := make([]uint, 0, len(views))
+		for _, v := range views {
+			ids = append(ids, v.ID)
+		}
+		return ids, total
+	}
+
+	// Contains matching is paged newest-ID-first.
+	ids, total := listIDs(recordservice.ListAdminRecordFilter{Realname: "张", Page: 1, PageSize: 2})
+	if total != 3 {
+		t.Fatalf("total = %d, want 3", total)
+	}
+	if len(ids) != 2 || ids[0] != 5 || ids[1] != 3 {
+		t.Fatalf("page 1 IDs = %v, want [5 3]", ids)
+	}
+	ids, total = listIDs(recordservice.ListAdminRecordFilter{Realname: "张", Page: 2, PageSize: 2})
+	if total != 3 {
+		t.Fatalf("page 2 total = %d, want 3", total)
+	}
+	if len(ids) != 1 || ids[0] != 1 {
+		t.Fatalf("page 2 IDs = %v, want [1]", ids)
+	}
+
+	// Matching is case-insensitive.
+	ids, total = listIDs(recordservice.ListAdminRecordFilter{Realname: "zhang"})
+	if total != 1 || len(ids) != 1 || ids[0] != 6 {
+		t.Fatalf("case-insensitive search = %v (total %d), want [6] (total 1)", ids, total)
+	}
+
+	// A whitespace-only term behaves like no realname filter.
+	_, total = listIDs(recordservice.ListAdminRecordFilter{Realname: "   "})
+	if total != int64(len(records)) {
+		t.Fatalf("whitespace search total = %d, want %d", total, len(records))
+	}
+
+	// LIKE metacharacters are matched literally.
+	ids, total = listIDs(recordservice.ListAdminRecordFilter{Realname: "%"})
+	if total != 1 || len(ids) != 1 || ids[0] != 7 {
+		t.Fatalf("percent search = %v (total %d), want [7] (total 1)", ids, total)
+	}
+	ids, total = listIDs(recordservice.ListAdminRecordFilter{Realname: "_"})
+	if total != 1 || len(ids) != 1 || ids[0] != 9 {
+		t.Fatalf("underscore search = %v (total %d), want [9] (total 1)", ids, total)
+	}
+}

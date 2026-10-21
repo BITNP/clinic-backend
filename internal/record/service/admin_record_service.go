@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"clinic-backend/internal/calendar"
@@ -48,9 +49,15 @@ type ListAdminRecordFilter struct {
 	RoomID   *uint
 	FromDate *time.Time
 	ToDate   *time.Time
+	// Realname filters records whose realname contains this text.
+	Realname string
 	Page     int
 	PageSize int
 }
+
+// MaxAdminRecordPageSize bounds page sizes for record listings so a single
+// request cannot ask the database for an arbitrarily large result.
+const MaxAdminRecordPageSize = 100
 
 type UpdateAdminRecordInput struct {
 	WorkerDesc *string
@@ -100,6 +107,11 @@ func (s *AdminRecordService) List(ctx context.Context, actorID int, f ListAdminR
 	if f.ToDate != nil {
 		q = q.Where("appointment_time <= ?", calendar.DateInLocation(*f.ToDate, nil))
 	}
+	if term := strings.TrimSpace(f.Realname); term != "" {
+		// Escape LIKE metacharacters so the user's text is matched literally.
+		// LOWER() keeps the search case-insensitive on both SQLite and Postgres.
+		q = q.Where(`LOWER(realname) LIKE LOWER(?) ESCAPE '\'`, "%"+escapeLike(term)+"%")
+	}
 
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
@@ -111,6 +123,9 @@ func (s *AdminRecordService) List(ctx context.Context, actorID int, f ListAdminR
 	}
 	if f.PageSize < 1 {
 		f.PageSize = 20
+	}
+	if f.PageSize > MaxAdminRecordPageSize {
+		f.PageSize = MaxAdminRecordPageSize
 	}
 	offset := (f.Page - 1) * f.PageSize
 
@@ -133,6 +148,12 @@ func (s *AdminRecordService) List(ctx context.Context, actorID int, f ListAdminR
 		return nil, 0, err
 	}
 	return views, total, nil
+}
+
+// escapeLike escapes the characters that have special meaning in a LIKE
+// pattern so a search term is treated as literal text.
+func escapeLike(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
 func (s *AdminRecordService) GetByID(ctx context.Context, actorID int, id uint) (AdminRecordView, error) {

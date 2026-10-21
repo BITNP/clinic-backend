@@ -36,10 +36,15 @@ func (h *AdminRecordHandler) List(c *gin.Context) {
 		return
 	}
 
+	pageSize := httpx.ParseIntDefault(c, "pageSize", 20)
+	if pageSize > recordservice.MaxAdminRecordPageSize {
+		pageSize = recordservice.MaxAdminRecordPageSize
+	}
 	f := recordservice.ListAdminRecordFilter{
 		Status:   c.Query("status"),
+		Realname: c.Query("realname"),
 		Page:     httpx.ParseIntDefault(c, "page", 1),
-		PageSize: httpx.ParseIntDefault(c, "pageSize", 20),
+		PageSize: pageSize,
 	}
 	if v := c.Query("room_id"); v != "" {
 		id, err := parseUintQuery(v)
