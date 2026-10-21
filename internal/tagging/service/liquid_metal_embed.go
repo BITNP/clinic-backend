@@ -16,3 +16,9 @@ var liquidMetalCSV []byte
 //
 //go:embed data/liquid_metal_prompt.txt
 var liquidMetalPromptTemplate string
+
+// liquidMetalTagCSV is the liquid-metal tag catalog. It is embedded at build
+// time and parsed when the tagger is built at startup.
+//
+//go:embed data/liquid-metal-tags.csv
+var liquidMetalTagCSV []byte

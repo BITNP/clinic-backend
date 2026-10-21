@@ -99,9 +99,9 @@ type LiquidMetalTagger struct {
 	tagger *GeneralTagger
 }
 
-// NewLiquidMetalTagger builds a tagger from the embedded liquid-metal table.
-// client performs the calls to the tagger API; tagSetName defaults to
-// "clinic_laptop_liquid_metal" when empty.
+// NewLiquidMetalTagger builds a tagger from the embedded liquid-metal table
+// and tag catalog. client performs the calls to the tagger API; tagSetName
+// defaults to "clinic_laptop_liquid_metal" when empty.
 func NewLiquidMetalTagger(client TaggerClient, tagSetName string) (*LiquidMetalTagger, error) {
 	if tagSetName == "" {
 		tagSetName = defaultLiquidMetalTagSetName
@@ -114,8 +114,12 @@ func NewLiquidMetalTagger(client TaggerClient, tagSetName string) (*LiquidMetalT
 	if err != nil {
 		return nil, fmt.Errorf("build liquid metal tagger: %w", err)
 	}
+	tags, err := LiquidMetalTags()
+	if err != nil {
+		return nil, fmt.Errorf("build liquid metal tagger: %w", err)
+	}
 	return &LiquidMetalTagger{
-		tagger: NewGeneralTagger(client, tagSetName, prompt, liquidMetalLookupTags()),
+		tagger: NewGeneralTagger(client, tagSetName, prompt, tags),
 	}, nil
 }
 
@@ -166,43 +170,6 @@ func liquidMetalInputText(model, gpu, extra string) string {
 		b.WriteString(e)
 	}
 	return b.String()
-}
-
-// liquidMetalLookupTags returns the fixed tag set. Each rule is short because
-// the full lookup table lives in the shared prompt.
-func liquidMetalLookupTags() []TaggerTag {
-	return []TaggerTag{
-		{
-			Name:        LiquidMetalTagCPU,
-			Description: "原厂确认 CPU 使用液金，GPU 不使用液金。",
-			ApplyRule:   "命中液金正表，且该配置仅 CPU 使用液金时输出。",
-		},
-		{
-			Name:        LiquidMetalTagGPU,
-			Description: "原厂确认 GPU 使用液金，CPU 不使用液金。",
-			ApplyRule:   "命中液金正表，且该配置仅 GPU 使用液金时输出。",
-		},
-		{
-			Name:        LiquidMetalTagCPUGPU,
-			Description: "原厂确认 CPU 和 GPU 都使用液金。",
-			ApplyRule:   "命中液金正表，且该配置的 CPU 和 GPU 都使用液金时输出。",
-		},
-		{
-			Name:        LiquidMetalTagToVerify,
-			Description: "液金候选尚未确认、ROG/Alienware笔记本无明确结论，或改装后的材料不明、存在液金冲突信息。",
-			ApplyRule:   "命中待核实附表，或合理指向具体液金产品线但配置、别名、证据或部件结论未定时输出。同一具体产品线的相邻年款和其他配置也可输出，即使未收录或无另核提示。ROG/玩家国度、Alienware/外星人笔记本无明确结论时也输出，无需匹配表内具体候选；不扩展到天选/TUF、普通华硕/戴尔或明确的非笔记本设备。已确认配置按表判定；明确非液金记录、普通款排除及已更换硅脂且无液金冲突优先于兜底。已自行改液金、改后材料不明、仅部分更换且其他部件仍可能用液金、或命中适用的另核提示也输出。其他品牌仅同品牌、宽泛系列、代码前缀或显卡相似不足以触发。",
-		},
-		{
-			Name:        LiquidMetalTagNone,
-			Description: "原厂使用普通导热材料，或用户明确已更换为普通硅脂，不使用液金。",
-			ApplyRule:   "用户明确更换过硅脂且没有仍使用液金的冲突信息时优先输出，覆盖原厂液金记录及通用改装提醒；服务需求或否定更换不算已更换。否则命中易混淆列表的明确非液金配置，或符合主提示词中的普通款非液金规则，且没有冲突或其他散热材料改装信息时输出。具体配置的排除优先于宽泛相似；不因未列入表中就判为非液金。",
-		},
-		{
-			Name:        LiquidMetalTagUnmatched,
-			Description: "没有合理液金候选，也没有明确非液金依据，无法判断。",
-			ApplyRule:   "不符合ROG/Alienware笔记本品牌兜底，且没有合理候选、没有明确非液金依据，或型号无法识别时输出。已识别为ROG/玩家国度或Alienware/外星人笔记本，即使型号未收录或具体型号不明，也应待核实。其他品牌仅同品牌、宽泛系列、代码前缀或显卡相似可输出。同一具体液金产品线的相邻年款或其他配置应保留待核实，不能仅因年份未收录、代码变化、GPU未列出或缺少完整SKU而输出此标签。",
-		},
-	}
 }
 
 // liquidMetalResultForTag maps the tagger's tag name back to a structured

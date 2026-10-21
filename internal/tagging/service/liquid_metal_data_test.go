@@ -38,6 +38,39 @@ func TestLiquidMetalRows_LoadsEmbeddedCSV(t *testing.T) {
 	}
 }
 
+func TestLiquidMetalTags_LoadsEmbeddedCSV(t *testing.T) {
+	tags, err := taggingservice.LiquidMetalTags()
+	if err != nil {
+		t.Fatalf("load liquid metal tags: %v", err)
+	}
+	if len(tags) == 0 {
+		t.Fatal("expected at least one tag")
+	}
+
+	byName := make(map[string]taggingservice.TaggerTag, len(tags))
+	for _, tag := range tags {
+		if tag.Description == "" {
+			t.Errorf("tag %q has an empty description", tag.Name)
+		}
+		if tag.ApplyRule == "" {
+			t.Errorf("tag %q has an empty apply rule", tag.Name)
+		}
+		byName[tag.Name] = tag
+	}
+	for _, want := range []string{
+		taggingservice.LiquidMetalTagCPU,
+		taggingservice.LiquidMetalTagGPU,
+		taggingservice.LiquidMetalTagCPUGPU,
+		taggingservice.LiquidMetalTagToVerify,
+		taggingservice.LiquidMetalTagNone,
+		taggingservice.LiquidMetalTagUnmatched,
+	} {
+		if _, ok := byName[want]; !ok {
+			t.Errorf("tag %q not loaded", want)
+		}
+	}
+}
+
 func TestLiquidMetalRows_CachesResult(t *testing.T) {
 	first, err := taggingservice.LiquidMetalRows()
 	if err != nil {
