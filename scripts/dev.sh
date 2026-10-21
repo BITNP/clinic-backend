@@ -19,6 +19,14 @@ set -Eeuo pipefail
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT_DIR"
 
+# Export the local configuration to the backend and helper processes.
+# In particular, the backend needs TAGGER_API_TOKEN to register its tag sets.
+if [[ -f "$ROOT_DIR/.env" ]]; then
+	set -a
+	source "$ROOT_DIR/.env"
+	set +a
+fi
+
 CAS_PORT=${CAS_PORT:-9999}
 REDIS_PORT=${REDIS_PORT:-6379}
 BACKEND_PORT=${BACKEND_PORT:-8080}
@@ -36,6 +44,9 @@ START_REDIS=1
 usage() {
 	cat <<'EOF'
 Usage: scripts/dev.sh [options]
+
+Loads and exports the backend's .env before starting services, if present.
+Values in .env override existing environment variables.
 
 Options:
   --no-cas        Do not start the fake CAS server (assume one is running)
