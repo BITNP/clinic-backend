@@ -36,7 +36,7 @@ func TestLiquidMetalTagger_RegisterTagSet(t *testing.T) {
 	if strings.Contains(prompt, "{{TABLE}}") {
 		t.Error("prompt still contains the {{TABLE}} placeholder")
 	}
-	for _, want := range []string{"液金机型表", "GX701L", "RTX 2080 SUPER", "同系列", "完全没有任何相关线索"} {
+	for _, want := range []string{"液金机型表", "GX701L", "RTX 2080 SUPER", "【判定目标】", "【常见普通款边界】", "【判定示例】"} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt missing %q", want)
 		}
