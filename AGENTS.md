@@ -53,9 +53,10 @@ Do not recreate global `handlers/`, `services/`, or `models/` directories.
   Keep the executable entry point small. Shared database, calendar, and HTTP
   helpers belong in focused packages (`database`, `calendar`, `httpx`), only
   when multiple modules actually need them. Do not add generic `utils` packages.
-* Put tests beside the package they exercise. Use external `_test` packages for
-  public behavior and the same package for private helpers. Reserve top-level
-  `tests/` for scenarios intentionally spanning multiple modules.
+* Put tests in the top-level `tests/` directory, mirroring the `internal/` path
+  of the package they exercise (for example, `tests/record/service/` for
+  `internal/record/service/`). Use external `_test` packages. A test that needs
+  private helpers may stay beside its package in the same package.
 * Keep embedded assets with their owning package. When moving files, update
   imports, tests, embed paths, build commands, and documentation together.
 * Organization changes must preserve HTTP routes, JSON formats, database table

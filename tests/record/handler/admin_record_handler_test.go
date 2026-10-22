@@ -1,4 +1,4 @@
-package handler
+package handler_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	recordhandler "clinic-backend/internal/record/handler"
 	recordmodel "clinic-backend/internal/record/model"
 	recordservice "clinic-backend/internal/record/service"
 	roommodel "clinic-backend/internal/room/model"
@@ -58,7 +59,7 @@ func TestAdminRecordHandlerListSearchByRealname(t *testing.T) {
 		}
 	}
 
-	h := NewAdminRecordHandler(recordservice.NewAdminRecordService(db))
+	h := recordhandler.NewAdminRecordHandler(recordservice.NewAdminRecordService(db))
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodGet, "/api/admin/records?realname=张&page=1&pageSize=1", nil)
