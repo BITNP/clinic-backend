@@ -93,6 +93,36 @@ Do not recreate global `handlers/`, `services/`, or `models/` directories.
 * Return consistent JSON error responses.
 * Validate request bodies before using them.
 
+## API Documentation
+
+`API.md` at the repository root is the single source of truth for the public HTTP API.
+It must document every exposed endpoint's description, request shape, response shape,
+status codes, and a `curl` example.
+
+Whenever API-related code changes, update `API.md` in the same change. This includes,
+but is not limited to:
+
+* Adding, removing, renaming, or moving an endpoint.
+* Changing request/response fields, types, requiredness, or defaults.
+* Changing status codes, authentication, headers, or error bodies.
+* Adding a new supported value for an existing field.
+
+Do not let `API.md` drift from the routes registered in `internal/app/routes.go`
+and the handlers under `internal/`. If an endpoint exists in code, it exists in
+`API.md`.
+
+Document each endpoint in one `###` section, in this order:
+
+* Endpoint and method, for example `### \`POST /api/v1/...\``
+* **Description:** what the endpoint does and any side effects.
+* **Request body** and/or parameters, as a table of field, type, required, description.
+* **Response** with the success status code, a field table, and a JSON example.
+* **Error responses:** the status codes this endpoint can return.
+* **curl** with a runnable example, including required headers.
+
+Prefer request/response field tables that mirror the JSON bodies exactly, and keep
+authentication requirements visible near the top of the document.
+
 ## Testing
 
 Before finishing a task, run the relevant tests when possible:
@@ -133,6 +163,8 @@ When modifying code:
 4. Add or update tests if behavior changes.
 5. Run formatting and tests.
 6. Summarize what changed and what was tested.
+7. Update `API.md` in the same change whenever API-related code changes
+   (see API Documentation).
 
 ## Things to Avoid
 
