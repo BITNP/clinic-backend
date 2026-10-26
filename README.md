@@ -30,6 +30,7 @@ internal/
   legacy/              # old customer API compatibility
   calendar/            # shared calendar-date rules
   database/            # shared database helpers
+  storage/             # S3 client construction and configuration
   httpx/               # shared HTTP parsing and response helpers
   testutil/            # shared test fixtures and request helpers
 deploy/rustfs/         # RustFS provisioning and operations guide
