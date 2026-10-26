@@ -29,7 +29,7 @@ services:
       retries: 10
 
   rustfs:
-    image: rustfs/rustfs:${RUSTFS_IMAGE_TAG:-1.0.3}
+    image: rustfs/rustfs:${RUSTFS_IMAGE_TAG:-latest}
     restart: unless-stopped
     security_opt:
       - "no-new-privileges:true"

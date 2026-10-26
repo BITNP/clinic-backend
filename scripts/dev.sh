@@ -5,14 +5,16 @@
 #
 #   1. fake CAS server        -> http://127.0.0.1:9999
 #   2. Redis                  -> 127.0.0.1:6379 (docker, falls back to redis-server)
-#   3. backend (this repo)    -> http://127.0.0.1:8080
+#   3. RustFS + provisioning  -> http://127.0.0.1:9000, when S3 storage is local
+#   4. backend (this repo)    -> http://127.0.0.1:8080
 #
 # The backend runs in the foreground with its stdout/stderr untouched, so
 # everything main.go logs (Gin routes, request logs, startup messages) stays
-# in your terminal. Only the helpers (fake CAS, Redis) are backgrounded.
-# Ctrl-C stops the backend and the helpers this script started.
+# in your terminal. Only the helpers (fake CAS, Redis, RustFS) are backgrounded.
+# Ctrl-C stops the backend and the helpers this script started. RustFS is left
+# running if it was already running before this script started.
 #
-# Usage: scripts/dev.sh [--no-cas] [--no-redis]
+# Usage: scripts/dev.sh [--no-cas] [--no-redis] [--no-storage]
 
 set -Eeuo pipefail
 
@@ -36,10 +38,13 @@ REDIS_CONTAINER=${REDIS_CONTAINER:-clinic-dev-redis}
 LOG_DIR=${LOG_DIR:-${TMPDIR:-/tmp}/clinic-dev}
 CAS_LOG=$LOG_DIR/fake_cas.log
 REDIS_LOG=$LOG_DIR/redis.log
+STORAGE_LOG=$LOG_DIR/rustfs.log
 mkdir -p "$LOG_DIR"
 
 START_CAS=1
 START_REDIS=1
+START_STORAGE=1
+STORAGE_STARTED=0
 
 usage() {
 	cat <<'EOF'
@@ -51,6 +56,8 @@ Values in .env override existing environment variables.
 Options:
   --no-cas        Do not start the fake CAS server (assume one is running)
   --no-redis      Do not start Redis (assume one is running)
+  --no-storage    Do not start or provision local RustFS (assume configured
+                  storage is already running, or use an external S3 endpoint)
   -h, --help      Show this help
 EOF
 }
@@ -59,6 +66,7 @@ while (($# > 0)); do
 	case "$1" in
 	--no-cas) START_CAS=0 ;;
 	--no-redis) START_REDIS=0 ;;
+	--no-storage | --no-rustfs) START_STORAGE=0 ;;
 	-h | --help)
 		usage
 		exit 0
@@ -119,6 +127,11 @@ cleanup() {
 	if ((REDIS_CONTAINER_STARTED)); then
 		log "stopping redis container ($REDIS_CONTAINER)"
 		docker rm -f "$REDIS_CONTAINER" >/dev/null 2>&1 || true
+	fi
+
+	if ((STORAGE_STARTED)); then
+		log "stopping RustFS container"
+		docker compose stop rustfs >/dev/null 2>&1 || true
 	fi
 
 	if [[ -n "$CAS_PGID" ]]; then
@@ -215,7 +228,68 @@ start_redis() {
 	log "Redis ready"
 }
 
-# --- 3. backend --------------------------------------------------------------
+# --- 3. RustFS ---------------------------------------------------------------
+
+storage_host() {
+	local url=$1
+	url=${url#*://}
+	url=${url%%/*}
+	url=${url%%:*}
+	printf '%s' "$url"
+}
+
+start_storage() {
+	[[ -n "${S3_ENDPOINT:-}" ]] || die "S3_ENDPOINT is not set; configure .env before starting"
+
+	if ((!START_STORAGE)); then
+		log "skipping local RustFS; using configured/remote S3"
+		return
+	fi
+
+	local endpoint=${S3_INTERNAL_ENDPOINT:-$S3_ENDPOINT}
+	local host
+	host=$(storage_host "$endpoint")
+	case "$host" in
+	localhost | 127.0.0.1 | 0.0.0.0) ;;
+	*)
+		log "using external S3 at $host; skipping local RustFS"
+		return
+		;;
+	esac
+
+	command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 ||
+		die "local storage is required but Docker is unavailable; start it first or use --no-storage"
+	docker compose version >/dev/null 2>&1 ||
+		die "docker compose is unavailable; start storage first or use --no-storage"
+
+	local var
+	for var in S3_BUCKET S3_REGION S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY RUSTFS_ACCESS_KEY RUSTFS_SECRET_KEY; do
+		[[ -n "${!var:-}" ]] || die "$var is not set in .env"
+	done
+
+	local was_running=0
+	if docker compose ps -q rustfs 2>/dev/null | grep -q .; then
+		was_running=1
+	fi
+
+	: >"$STORAGE_LOG"
+	log "starting RustFS and provisioning storage (log: $STORAGE_LOG)"
+	if ! docker compose up -d rustfs >>"$STORAGE_LOG" 2>&1; then
+		tail -n 30 "$STORAGE_LOG" >&2 || true
+		die "RustFS failed to start; see $STORAGE_LOG"
+	fi
+	if ((!was_running)); then
+		STORAGE_STARTED=1
+	fi
+
+	if ! docker compose run --rm rustfs-init >>"$STORAGE_LOG" 2>&1; then
+		tail -n 40 "$STORAGE_LOG" >&2 || true
+		die "RustFS provisioning failed; see $STORAGE_LOG"
+	fi
+	log "storage ready"
+}
+
+# --- 4. backend --------------------------------------------------------------
 
 start_backend() {
 	if port_open 127.0.0.1 "$BACKEND_PORT"; then
@@ -238,6 +312,12 @@ start_backend() {
 	go run .
 }
 
+[[ -n "${S3_ENDPOINT:-}" ]] || die "S3_ENDPOINT is not set; configure .env before starting"
+if port_open 127.0.0.1 "$BACKEND_PORT"; then
+	die "port $BACKEND_PORT is already in use; stop the other backend first"
+fi
+
 ((START_CAS)) && start_cas
 ((START_REDIS)) && start_redis
+start_storage
 start_backend

@@ -403,13 +403,13 @@ including RustFS and the `rc` provisioner, as shown in the root
 [README](../../README.md#deploy-to-a-server):
 
 ```bash
-docker pull rustfs/rustfs:${RUSTFS_IMAGE_TAG:-1.0.3}
+docker pull rustfs/rustfs:${RUSTFS_IMAGE_TAG:-latest}
 docker pull rustfs/rc:${RUSTFS_CLI_IMAGE_TAG:-v0.1.36}
 docker save -o clinic-images.tar \
   ghcr.io/bitnp/clinic-backend:${BACKEND_IMAGE_TAG:-latest} \
   ghcr.io/bitnp/clinic_admin_frontend:${ADMIN_FRONTEND_IMAGE_TAG:-latest} \
   redis:7-alpine \
-  rustfs/rustfs:${RUSTFS_IMAGE_TAG:-1.0.3} \
+  rustfs/rustfs:${RUSTFS_IMAGE_TAG:-latest} \
   rustfs/rc:${RUSTFS_CLI_IMAGE_TAG:-v0.1.36}
 sha256sum clinic-images.tar > clinic-images.tar.sha256
 ```

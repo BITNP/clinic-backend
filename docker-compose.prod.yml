@@ -22,9 +22,9 @@ version: "3"
 #                                   #   RUSTFS_*, S3_*, ...
 #   docker compose -f docker-compose.prod.yml up -d
 #
-# Pin specific image versions with BACKEND_IMAGE_TAG / ADMIN_FRONTEND_IMAGE_TAG /
-# RUSTFS_IMAGE_TAG / RUSTFS_CLI_IMAGE_TAG, e.g.
-# BACKEND_IMAGE_TAG=1.2.3, RUSTFS_IMAGE_TAG=1.0.3.
+# Override image tags with BACKEND_IMAGE_TAG / ADMIN_FRONTEND_IMAGE_TAG /
+# RUSTFS_IMAGE_TAG / RUSTFS_CLI_IMAGE_TAG. RustFS defaults to latest;
+# set RUSTFS_IMAGE_TAG to match the server when needed.
 #
 # RustFS operations (bucket setup, credential rotation, backup/restore) are
 # documented in deploy/rustfs/README.md.
@@ -61,7 +61,7 @@ services:
       retries: 10
 
   rustfs:
-    image: rustfs/rustfs:${RUSTFS_IMAGE_TAG:-1.0.3}
+    image: rustfs/rustfs:${RUSTFS_IMAGE_TAG:-latest}
     # The image is shipped to the server in the packaged tarball, never pulled.
     pull_policy: never
     restart: unless-stopped

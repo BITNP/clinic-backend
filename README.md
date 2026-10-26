@@ -107,14 +107,14 @@ set +a
 docker pull ghcr.io/bitnp/clinic-backend:${BACKEND_IMAGE_TAG:-latest}
 docker pull ghcr.io/bitnp/clinic_admin_frontend:${ADMIN_FRONTEND_IMAGE_TAG:-latest}
 docker pull redis:7-alpine
-docker pull rustfs/rustfs:${RUSTFS_IMAGE_TAG:-1.0.3}
+docker pull rustfs/rustfs:${RUSTFS_IMAGE_TAG:-latest}
 docker pull rustfs/rc:${RUSTFS_CLI_IMAGE_TAG:-v0.1.36}
 
 docker save -o clinic-images.tar \
   ghcr.io/bitnp/clinic-backend:${BACKEND_IMAGE_TAG:-latest} \
   ghcr.io/bitnp/clinic_admin_frontend:${ADMIN_FRONTEND_IMAGE_TAG:-latest} \
   redis:7-alpine \
-  rustfs/rustfs:${RUSTFS_IMAGE_TAG:-1.0.3} \
+  rustfs/rustfs:${RUSTFS_IMAGE_TAG:-latest} \
   rustfs/rc:${RUSTFS_CLI_IMAGE_TAG:-v0.1.36}
 
 sha256sum clinic-images.tar > clinic-images.tar.sha256
@@ -359,6 +359,11 @@ frontend proxies `/api`, `/login`, `/logout` to the backend, so no CORS setup
 is needed — requests stay same-origin from the browser's perspective.
 
 ## Run locally (development)
+
+`scripts/dev.sh` automates the steps below. For a local `S3_ENDPOINT`, it starts
+RustFS and runs `rustfs-init` before starting the backend. Use
+`--no-storage` when storage is already managed elsewhere or points at an
+external S3 endpoint.
 
 ```bash
 # 1. Start the fake CAS server (gives admin role)
