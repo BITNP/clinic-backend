@@ -127,6 +127,10 @@ func TestRustFSIntegration_PresignedURLs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
+	if err := client.Check(ctx); err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+
 	t.Cleanup(func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

@@ -50,10 +50,10 @@ Required for storage:
 | --- | --- |
 | `RUSTFS_ACCESS_KEY` / `RUSTFS_SECRET_KEY` | RustFS root credentials. Used only by `rustfs-init` and break-glass administration. |
 | `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | Dedicated application credentials. The backend uses these. |
-| `S3_BUCKET` | Bucket name, default `clinic-photos`. |
+| `S3_BUCKET` | Bucket name; production `clinic-photos`, local example `clinic-photos-dev`. |
 | `S3_REGION` | Bucket/S3 region, default `us-east-1`. |
-| `S3_PUBLIC_ENDPOINT` | Endpoint used to sign browser-facing URLs. Set this to the endpoint browsers will actually use, or leave the local development value if browser uploads are not exposed yet. |
-| `S3_INTERNAL_ENDPOINT` | Endpoint for host-run tools/backends, default `http://127.0.0.1:9000`. Compose backend services override it to `http://rustfs:9000`. |
+| `S3_ENDPOINT` | Browser-facing endpoint used to sign upload/download URLs. Set this to the endpoint browsers will actually use, or leave the local development value if browser uploads are not exposed yet. |
+| `S3_INTERNAL_ENDPOINT` | Optional backend-only endpoint. Empty uses `S3_ENDPOINT`; Compose sets `http://rustfs:9000`, and a host-run backend can use `http://127.0.0.1:9000`. |
 | `S3_CORS_ALLOWED_ORIGINS` | Comma-separated exact frontend origins. Never use `*` in production. |
 | `S3_API_PORT` | Host loopback port for the S3 API, default `9000`. |
 | `RUSTFS_CONSOLE_PORT` | Host loopback port for the console, default `9001`. |
@@ -69,7 +69,8 @@ openssl rand -hex 24                                 # secret key
 ## Production setup
 
 1. Set the RustFS root credentials, application credentials, CORS origins, and
-   `S3_PUBLIC_ENDPOINT` in `.env`.
+   `S3_ENDPOINT` in `.env`. The bucket and application user must be provisioned
+   before the backend starts.
 2. Load the packaged images and start the stack:
 
    ```bash
@@ -82,8 +83,12 @@ openssl rand -hex 24                                 # secret key
    ```bash
    docker compose -f docker-compose.prod.yml ps
    docker compose -f docker-compose.prod.yml logs rustfs-init
-   docker compose -f docker-compose.prod.yml logs -f rustfs
+   docker compose -f docker-compose.prod.yml logs -f rustfs backend
    ```
+
+   `backend` waits for `rustfs-init` and then verifies bucket access with
+   `HeadBucket` before accepting HTTP requests. The application policy grants
+   `s3:ListBucket` so this startup check succeeds.
 
 The RustFS console and S3 API listen on loopback only:
 
@@ -99,7 +104,7 @@ ssh -L 9001:127.0.0.1:9001 user@server
 
 The backend reaches RustFS internally at `http://rustfs:9000`. Browser-facing
 access is not provided by this stack. When an external endpoint is available,
-set `S3_PUBLIC_ENDPOINT` to it so presigned URLs use the right host; that
+set `S3_ENDPOINT` to it so presigned URLs use the right host; that
 endpoint must preserve Host/path/query for SigV4.
 
 This deployment uses path-style S3 addressing: presigned URLs look like
@@ -117,9 +122,11 @@ certificate.
 - S3 API: `http://127.0.0.1:${S3_API_PORT:-9000}`
 - Console: `http://127.0.0.1:${RUSTFS_CONSOLE_PORT:-9001}`
 
-Containers use `http://rustfs:9000` on the compose network. `rustfs-init` runs
-automatically with the stack. If the backend runs with `go run .` on the host,
-`S3_INTERNAL_ENDPOINT=http://127.0.0.1:9000` is the default in `.env`.
+Containers use `http://rustfs:9000` on the compose network, and Compose sets
+that as the backend's `S3_INTERNAL_ENDPOINT`. `rustfs-init` runs automatically
+with the stack. If the backend runs with `go run .` on the host, set
+`S3_INTERNAL_ENDPOINT=http://127.0.0.1:9000` or leave it empty to use
+`S3_ENDPOINT`.
 
 ## CORS
 
@@ -130,7 +137,7 @@ responses; it does not make the bucket public and does not replace signed
 authorization.
 
 The backend should presign browser uploads and downloads with
-`S3_PUBLIC_ENDPOINT`. A browser `PUT` sends the bytes directly to RustFS; include
+`S3_ENDPOINT`. A browser `PUT` sends the bytes directly to RustFS; include
 any headers that were part of the signature (for example `Content-Type`). No
 upload-body limit is enforced by this stack; enforce one in the backend or
 deployment infrastructure.
@@ -187,7 +194,8 @@ set -a
 source .env
 set +a
 
-rc alias set local "$S3_INTERNAL_ENDPOINT" \
+local_endpoint=${S3_INTERNAL_ENDPOINT:-http://127.0.0.1:${S3_API_PORT:-9000}}
+rc alias set local "$local_endpoint" \
   "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY"
 ```
 
@@ -196,7 +204,7 @@ Confirm anonymous reads fail against the object uploaded above. Expect `403` or
 
 ```bash
 curl -sS -o /dev/null -w '%{http_code}\n' \
-  "http://127.0.0.1:${S3_API_PORT:-9000}/clinic-photos/photos/private.txt"
+  "http://127.0.0.1:${S3_API_PORT:-9000}/$S3_BUCKET/photos/private.txt"
 ```
 
 Confirm CORS for an allowed origin. Expect an
@@ -208,42 +216,42 @@ curl -sS -D - -o /dev/null -X OPTIONS \
   -H 'Origin: https://admin.example.com' \
   -H 'Access-Control-Request-Method: PUT' \
   -H 'Access-Control-Request-Headers: content-type' \
-  "http://127.0.0.1:${S3_API_PORT:-9000}/clinic-photos/temporary/verify.txt"
+  "http://127.0.0.1:${S3_API_PORT:-9000}/$S3_BUCKET/temporary/verify.txt"
 ```
 
 Verify a temporary signed upload and download URL through
-`S3_PUBLIC_ENDPOINT`. If that endpoint is not reachable from the server, use
+`S3_ENDPOINT`. If that endpoint is not reachable from the server, use
 the loopback S3 endpoint instead:
 
 ```bash
-public_endpoint=${S3_PUBLIC_ENDPOINT:-http://127.0.0.1:${S3_API_PORT:-9000}}
+public_endpoint=${S3_ENDPOINT:-http://127.0.0.1:${S3_API_PORT:-9000}}
 rc alias set public "$public_endpoint" \
   "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY"
 
-printf 'signed upload\n' | rc pipe public/clinic-photos/temporary/signed.txt
-url=$(rc object share public/clinic-photos/temporary/signed.txt --expire 5m |
+printf 'signed upload\n' | rc pipe "public/$S3_BUCKET/temporary/signed.txt"
+url=$(rc object share "public/$S3_BUCKET/temporary/signed.txt" --expire 5m |
   grep -E '^https?://' | head -1)
 curl -fsS "$url"
-rc object remove -f public/clinic-photos/temporary/signed.txt
+rc object remove -f "public/$S3_BUCKET/temporary/signed.txt"
 ```
 
 Verify files survive a container restart:
 
 ```bash
-printf 'persistent\n' | rc pipe public/clinic-photos/temporary/persistent.txt
+printf 'persistent\n' | rc pipe "public/$S3_BUCKET/temporary/persistent.txt"
 docker compose -f docker-compose.prod.yml restart rustfs
 # wait for /health/ready
 docker compose -f docker-compose.prod.yml exec rustfs \
   curl -fsS http://127.0.0.1:9000/health/ready
-rc object stat public/clinic-photos/temporary/persistent.txt
+rc object stat "public/$S3_BUCKET/temporary/persistent.txt"
 ```
 
 The object is stored in the `rustfsdata` volume and must still exist. Remove the
 verification objects when finished:
 
 ```bash
-rc object remove -f public/clinic-photos/photos/private.txt
-rc object remove -f public/clinic-photos/temporary/persistent.txt
+rc object remove -f "public/$S3_BUCKET/photos/private.txt"
+rc object remove -f "public/$S3_BUCKET/temporary/persistent.txt"
 ```
 
 ## Credential rotation

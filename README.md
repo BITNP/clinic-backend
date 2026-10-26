@@ -45,7 +45,7 @@ for the file-placement and dependency rules to follow when extending the backend
 
 ```bash
 cd clinic-backend
-cp .env.example .env   # optional, to customize config
+cp .env.example .env   # then fill in the required S3 and RustFS values
 docker compose up --build   # build locally
 ```
 
@@ -82,15 +82,17 @@ echo $PAT | docker login ghcr.io -u Potato-Yao --password-stdin
 source checkout. It runs the backend, the admin frontend, a bundled Redis
 service and RustFS object storage, and connects to the Postgres already running
 on the server via `host.containers.internal` (no bundled database), like the
-other clinic services. It refuses to start if `CLINIC_API_KEY` or the RustFS
-credentials are missing.
+other clinic services. It refuses to start if `CLINIC_API_KEY`, the required
+S3 settings, or the RustFS provisioning credentials are missing.
 
 The server cannot pull images from Docker Hub or GHCR, so package the images on
 a machine that can and copy the tarball over:
 
 ```bash
-# On your local machine: create .env from the example and fill in the secrets
-# (CLINIC_API_KEY, APP_BASE_URL, CAS_SERVER_URL, RustFS credentials, ...).
+# On your local machine: create .env from the example and fill in the required
+# values (CLINIC_API_KEY, S3_ENDPOINT, S3_BUCKET, S3_REGION, S3_ACCESS_KEY_ID,
+# S3_SECRET_ACCESS_KEY, RustFS credentials, ...). The bucket and application
+# credentials must exist before the backend starts.
 cp .env.example .env
 chmod 600 .env
 # set CLINIC_DB_DSN in .env to override the default
@@ -133,17 +135,18 @@ reach. Every bundled service in the production compose file uses
 
 ### Object storage (RustFS)
 
-RustFS stores clinic photos in a private `clinic-photos` bucket. The one-shot
-`rustfs-init` service creates the bucket, the `temporary/` and `photos/`
-prefixes, a bucket-scoped application policy, and a dedicated application user.
-The backend never uses the RustFS root account.
+RustFS stores clinic photos in a private bucket (`clinic-photos` in production,
+`clinic-photos-dev` locally). The one-shot `rustfs-init` service creates the
+bucket, the `temporary/` and `photos/` prefixes, a bucket-scoped application
+policy, and a dedicated application user. The backend never uses the RustFS
+root account.
 
 - Internal S3 API: `http://rustfs:9000` on the compose network.
 - Host access: `127.0.0.1:${S3_API_PORT}` on the server, for CLI tooling. No
   public S3 proxy is bundled.
 - Console: `127.0.0.1:${RUSTFS_CONSOLE_PORT}` only; reach it with
   `ssh -L 9001:127.0.0.1:9001 server`.
-- Set `S3_PUBLIC_ENDPOINT` to the browser-facing endpoint when one is available.
+- Set `S3_ENDPOINT` to the browser-facing endpoint when one is available.
   Until then, browser uploads are not exposed.
 - Configure the admin and customer frontend origins in
   `S3_CORS_ALLOWED_ORIGINS`. CORS does not make the bucket public.
@@ -183,6 +186,156 @@ script once against the database:
 go run fake/seed.go
 ```
 
+## Object storage (backend usage)
+
+Storage is a required startup dependency. The backend validates the S3
+configuration, initializes a `*storage.Service`, and checks that the configured
+bucket is accessible before starting background workers or accepting HTTP
+requests. It passes the service through application wiring for future
+consumers.
+
+### Configuration
+
+| Variable | Purpose |
+| --- | --- |
+| `S3_ENDPOINT` | Browser-facing endpoint used for presigned URLs. Required. |
+| `S3_INTERNAL_ENDPOINT` | Optional backend-only endpoint. Empty means use `S3_ENDPOINT`. |
+| `S3_BUCKET` | Photo bucket. Local example: `clinic-photos-dev`; production: `clinic-photos`. Required. |
+| `S3_REGION` | Signing region, usually `us-east-1`. Required. |
+| `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | Dedicated application credentials. Never use root credentials. Required. |
+| `S3_PUT_URL_TTL` | Presigned upload lifetime. Defaults to `5m`. |
+| `S3_GET_URL_TTL` | Presigned download lifetime. Defaults to `10m`. |
+
+Local development:
+
+```dotenv
+S3_ENDPOINT=http://localhost:9000
+S3_INTERNAL_ENDPOINT=
+S3_BUCKET=clinic-photos-dev
+S3_REGION=us-east-1
+S3_ACCESS_KEY_ID=...
+S3_SECRET_ACCESS_KEY=...
+```
+
+`S3_INTERNAL_ENDPOINT` is needed when the backend reaches storage through a
+different address than browsers. Leave it empty when `S3_ENDPOINT` works for
+both. Compose substitutes `http://rustfs:9000` when it is empty; do not set
+`http://127.0.0.1:9000` in `.env` if the backend runs in Compose. A host-run
+backend can use `http://127.0.0.1:9000` explicitly if needed, but the default
+`http://localhost:9000` endpoint already works for local RustFS. Presigned URLs
+always use `S3_ENDPOINT`; `S3_INTERNAL_ENDPOINT` only affects backend
+operations.
+
+Production:
+
+```dotenv
+S3_ENDPOINT=https://s3.bitnp.net
+S3_INTERNAL_ENDPOINT=
+S3_BUCKET=clinic-photos
+S3_REGION=us-east-1
+S3_ACCESS_KEY_ID=...
+S3_SECRET_ACCESS_KEY=...
+```
+
+Configuration is validated at startup. The backend then calls `HeadBucket`
+through the backend operations endpoint with a 10-second deadline. Startup
+fails with a nonzero exit status if the endpoint is unreachable, the bucket is
+missing, access is denied, or the check times out. The deployment restart policy
+retries the process when storage becomes available. The application credentials
+must allow `s3:ListBucket` for the bucket so `HeadBucket` succeeds; the bundled
+RustFS policy includes it.
+
+The bucket and application credentials must be provisioned before starting the
+backend. In the bundled Compose stack, `backend` waits for `rustfs-init` to
+complete successfully. For an external S3 provider, provision the bucket,
+bucket policy, and application credentials first.
+
+### Methods
+
+Examples assume a business service received `storageSvc *storage.Service`
+through application wiring.
+
+Upload:
+
+```go
+etag, err := storageSvc.Put(ctx, key, bytes.NewReader(data), int64(len(data)), "image/jpeg")
+```
+
+`Put` requires an `io.ReadSeeker`, overwrites an existing key, and returns the
+object ETag. Callers are responsible for unique-key generation.
+
+Download:
+
+```go
+object, err := storageSvc.Get(ctx, key)
+if err != nil {
+    return err
+}
+defer object.Body.Close()
+
+data, err := io.ReadAll(object.Body)
+```
+
+The returned body is streamed. Always close `object.Body`.
+
+Inspect metadata without downloading:
+
+```go
+metadata, err := storageSvc.Head(ctx, key)
+```
+
+Metadata contains `Size`, `ContentType`, and the opaque `ETag`. `Get` and
+`Head` return `storage.ErrObjectNotFound` for a missing object:
+
+```go
+if errors.Is(err, storage.ErrObjectNotFound) {
+    // handle a missing object
+}
+```
+
+Delete:
+
+```go
+err := storageSvc.Delete(ctx, key)
+```
+
+Deleting an already-absent object succeeds.
+
+Presign an upload for a browser:
+
+```go
+signed, err := storageSvc.PresignPut(ctx, key, "image/jpeg")
+// Use signed.Method, signed.URL, and signed.RequiredHeaders.
+```
+
+Presign a download:
+
+```go
+signed, err := storageSvc.PresignGet(ctx, key)
+```
+
+Presigning uses `S3_PUT_URL_TTL` / `S3_GET_URL_TTL`. `SignedRequest` also
+contains `ExpiresAt`.
+
+Business code must authorize the caller before signing. Presigning only binds
+a bucket, key, and lifetime; it does not authenticate users, verify ownership,
+or enforce repair permissions. Never sign an arbitrary user-supplied key.
+Derive keys from trusted record/photo identifiers and check access first.
+
+### Storage integration tests
+
+The RustFS tests are opt-in. The bucket must already exist, and the test
+credentials must be allowed to use the `temporary/` prefix:
+
+```bash
+STORAGE_TEST_ENDPOINT=http://127.0.0.1:9000 \
+STORAGE_TEST_BUCKET=clinic-photos-dev \
+STORAGE_TEST_REGION=us-east-1 \
+STORAGE_TEST_ACCESS_KEY_ID=... \
+STORAGE_TEST_SECRET_ACCESS_KEY=... \
+go test ./tests/storage -run TestRustFSIntegration -v
+```
+
 ## Deploy the frontend
 
 ```bash
@@ -214,12 +367,13 @@ go run fake/fake_cas.go        # runs on :9999
 # 2. Start Redis (required; see docker-compose.yml for the dev service)
 docker run --rm -p 6379:6379 redis:7-alpine
 
-# 2b. Optional: start RustFS and provision the photo bucket
+# 2b. Start RustFS and provision the photo bucket, or point S3_* at an existing
+#     S3 provider. The backend will not start until the bucket check succeeds.
 #     (set RUSTFS_* and S3_* in .env first)
 #     S3 API on http://127.0.0.1:9000, console on http://127.0.0.1:9001
 docker compose up -d rustfs rustfs-init
 
-# 3. Start the backend
+# 3. Start the backend. scripts/dev.sh loads .env, including S3_*.
 export CLINIC_API_KEY=local-dev-key
 export REDIS_ADDR=127.0.0.1:6379
 export REDIS_PASSWORD=
@@ -230,6 +384,8 @@ export CAS_DEFAULT_REDIRECT=/
 export SESSION_COOKIE_SAMESITE=lax
 # Optional: raise to force all staff to log in again; defaults to 0
 export STAFF_VERSION=0
+# If not using scripts/dev.sh, export the required S3_* settings from
+# "Object storage (backend usage)" before starting.
 go run .                       # runs on :8080
 
 # 4. Start the frontend (separate terminal)

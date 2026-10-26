@@ -2,83 +2,28 @@ package storage_test
 
 import (
 	"context"
-	"errors"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
-	"strings"
 	"testing"
 	"time"
 
 	"clinic-backend/internal/storage"
 )
 
-func TestNewService_Disabled(t *testing.T) {
+func TestNewService_RequiresClient(t *testing.T) {
 	service, err := storage.NewService(nil, 5*time.Minute, 10*time.Minute)
-	if err != nil {
-		t.Fatalf("NewService() error = %v", err)
+	if err == nil {
+		t.Fatal("expected an error")
 	}
-	if service.Enabled() {
-		t.Fatal("Enabled() = true, want false")
-	}
-
-	ctx := context.Background()
-	tests := []struct {
-		name string
-		call func() error
-	}{
-		{
-			name: "put",
-			call: func() error {
-				_, err := service.Put(ctx, "photos/key.jpg", strings.NewReader("body"), 4, "image/jpeg")
-				return err
-			},
-		},
-		{
-			name: "get",
-			call: func() error {
-				_, err := service.Get(ctx, "photos/key.jpg")
-				return err
-			},
-		},
-		{
-			name: "head",
-			call: func() error {
-				_, err := service.Head(ctx, "photos/key.jpg")
-				return err
-			},
-		},
-		{
-			name: "delete",
-			call: func() error {
-				return service.Delete(ctx, "photos/key.jpg")
-			},
-		},
-		{
-			name: "presign put",
-			call: func() error {
-				_, err := service.PresignPut(ctx, "photos/key.jpg", "image/jpeg")
-				return err
-			},
-		},
-		{
-			name: "presign get",
-			call: func() error {
-				_, err := service.PresignGet(ctx, "photos/key.jpg")
-				return err
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if err := tt.call(); !errors.Is(err, storage.ErrStorageDisabled) {
-				t.Fatalf("error = %v, want ErrStorageDisabled", err)
-			}
-		})
+	if service != nil {
+		t.Fatal("expected a nil service")
 	}
 }
 
 func TestNewService_InvalidExpiry(t *testing.T) {
+	client := newPresignTestClient(t, "https://s3.example.com", "")
+
 	tests := []struct {
 		name   string
 		putTTL time.Duration
@@ -92,7 +37,7 @@ func TestNewService_InvalidExpiry(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			service, err := storage.NewService(nil, tt.putTTL, tt.getTTL)
+			service, err := storage.NewService(client, tt.putTTL, tt.getTTL)
 			if err == nil {
 				t.Fatal("expected an error")
 			}
@@ -103,14 +48,31 @@ func TestNewService_InvalidExpiry(t *testing.T) {
 	}
 }
 
+func TestService_Check(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodHead {
+			t.Errorf("method = %q, want %q", r.Method, http.MethodHead)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := newPresignTestClient(t, server.URL, "")
+	service, err := storage.NewService(client, 5*time.Minute, 10*time.Minute)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	if err := service.Check(context.Background()); err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+}
+
 func TestService_PresignDefaults(t *testing.T) {
 	client := newPresignTestClient(t, "https://s3.example.com", "")
 	service, err := storage.NewService(client, 2*time.Minute, 3*time.Minute)
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
-	}
-	if !service.Enabled() {
-		t.Fatal("Enabled() = false, want true")
 	}
 
 	put, err := service.PresignPut(context.Background(), "photos/key.jpg", "image/jpeg")

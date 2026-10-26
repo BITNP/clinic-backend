@@ -28,10 +28,19 @@ import (
 	staffservice "clinic-backend/internal/staff/service"
 	taggingclient "clinic-backend/internal/tagging/client"
 	taggingservice "clinic-backend/internal/tagging/service"
+
+	"gorm.io/gorm"
 )
+
+const storageCheckTimeout = 10 * time.Second
 
 // Run initializes the backend and serves requests until shutdown.
 func Run() {
+	storageSvc, err := loadStorageService(os.Getenv)
+	if err != nil {
+		log.Fatalf("storage configuration: %v", err)
+	}
+
 	db := openDatabase()
 
 	// Redis is required infrastructure: fail fast if it is not configured or
@@ -48,8 +57,23 @@ func Run() {
 	})
 	cancelRedisPing()
 	if err != nil {
+		closeDatabase(db)
 		log.Fatalf("failed to connect to redis: %v", err)
 	}
+
+	// Storage is required infrastructure: verify the configured bucket before
+	// starting background workers or accepting HTTP requests.
+	storageCheckCtx, cancelStorageCheck := context.WithTimeout(context.Background(), storageCheckTimeout)
+	storageCheckErr := storageSvc.Check(storageCheckCtx)
+	cancelStorageCheck()
+	if storageCheckErr != nil {
+		if closeErr := redisClient.Close(); closeErr != nil {
+			log.Printf("redis close error: %v", closeErr)
+		}
+		closeDatabase(db)
+		log.Fatalf("storage bucket check failed: %v", storageCheckErr)
+	}
+	log.Println("storage bucket check succeeded")
 
 	// Sync counters live in Redis so every backend replica shares them. Clients
 	// poll Snapshot and refresh when a value differs from their last-seen one.
@@ -205,6 +229,7 @@ func Run() {
 		clientAuth:    clientAuth,
 		syncSvc:       syncSvc,
 		redisClient:   redisClient,
+		storage:       storageSvc,
 	}).router()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -279,5 +304,16 @@ func Run() {
 	}
 	if err := redisClient.Close(); err != nil {
 		log.Printf("redis close error: %v", err)
+	}
+}
+
+func closeDatabase(db *gorm.DB) {
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Printf("database close error: %v", err)
+		return
+	}
+	if err := sqlDB.Close(); err != nil {
+		log.Printf("database close error: %v", err)
 	}
 }
