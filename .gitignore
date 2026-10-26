@@ -6,3 +6,5 @@ bench_seed
 clinic.db
 clinic.db-shm
 clinic.db-wal
+clinic-images.tar
+clinic-images.tar.sha256

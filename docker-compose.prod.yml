@@ -1,25 +1,33 @@
 version: "3"
 
 # Production deployment: runs pre-built images — no local build.
-# Runs the backend, the admin frontend and Redis as a single stack.
+# Runs the backend, the admin frontend, Redis and RustFS object storage as a
+# single stack.
 # Uses the Postgres already running on the server (host.containers.internal:5432),
-# same as the other clinic services. Redis is bundled as a compose service here
-# (reachable at redis:6379 on the compose network, no host port) and is loaded
-# from a locally packaged image tarball rather than pulled from a registry.
+# same as the other clinic services. Redis and RustFS are bundled as compose
+# services (reachable at redis:6379 and rustfs:9000 on the compose network) and
+# are loaded from locally packaged image tarballs rather than pulled from a
+# registry.
 #
 # Podman alternative (rootless, same compose file):
 #   systemctl --user enable --now podman.socket
 #   podman-compose -f docker-compose.prod.yml up -d
 #
-# Usage on the server (only this file + .env + the image tarball are needed):
+# Usage on the server (only this file, .env, deploy/rustfs/ and the image
+# tarball are needed):
 #   docker load -i clinic-images.tar
 #   cp .env.example .env            # then set real secrets:
 #                                   #   CLINIC_API_KEY, APP_BASE_URL,
-#                                   #   CAS_SERVER_URL, CLINIC_DB_DSN, ...
+#                                   #   CAS_SERVER_URL, CLINIC_DB_DSN,
+#                                   #   RUSTFS_*, S3_*, ...
 #   docker compose -f docker-compose.prod.yml up -d
 #
-# Pin a specific image version with BACKEND_IMAGE_TAG / ADMIN_FRONTEND_IMAGE_TAG,
-# e.g. BACKEND_IMAGE_TAG=1.2.3
+# Pin specific image versions with BACKEND_IMAGE_TAG / ADMIN_FRONTEND_IMAGE_TAG /
+# RUSTFS_IMAGE_TAG / RUSTFS_CLI_IMAGE_TAG, e.g.
+# BACKEND_IMAGE_TAG=1.2.3, RUSTFS_IMAGE_TAG=1.0.3.
+#
+# RustFS operations (bucket setup, credential rotation, backup/restore) are
+# documented in deploy/rustfs/README.md.
 #
 # The frontend (Caddy on :5173) proxies /api, /login, /logout to the backend over
 # the compose network (backend:8080), so the backend needs no host port. If you
@@ -52,8 +60,65 @@ services:
       timeout: 5s
       retries: 10
 
+  rustfs:
+    image: rustfs/rustfs:${RUSTFS_IMAGE_TAG:-1.0.3}
+    # The image is shipped to the server in the packaged tarball, never pulled.
+    pull_policy: never
+    restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
+    environment:
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ADDRESS: 0.0.0.0:9001
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?set RUSTFS_ACCESS_KEY in .env}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?set RUSTFS_SECRET_KEY in .env}
+      RUSTFS_REGION: ${S3_REGION:-us-east-1}
+      RUSTFS_CORS_ALLOWED_ORIGINS: ${S3_CORS_ALLOWED_ORIGINS:-}
+      RUSTFS_CHECK_UPDATE: "false"
+      RUSTFS_OBS_LOGGER_LEVEL: ${RUSTFS_LOG_LEVEL:-info}
+    ports:
+      # Loopback-only ports. Reach the console through an SSH tunnel:
+      #   ssh -L 9001:127.0.0.1:9001 server
+      # The S3 API is available to host tooling on 127.0.0.1; it is never
+      # published on a public interface.
+      - "${RUSTFS_S3_BIND_ADDRESS:-127.0.0.1}:${S3_API_PORT:-9000}:9000"
+      - "${RUSTFS_CONSOLE_BIND_ADDRESS:-127.0.0.1}:${RUSTFS_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - rustfsdata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  # One-shot provisioning: creates the private photo bucket, the scoped
+  # application policy, and the application user. Safe to re-run.
+  rustfs-init:
+    image: rustfs/rc:${RUSTFS_CLI_IMAGE_TAG:-v0.1.36}
+    # The image is shipped to the server in the packaged tarball, never pulled.
+    pull_policy: never
+    restart: "no"
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    environment:
+      RUSTFS_INTERNAL_ENDPOINT: http://rustfs:9000
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?set RUSTFS_ACCESS_KEY in .env}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?set RUSTFS_SECRET_KEY in .env}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
+      S3_BUCKET: ${S3_BUCKET:-clinic-photos}
+    entrypoint: ["/bin/sh", "/opt/rustfs/init.sh"]
+    volumes:
+      - ./deploy/rustfs/init.sh:/opt/rustfs/init.sh:ro
+
   backend:
     image: ghcr.io/bitnp/clinic-backend:${BACKEND_IMAGE_TAG:-latest}
+    # The image is shipped to the server in the packaged tarball, never pulled.
+    pull_policy: never
     env_file: .env
     depends_on:
       redis:
@@ -85,10 +150,20 @@ services:
       LM_TAGGER_TAG_SET: ${LM_TAGGER_TAG_SET:-clinic_laptop_liquid_metal}
       TAGGER_TIMEOUT: ${TAGGER_TIMEOUT:-15s}
       RECORD_ACTION_WINDOW: ${RECORD_ACTION_WINDOW:-5m}
+      S3_ENABLED: ${S3_ENABLED:-false}
+      S3_BUCKET: ${S3_BUCKET:-clinic-photos}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:?set S3_PUBLIC_ENDPOINT in .env}
+      S3_INTERNAL_ENDPOINT: http://rustfs:9000
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
+      S3_PUT_URL_TTL: ${S3_PUT_URL_TTL:-5m}
+      S3_GET_URL_TTL: ${S3_GET_URL_TTL:-10m}
     restart: unless-stopped
 
   admin-frontend:
     image: ghcr.io/bitnp/clinic_admin_frontend:${ADMIN_FRONTEND_IMAGE_TAG:-latest}
+    pull_policy: never
     restart: unless-stopped
     depends_on:
       - backend
@@ -101,3 +176,4 @@ services:
 
 volumes:
   redisdata:
+  rustfsdata:

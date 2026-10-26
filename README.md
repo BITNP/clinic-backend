@@ -5,7 +5,8 @@ Backend for the clinic management system, built with Go and Gin.
 - Dev: the backend and the admin frontend run as separate compose stacks
   (`docker-compose.yml` in each repo).
 - Prod: `docker-compose.prod.yml` deploys both as a single stack, pulling
-  pre-built images from GHCR (backend on `:8080`, admin frontend on `:5173`).
+  pre-built images from GHCR (backend on `:8080`, admin frontend on `:5173`),
+  together with Redis and RustFS object storage.
 
 ## Project organization
 
@@ -31,6 +32,7 @@ internal/
   database/            # shared database helpers
   httpx/               # shared HTTP parsing and response helpers
   testutil/            # shared test fixtures and request helpers
+deploy/rustfs/         # RustFS provisioning and operations guide
 ```
 
 Tests sit beside their owning packages. Larger modules use subdirectories by
@@ -74,33 +76,49 @@ echo $PAT | docker login ghcr.io -u Potato-Yao --password-stdin
 
 ## Deploy to a server
 
-`docker-compose.prod.yml` is a standalone deploy config — only this file, `.env`
-and the packaged image tarball are needed on the server, no source checkout. It
-runs the backend, the admin frontend and a bundled Redis service, and connects
-to the Postgres already running on the server via `host.containers.internal` (no
-bundled database), like the other clinic services. It refuses to start if
-`CLINIC_API_KEY` is missing.
+`docker-compose.prod.yml` is a standalone deploy config — only this file, `.env`,
+`deploy/rustfs/` and the packaged image tarball are needed on the server, no
+source checkout. It runs the backend, the admin frontend, a bundled Redis
+service and RustFS object storage, and connects to the Postgres already running
+on the server via `host.containers.internal` (no bundled database), like the
+other clinic services. It refuses to start if `CLINIC_API_KEY` or the RustFS
+credentials are missing.
 
-The server cannot pull the bundled Redis image from Docker Hub, so package the
-images on a machine that can and copy the tarball over:
+The server cannot pull images from Docker Hub or GHCR, so package the images on
+a machine that can and copy the tarball over:
 
 ```bash
 # On your local machine: create .env from the example and fill in the secrets
-# (CLINIC_API_KEY, APP_BASE_URL, CAS_SERVER_URL, ...).
+# (CLINIC_API_KEY, APP_BASE_URL, CAS_SERVER_URL, RustFS credentials, ...).
 cp .env.example .env
+chmod 600 .env
 # set CLINIC_DB_DSN in .env to override the default
 # (postgres://clinic:clinic@host.containers.internal:5432/clinic?sslmode=disable)
 
-# Pull and bundle all three images into a single tarball.
+# Load the image tags from .env, then pull and bundle every image used by the
+# production compose file.
+set -a
+source .env
+set +a
+
 docker pull ghcr.io/bitnp/clinic-backend:${BACKEND_IMAGE_TAG:-latest}
 docker pull ghcr.io/bitnp/clinic_admin_frontend:${ADMIN_FRONTEND_IMAGE_TAG:-latest}
 docker pull redis:7-alpine
+docker pull rustfs/rustfs:${RUSTFS_IMAGE_TAG:-1.0.3}
+docker pull rustfs/rc:${RUSTFS_CLI_IMAGE_TAG:-v0.1.36}
+
 docker save -o clinic-images.tar \
   ghcr.io/bitnp/clinic-backend:${BACKEND_IMAGE_TAG:-latest} \
   ghcr.io/bitnp/clinic_admin_frontend:${ADMIN_FRONTEND_IMAGE_TAG:-latest} \
-  redis:7-alpine
+  redis:7-alpine \
+  rustfs/rustfs:${RUSTFS_IMAGE_TAG:-1.0.3} \
+  rustfs/rc:${RUSTFS_CLI_IMAGE_TAG:-v0.1.36}
 
-scp clinic-images.tar docker-compose.prod.yml .env server:
+sha256sum clinic-images.tar > clinic-images.tar.sha256
+
+scp clinic-images.tar clinic-images.tar.sha256 docker-compose.prod.yml .env server:
+ssh server 'mkdir -p deploy'
+scp -r deploy/rustfs server:deploy/
 
 # On the server: load the images and start the stack.
 docker load -i clinic-images.tar
@@ -108,9 +126,29 @@ docker compose -f docker-compose.prod.yml up -d
 ```
 
 Do not use `--pull always` or `docker compose pull` for this stack: those bypass
-`pull_policy` and would try to fetch Redis from Docker Hub, which the server
-cannot reach. The bundled Redis service has `pull_policy: never` and is served
-from the loaded tarball.
+`pull_policy` and would try to fetch images from registries the server cannot
+reach. Every bundled service in the production compose file uses
+`pull_policy: never` and is served from the loaded tarball.
+
+### Object storage (RustFS)
+
+RustFS stores clinic photos in a private `clinic-photos` bucket. The one-shot
+`rustfs-init` service creates the bucket, the `temporary/` and `photos/`
+prefixes, a bucket-scoped application policy, and a dedicated application user.
+The backend never uses the RustFS root account.
+
+- Internal S3 API: `http://rustfs:9000` on the compose network.
+- Host access: `127.0.0.1:${S3_API_PORT}` on the server, for CLI tooling. No
+  public S3 proxy is bundled.
+- Console: `127.0.0.1:${RUSTFS_CONSOLE_PORT}` only; reach it with
+  `ssh -L 9001:127.0.0.1:9001 server`.
+- Set `S3_PUBLIC_ENDPOINT` to the browser-facing endpoint when one is available.
+  Until then, browser uploads are not exposed.
+- Configure the admin and customer frontend origins in
+  `S3_CORS_ALLOWED_ORIGINS`. CORS does not make the bucket public.
+
+See [deploy/rustfs/README.md](deploy/rustfs/README.md) for bucket setup,
+verification, credential rotation, upgrades, and backup/restore procedures.
 
 The frontend (Caddy on `:5173`) proxies `/api`, `/login`, `/logout` to the
 backend over the compose network, so the backend needs no host port.
@@ -120,15 +158,20 @@ backend over the compose network, so the backend needs no host port.
 - Redis: `:6379` bundled in the stack (compose-internal, persisted in the
   `redisdata` volume; the backend refuses to start without it). Set
   `REDIS_PASSWORD` to require a password.
+- RustFS S3 API: `:9000` on the compose network and `127.0.0.1:${S3_API_PORT}`
+  on the host (loopback only).
+- RustFS console: `127.0.0.1:9001` (SSH tunnel only).
+- RustFS data: `rustfsdata` named volume.
 - Admin frontend: `:5173`.
 - Backend: `:8080` (compose-internal; expose a host port if you need to reach
   it directly).
 - Override any config via `.env` (see `.env.example`) or environment
   variables, e.g. `CLINIC_API_KEY=secret docker compose up --build`.
 
-To pin specific image versions instead of `latest`, set `BACKEND_IMAGE_TAG` and
-`ADMIN_FRONTEND_IMAGE_TAG` in `.env`, and use those same tags in the `docker
-pull` / `docker save` commands above.
+To pin specific image versions instead of `latest`, set `BACKEND_IMAGE_TAG`,
+`ADMIN_FRONTEND_IMAGE_TAG`, `RUSTFS_IMAGE_TAG` and `RUSTFS_CLI_IMAGE_TAG` in
+`.env`, and use those same tags in the `docker pull` / `docker save` commands
+above.
 
 The database schema is created automatically on startup via AutoMigrate. To
 load sample data (rooms, service dates, announcements, staff), run the seed
@@ -169,6 +212,11 @@ go run fake/fake_cas.go        # runs on :9999
 
 # 2. Start Redis (required; see docker-compose.yml for the dev service)
 docker run --rm -p 6379:6379 redis:7-alpine
+
+# 2b. Optional: start RustFS and provision the photo bucket
+#     (set RUSTFS_* and S3_* in .env first)
+#     S3 API on http://127.0.0.1:9000, console on http://127.0.0.1:9001
+docker compose up -d rustfs rustfs-init
 
 # 3. Start the backend
 export CLINIC_API_KEY=local-dev-key

@@ -28,6 +28,55 @@ services:
       timeout: 5s
       retries: 10
 
+  rustfs:
+    image: rustfs/rustfs:${RUSTFS_IMAGE_TAG:-1.0.3}
+    restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
+    environment:
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ADDRESS: 0.0.0.0:9001
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?set RUSTFS_ACCESS_KEY in .env}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?set RUSTFS_SECRET_KEY in .env}
+      RUSTFS_REGION: ${S3_REGION:-us-east-1}
+      RUSTFS_CORS_ALLOWED_ORIGINS: ${S3_CORS_ALLOWED_ORIGINS:-}
+      RUSTFS_CHECK_UPDATE: "false"
+      RUSTFS_OBS_LOGGER_LEVEL: ${RUSTFS_LOG_LEVEL:-info}
+    ports:
+      # Keep the dev S3 API and console on loopback; containers use the
+      # compose network at rustfs:9000.
+      - "${RUSTFS_S3_BIND_ADDRESS:-127.0.0.1}:${S3_API_PORT:-9000}:9000"
+      - "${RUSTFS_CONSOLE_BIND_ADDRESS:-127.0.0.1}:${RUSTFS_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - rustfsdata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  # One-shot provisioning: creates the private photo bucket, the scoped
+  # application policy, and the application user. Safe to re-run.
+  rustfs-init:
+    image: rustfs/rc:${RUSTFS_CLI_IMAGE_TAG:-v0.1.36}
+    restart: "no"
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    environment:
+      RUSTFS_INTERNAL_ENDPOINT: http://rustfs:9000
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?set RUSTFS_ACCESS_KEY in .env}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?set RUSTFS_SECRET_KEY in .env}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
+      S3_BUCKET: ${S3_BUCKET:-clinic-photos}
+    entrypoint: ["/bin/sh", "/opt/rustfs/init.sh"]
+    volumes:
+      - ./deploy/rustfs/init.sh:/opt/rustfs/init.sh:ro
+
   backend:
     image: ghcr.io/bitnp/clinic-backend:latest
     build: .
@@ -63,9 +112,19 @@ services:
       LM_TAGGER_TAG_SET: ${LM_TAGGER_TAG_SET:-clinic_laptop_liquid_metal}
       TAGGER_TIMEOUT: ${TAGGER_TIMEOUT:-15s}
       RECORD_ACTION_WINDOW: ${RECORD_ACTION_WINDOW:-5m}
+      S3_ENABLED: ${S3_ENABLED:-false}
+      S3_BUCKET: ${S3_BUCKET:-clinic-photos}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
+      S3_INTERNAL_ENDPOINT: http://rustfs:9000
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_PUT_URL_TTL: ${S3_PUT_URL_TTL:-5m}
+      S3_GET_URL_TTL: ${S3_GET_URL_TTL:-10m}
     ports:
       - "8080:8080"
 
 volumes:
   pgdata:
   redisdata:
+  rustfsdata:
