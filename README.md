@@ -170,8 +170,8 @@ go run fake/seed.go
 Storage is a required startup dependency. The backend validates the S3
 configuration, initializes a `*storage.Service`, and checks that the configured
 bucket is accessible before starting background workers or accepting HTTP
-requests. It passes the service through application wiring for future
-consumers.
+requests. It passes the service through application wiring to the record photo
+service.
 
 ### Configuration
 

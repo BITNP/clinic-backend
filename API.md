@@ -698,7 +698,9 @@ Admin record view:
 | `revertible_count` | integer | Number of the caller's in-window actions on this record. |
 | `last_action_at` | string | RFC3339 time of the caller's latest action; omitted when none. |
 
-All record mutations bump the `record` counter and return the updated view.
+All record lifecycle and `worker_desc` mutations below bump the `record`
+counter and return the updated admin record view. Photo mutations also bump the
+counter but return photo objects.
 
 ### `GET /api/admin/records`
 
