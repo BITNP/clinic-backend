@@ -6,10 +6,10 @@ import (
 	"clinic-backend/internal/changes"
 	"clinic-backend/internal/legacy"
 	recordhandler "clinic-backend/internal/record/handler"
+	recordservice "clinic-backend/internal/record/service"
 	roomhandler "clinic-backend/internal/room/handler"
 	schedulinghandler "clinic-backend/internal/scheduling/handler"
 	staffhandler "clinic-backend/internal/staff/handler"
-	"clinic-backend/internal/storage"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
@@ -32,7 +32,7 @@ type routeHandlers struct {
 	clientAuth    gin.HandlerFunc
 	syncSvc       *changes.SyncService
 	redisClient   *redis.Client
-	storage       *storage.Service // available to future photo handlers
+	photoSvc      *recordservice.PhotoService
 }
 
 func (h routeHandlers) router() *gin.Engine {

@@ -41,11 +41,18 @@ func Run() {
 		log.Fatalf("storage configuration: %v", err)
 	}
 
-	if _, err := loadPhotoConfig(os.Getenv); err != nil {
+	photoCfg, err := loadPhotoConfig(os.Getenv)
+	if err != nil {
 		log.Fatalf("photo configuration: %v", err)
 	}
 
 	db := openDatabase()
+
+	photoSvc, err := recordservice.NewPhotoService(db, storageSvc, photoCfg.MaxCount, photoCfg.MaxSizeBytes)
+	if err != nil {
+		closeDatabase(db)
+		log.Fatalf("photo service: %v", err)
+	}
 
 	// Redis is required infrastructure: fail fast if it is not configured or
 	// not reachable.
@@ -233,7 +240,7 @@ func Run() {
 		clientAuth:    clientAuth,
 		syncSvc:       syncSvc,
 		redisClient:   redisClient,
-		storage:       storageSvc,
+		photoSvc:      photoSvc,
 	}).router()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
