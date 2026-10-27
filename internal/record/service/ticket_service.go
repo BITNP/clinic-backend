@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -36,7 +37,12 @@ type TicketService struct {
 	loc          *time.Location
 	defaultTagID uint
 	tagger       TicketTagger
+	photoSvc     *PhotoService
 }
+
+// ticketPhotoCleanupTimeout bounds post-delete photo cleanup so a slow object
+// store cannot keep the request goroutine alive indefinitely.
+const ticketPhotoCleanupTimeout = 10 * time.Second
 
 // TicketTagger asynchronously classifies a newly created record. Enqueue must
 // not block; callers fall back to the default tag if tagging cannot keep up.
@@ -59,6 +65,11 @@ func (s *TicketService) SetDefaultTagID(id uint) {
 // SetTagger enables asynchronous tagging of newly created records.
 func (s *TicketService) SetTagger(t TicketTagger) {
 	s.tagger = t
+}
+
+// SetPhotoService enables photo cleanup when a ticket is deleted.
+func (s *TicketService) SetPhotoService(photoSvc *PhotoService) {
+	s.photoSvc = photoSvc
 }
 
 // todayCutoff returns 00:00:00 UTC for the current calendar day in the service
@@ -446,7 +457,7 @@ func (s *TicketService) DeleteForUser(id uint, username string) error {
 		return err
 	}
 
-	return s.db.Transaction(func(tx *gorm.DB) error {
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("record_id = ?", rec.ID).Delete(&recordmodel.ClinicRecordDevice{}).Error; err != nil {
 			return fmt.Errorf("delete device for ticket %d: %w", id, err)
 		}
@@ -466,7 +477,27 @@ func (s *TicketService) DeleteForUser(id uint, username string) error {
 			return fmt.Errorf("delete ticket %d: %w", id, err)
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	s.deleteRecordPhotos(rec.ID)
+	return nil
+}
+
+// deleteRecordPhotos removes photo rows and objects after the record row has
+// been committed. Cleanup failures are logged because the record deletion has
+// already succeeded and cannot be retried by the client.
+func (s *TicketService) deleteRecordPhotos(recordID uint) {
+	if s.photoSvc == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), ticketPhotoCleanupTimeout)
+	defer cancel()
+	if err := s.photoSvc.DeleteByRecord(ctx, recordID); err != nil {
+		log.Printf("delete photos for ticket %d: %v", recordID, err)
+	}
 }
 
 func (s *TicketService) lookupRoom(name string) (roommodel.ClinicRoom, error) {

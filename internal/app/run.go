@@ -144,6 +144,7 @@ func Run() {
 
 	ticketSvc := recordservice.NewTicketService(db, serviceDateLoc)
 	ticketSvc.SetDefaultTagID(recordTagSvc.DefaultID())
+	ticketSvc.SetPhotoService(photoSvc)
 	if recordTagger != nil {
 		ticketSvc.SetTagger(recordTagger)
 	}

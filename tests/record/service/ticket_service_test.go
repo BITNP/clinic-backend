@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -30,6 +31,7 @@ func setupTicketTestDB(t *testing.T) *gorm.DB {
 		&recordmodel.ClinicRecordDevice{},
 		&recordmodel.ClinicRecordArrival{},
 		&recordmodel.ClinicRecordWorker{},
+		&recordmodel.ClinicRecordPhoto{},
 		&recordmodel.ClinicRecordRejection{},
 		&recordmodel.ClinicRecordReferral{},
 	); err != nil {
@@ -411,6 +413,173 @@ func TestTicketService_Delete(t *testing.T) {
 			t.Errorf("expected ErrTicketDateClosed, got %v", err)
 		}
 	})
+}
+
+func TestTicketService_DeleteRemovesPhotos(t *testing.T) {
+	db := setupTicketTestDB(t)
+	testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
+	ticketSvc := recordservice.NewTicketService(db, nil)
+	rec, err := ticketSvc.Create(recordservice.CreateTicketInput{
+		User: "u", Realname: "r", PhoneNum: "p", Campus: "中关村",
+		AppointmentTime: testutil.FutureTruncatedDate(7), Description: "d",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	store := newFakePhotoStorage()
+	photoSvc, err := recordservice.NewPhotoService(db, store, 9, 1024)
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	first, err := photoSvc.Append(context.Background(), rec.ID, photoUpload(testJPEG))
+	if err != nil {
+		t.Fatalf("append first photo: %v", err)
+	}
+	second, err := photoSvc.Append(context.Background(), rec.ID, photoUpload(testPNG))
+	if err != nil {
+		t.Fatalf("append second photo: %v", err)
+	}
+	ticketSvc.SetPhotoService(photoSvc)
+
+	if err := ticketSvc.DeleteForUser(rec.ID, "u"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	var count int64
+	db.Model(&recordmodel.ClinicRecord{}).Where("id = ?", rec.ID).Count(&count)
+	if count != 0 {
+		t.Errorf("record not deleted")
+	}
+	db.Model(&recordmodel.ClinicRecordPhoto{}).Where("record_id = ?", rec.ID).Count(&count)
+	if count != 0 {
+		t.Errorf("photo rows not deleted: %d", count)
+	}
+	if len(store.objects) != 0 {
+		t.Errorf("photo objects not deleted: %d", len(store.objects))
+	}
+	if !containsString(store.deleted, first.ObjectKey) || !containsString(store.deleted, second.ObjectKey) {
+		t.Errorf("deleted keys = %v, want both photo keys", store.deleted)
+	}
+}
+
+func TestTicketService_DeleteWithoutPhotos(t *testing.T) {
+	db := setupTicketTestDB(t)
+	testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
+	ticketSvc := recordservice.NewTicketService(db, nil)
+	rec, err := ticketSvc.Create(recordservice.CreateTicketInput{
+		User: "u", Realname: "r", PhoneNum: "p", Campus: "中关村",
+		AppointmentTime: testutil.FutureTruncatedDate(7), Description: "d",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	photoSvc, err := recordservice.NewPhotoService(db, newFakePhotoStorage(), 9, 1024)
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	ticketSvc.SetPhotoService(photoSvc)
+
+	if err := ticketSvc.DeleteForUser(rec.ID, "u"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	var count int64
+	db.Model(&recordmodel.ClinicRecord{}).Where("id = ?", rec.ID).Count(&count)
+	if count != 0 {
+		t.Errorf("record not deleted")
+	}
+	db.Model(&recordmodel.ClinicRecordPhoto{}).Where("record_id = ?", rec.ID).Count(&count)
+	if count != 0 {
+		t.Errorf("photo rows = %d, want 0", count)
+	}
+}
+
+func TestTicketService_DeleteToleratesStorageCleanupFailure(t *testing.T) {
+	db := setupTicketTestDB(t)
+	testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
+	ticketSvc := recordservice.NewTicketService(db, nil)
+	rec, err := ticketSvc.Create(recordservice.CreateTicketInput{
+		User: "u", Realname: "r", PhoneNum: "p", Campus: "中关村",
+		AppointmentTime: testutil.FutureTruncatedDate(7), Description: "d",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	store := newFakePhotoStorage()
+	photoSvc, err := recordservice.NewPhotoService(db, store, 9, 1024)
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	if _, err := photoSvc.Append(context.Background(), rec.ID, photoUpload(testJPEG)); err != nil {
+		t.Fatalf("append photo: %v", err)
+	}
+	store.deleteErr = errors.New("storage unavailable")
+	ticketSvc.SetPhotoService(photoSvc)
+
+	if err := ticketSvc.DeleteForUser(rec.ID, "u"); err != nil {
+		t.Fatalf("delete should succeed despite storage cleanup failure: %v", err)
+	}
+
+	var count int64
+	db.Model(&recordmodel.ClinicRecord{}).Where("id = ?", rec.ID).Count(&count)
+	if count != 0 {
+		t.Errorf("record not deleted")
+	}
+	db.Model(&recordmodel.ClinicRecordPhoto{}).Where("record_id = ?", rec.ID).Count(&count)
+	if count != 0 {
+		t.Errorf("photo rows not deleted: %d", count)
+	}
+	if len(store.objects) != 1 {
+		t.Errorf("stored objects = %d, want the failed object to remain", len(store.objects))
+	}
+}
+
+func TestTicketService_DeleteToleratesPhotoRowCleanupFailure(t *testing.T) {
+	db := setupTicketTestDB(t)
+	testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
+	ticketSvc := recordservice.NewTicketService(db, nil)
+	rec, err := ticketSvc.Create(recordservice.CreateTicketInput{
+		User: "u", Realname: "r", PhoneNum: "p", Campus: "中关村",
+		AppointmentTime: testutil.FutureTruncatedDate(7), Description: "d",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	store := newFakePhotoStorage()
+	photoSvc, err := recordservice.NewPhotoService(db, store, 9, 1024)
+	if err != nil {
+		t.Fatalf("NewPhotoService: %v", err)
+	}
+	if _, err := photoSvc.Append(context.Background(), rec.ID, photoUpload(testJPEG)); err != nil {
+		t.Fatalf("append photo: %v", err)
+	}
+	if err := db.Migrator().DropTable(&recordmodel.ClinicRecordPhoto{}); err != nil {
+		t.Fatalf("drop photo table: %v", err)
+	}
+	ticketSvc.SetPhotoService(photoSvc)
+
+	if err := ticketSvc.DeleteForUser(rec.ID, "u"); err != nil {
+		t.Fatalf("delete should succeed despite photo row cleanup failure: %v", err)
+	}
+
+	var count int64
+	db.Model(&recordmodel.ClinicRecord{}).Where("id = ?", rec.ID).Count(&count)
+	if count != 0 {
+		t.Errorf("record not deleted")
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestTicketService_View_Shape(t *testing.T) {
