@@ -73,6 +73,7 @@ type AdminRecordView struct {
 	Description       string  `json:"description"`
 	Campus            string  `json:"campus"`
 	WorkerDesc        string  `json:"worker_desc"`
+	PhotoCount        int64   `json:"photo_count"`
 	RejectReason      string  `json:"reject_reason"`
 	ReferralReason    string  `json:"referral_reason"`
 	Model             string  `json:"model"`

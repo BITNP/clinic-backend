@@ -682,6 +682,7 @@ Admin record view:
 | `description` | string | Customer problem description. |
 | `campus` | string | Room name. |
 | `worker_desc` | string | Staff repair notes. |
+| `photo_count` | integer | Number of ordered photos attached to the worker notes. |
 | `reject_reason` | string | Rejection reason, if rejected. |
 | `referral_reason` | string | Referral reason, if referred. |
 | `model` | string | Laptop model. |
@@ -773,6 +774,8 @@ Worker-note photos are ordered. `position` is **1-based and contiguous**:
 - Replacing a photo with `PUT` keeps its position.
 - Deleting a photo shifts every later photo down by one.
 - `GET` always returns photos in ascending position order.
+
+The admin record view reports the current number of photos as `photo_count`.
 
 Photo object:
 

@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -26,6 +27,7 @@ func setupAdminRecordTestDB(t *testing.T) *gorm.DB {
 		&recordmodel.ClinicRecord{},
 		&recordmodel.ClinicRecordDevice{},
 		&recordmodel.ClinicRecordWorker{},
+		&recordmodel.ClinicRecordPhoto{},
 		&recordmodel.ClinicRecordArrival{},
 		&recordmodel.ClinicRecordRejection{},
 		&recordmodel.ClinicRecordReferral{},
@@ -329,6 +331,8 @@ func TestAdminRecordServiceListBatchedViews(t *testing.T) {
 	sideRows := []any{
 		&recordmodel.ClinicRecordDevice{RecordID: full.ID, LaptopModel: "ThinkPad", Password: "pw"},
 		&recordmodel.ClinicRecordWorker{RecordID: full.ID, WorkerID: 42, WorkerDesc: "fixed", FinishTime: finishTime},
+		&recordmodel.ClinicRecordPhoto{RecordID: full.ID, ObjectKey: "photos/records/1/a.jpg", ContentType: "image/jpeg", Size: 1, Position: 1},
+		&recordmodel.ClinicRecordPhoto{RecordID: full.ID, ObjectKey: "photos/records/1/b.jpg", ContentType: "image/jpeg", Size: 1, Position: 2},
 		&recordmodel.ClinicRecordRejection{RecordID: full.ID, RejectReason: "nope"},
 		&recordmodel.ClinicRecordReferral{RecordID: full.ID, ReferralReason: "elsewhere"},
 		&recordmodel.ClinicRecordArrival{RecordID: full.ID, ArriveTime: arriveTime},
@@ -365,6 +369,9 @@ func TestAdminRecordServiceListBatchedViews(t *testing.T) {
 	if got.WorkerDesc != "fixed" {
 		t.Errorf("full worker_desc = %q, want fixed", got.WorkerDesc)
 	}
+	if got.PhotoCount != 2 {
+		t.Errorf("full photo_count = %d, want 2", got.PhotoCount)
+	}
 	if got.WorkerID == nil || *got.WorkerID != 42 {
 		t.Errorf("full worker_id = %v, want 42", got.WorkerID)
 	}
@@ -397,11 +404,53 @@ func TestAdminRecordServiceListBatchedViews(t *testing.T) {
 	if empty.WorkerDesc != "" || empty.WorkerID != nil || empty.FinishTime != nil {
 		t.Errorf("sparse worker = %q/%v/%v, want empty", empty.WorkerDesc, empty.WorkerID, empty.FinishTime)
 	}
+	if empty.PhotoCount != 0 {
+		t.Errorf("sparse photo_count = %d, want 0", empty.PhotoCount)
+	}
 	if empty.RejectReason != "" || empty.ReferralReason != "" || empty.ArriveTime != nil {
 		t.Errorf("sparse side fields = %q/%q/%v, want empty", empty.RejectReason, empty.ReferralReason, empty.ArriveTime)
 	}
 	if empty.LiquidMetalStatus != string(taggingservice.LiquidMetalStatusUnknown) {
 		t.Errorf("sparse liquid_metal_status = %q, want %q", empty.LiquidMetalStatus, taggingservice.LiquidMetalStatusUnknown)
+	}
+}
+
+func TestAdminRecordServiceGetByIDPhotoCount(t *testing.T) {
+	db := setupAdminRecordTestDB(t)
+	svc := recordservice.NewAdminRecordService(db)
+
+	room := roommodel.ClinicRoom{Name: "Room", Address: "addr", Enabled: true}
+	if err := db.Create(&room).Error; err != nil {
+		t.Fatalf("seed room: %v", err)
+	}
+	rec := recordmodel.ClinicRecord{
+		User: "u", Realname: "r", PhoneNum: "p",
+		Status:          recordmodel.RecordStatusInProgress,
+		AppointmentTime: time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+		QuestionDesc:    "x",
+		RoomID:          room.ID,
+	}
+	if err := db.Create(&rec).Error; err != nil {
+		t.Fatalf("seed record: %v", err)
+	}
+	for position := 1; position <= 3; position++ {
+		if err := db.Create(&recordmodel.ClinicRecordPhoto{
+			RecordID:    rec.ID,
+			ObjectKey:   fmt.Sprintf("photos/records/%d/%d.jpg", rec.ID, position),
+			ContentType: "image/jpeg",
+			Size:        1,
+			Position:    position,
+		}).Error; err != nil {
+			t.Fatalf("seed photo %d: %v", position, err)
+		}
+	}
+
+	view, err := svc.GetByID(context.Background(), 0, rec.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if view.PhotoCount != 3 {
+		t.Errorf("photo_count = %d, want 3", view.PhotoCount)
 	}
 }
 
@@ -434,8 +483,8 @@ func TestAdminRecordServiceListBatchedQueryCount(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 
-	// count + page find + room + device + worker + rejection + referral + arrival.
-	const want = 8
+	// count + page find + room + device + worker + photo counts + rejection + referral + arrival.
+	const want = 9
 	if counter.n != want {
 		t.Errorf("List issued %d queries, want %d (per-record loads likely regressed)", counter.n, want)
 	}

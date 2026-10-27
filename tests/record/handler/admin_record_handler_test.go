@@ -30,6 +30,7 @@ func TestAdminRecordHandlerListSearchByRealname(t *testing.T) {
 		&recordmodel.ClinicRecord{},
 		&recordmodel.ClinicRecordDevice{},
 		&recordmodel.ClinicRecordWorker{},
+		&recordmodel.ClinicRecordPhoto{},
 		&recordmodel.ClinicRecordArrival{},
 		&recordmodel.ClinicRecordRejection{},
 		&recordmodel.ClinicRecordReferral{},

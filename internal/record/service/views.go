@@ -15,28 +15,31 @@ func (s *AdminRecordService) buildView(rec recordmodel.ClinicRecord) (AdminRecor
 	return s.buildViewTx(s.db, rec)
 }
 
-// recordViewRelations holds the room names and optional side-table rows for a
-// batch of records, keyed by record ID, so views can be assembled from a fixed
-// number of queries instead of probing each table once per record.
+// recordViewRelations holds the room names, optional side-table rows, and
+// photo counts for a batch of records, keyed by record ID, so views can be
+// assembled from a fixed number of queries instead of probing each table once
+// per record.
 type recordViewRelations struct {
-	rooms      map[uint]string
-	devices    map[uint]recordmodel.ClinicRecordDevice
-	workers    map[uint]recordmodel.ClinicRecordWorker
-	rejections map[uint]recordmodel.ClinicRecordRejection
-	referrals  map[uint]recordmodel.ClinicRecordReferral
-	arrivals   map[uint]recordmodel.ClinicRecordArrival
+	rooms       map[uint]string
+	devices     map[uint]recordmodel.ClinicRecordDevice
+	workers     map[uint]recordmodel.ClinicRecordWorker
+	photoCounts map[uint]int64
+	rejections  map[uint]recordmodel.ClinicRecordRejection
+	referrals   map[uint]recordmodel.ClinicRecordReferral
+	arrivals    map[uint]recordmodel.ClinicRecordArrival
 }
 
 // loadRecordViewRelationsTx loads the room name and the optional side-table rows
 // for every record in recs using one query per table.
 func loadRecordViewRelationsTx(tx *gorm.DB, recs []recordmodel.ClinicRecord) (recordViewRelations, error) {
 	rel := recordViewRelations{
-		rooms:      make(map[uint]string),
-		devices:    make(map[uint]recordmodel.ClinicRecordDevice),
-		workers:    make(map[uint]recordmodel.ClinicRecordWorker),
-		rejections: make(map[uint]recordmodel.ClinicRecordRejection),
-		referrals:  make(map[uint]recordmodel.ClinicRecordReferral),
-		arrivals:   make(map[uint]recordmodel.ClinicRecordArrival),
+		rooms:       make(map[uint]string),
+		devices:     make(map[uint]recordmodel.ClinicRecordDevice),
+		workers:     make(map[uint]recordmodel.ClinicRecordWorker),
+		photoCounts: make(map[uint]int64),
+		rejections:  make(map[uint]recordmodel.ClinicRecordRejection),
+		referrals:   make(map[uint]recordmodel.ClinicRecordReferral),
+		arrivals:    make(map[uint]recordmodel.ClinicRecordArrival),
 	}
 	if len(recs) == 0 {
 		return rel, nil
@@ -79,6 +82,21 @@ func loadRecordViewRelationsTx(tx *gorm.DB, recs []recordmodel.ClinicRecord) (re
 	}
 	for _, w := range workers {
 		rel.workers[w.RecordID] = w
+	}
+
+	var photoCounts []struct {
+		RecordID uint
+		Count    int64
+	}
+	if err := tx.Model(&recordmodel.ClinicRecordPhoto{}).
+		Select("record_id, COUNT(*) AS count").
+		Where("record_id IN ?", ids).
+		Group("record_id").
+		Scan(&photoCounts).Error; err != nil {
+		return rel, fmt.Errorf("load photo counts: %w", err)
+	}
+	for _, count := range photoCounts {
+		rel.photoCounts[count.RecordID] = count.Count
 	}
 
 	var rejections []recordmodel.ClinicRecordRejection
@@ -142,6 +160,7 @@ func (s *AdminRecordService) assembleView(rec recordmodel.ClinicRecord, rel reco
 		Description:       rec.QuestionDesc,
 		Campus:            rel.rooms[rec.RoomID],
 		ApproverID:        rec.ApproverID,
+		PhotoCount:        rel.photoCounts[rec.ID],
 		LiquidMetalStatus: string(taggingservice.LiquidMetalStatusFromIndex(rec.LiquidMetalStatusIndex)),
 	}
 	if s.tagSvc != nil {
