@@ -250,6 +250,16 @@ backend. In the bundled Compose stack, `backend` waits for `rustfs-init` to
 complete successfully. For an external S3 provider, provision the bucket,
 bucket policy, and application credentials first.
 
+### Record photo limits
+
+| Variable | Purpose |
+| --- | --- |
+| `RECORD_PHOTO_MAX_COUNT` | Maximum number of ordered photos attached to one record. Defaults to `9`. |
+| `RECORD_PHOTO_MAX_SIZE_BYTES` | Maximum size of one uploaded photo in bytes. Defaults to `10485760` (10 MiB). |
+
+Both values must be positive integers. Invalid values stop startup with a
+nonzero exit status.
+
 ### Methods
 
 Examples assume a business service received `storageSvc *storage.Service`

@@ -2067,6 +2067,8 @@ curl "$BASE/api/announcement/toc/"
 | `CLINIC_TIMEZONE` | `UTC+8` | Timezone used for appointment day boundaries and announcement times. |
 | `SYNC_POLL_INTERVAL` | `10s` | Recommended client polling interval reported by `/sync/config`; `0s` disables periodic polling. |
 | `RECORD_ACTION_WINDOW` | `5m` | How long a staff action stays revertible. |
+| `RECORD_PHOTO_MAX_COUNT` | `9` | Maximum number of photos attached to one record. |
+| `RECORD_PHOTO_MAX_SIZE_BYTES` | `10485760` | Maximum size of one uploaded photo in bytes. |
 | `SESSION_COOKIE_NAME` | `sessionid` | Session cookie name. |
 | `CSRF_COOKIE_NAME` | `csrf_token` | CSRF cookie name. |
 | `SESSION_COOKIE_SECURE` | `false` | Set `Secure` on session cookies. |
