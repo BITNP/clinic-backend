@@ -41,6 +41,10 @@ func Run() {
 		log.Fatalf("storage configuration: %v", err)
 	}
 
+	if _, err := loadPhotoConfig(os.Getenv); err != nil {
+		log.Fatalf("photo configuration: %v", err)
+	}
+
 	db := openDatabase()
 
 	// Redis is required infrastructure: fail fast if it is not configured or

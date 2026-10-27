@@ -71,6 +71,7 @@ func openDatabase() *gorm.DB {
 		&taggingmodel.ClinicRecordTag{},
 		&recordmodel.ClinicRecordDevice{},
 		&recordmodel.ClinicRecordWorker{},
+		&recordmodel.ClinicRecordPhoto{},
 		&recordmodel.ClinicRecordArrival{},
 		&recordmodel.ClinicRecordRejection{},
 		&recordmodel.ClinicRecordReferral{},

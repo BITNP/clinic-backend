@@ -25,6 +25,7 @@ func setupRecordTestDB(t *testing.T) *gorm.DB {
 		&recordmodel.ClinicRecordDevice{},
 		&recordmodel.ClinicRecordArrival{},
 		&recordmodel.ClinicRecordWorker{},
+		&recordmodel.ClinicRecordPhoto{},
 		&recordmodel.ClinicRecordRejection{},
 		&recordmodel.ClinicRecordReferral{},
 	); err != nil {
