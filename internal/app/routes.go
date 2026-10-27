@@ -6,7 +6,6 @@ import (
 	"clinic-backend/internal/changes"
 	"clinic-backend/internal/legacy"
 	recordhandler "clinic-backend/internal/record/handler"
-	recordservice "clinic-backend/internal/record/service"
 	roomhandler "clinic-backend/internal/room/handler"
 	schedulinghandler "clinic-backend/internal/scheduling/handler"
 	staffhandler "clinic-backend/internal/staff/handler"
@@ -23,6 +22,7 @@ type routeHandlers struct {
 	workScheduleH *schedulinghandler.WorkScheduleHandler
 	adminRecordH  *recordhandler.AdminRecordHandler
 	ticketH       *recordhandler.TicketHandler
+	photoH        *recordhandler.PhotoHandler
 	legacyH       *legacy.LegacyHandler
 	casHandler    *authhandler.CASAuthHandler
 	userH         *authhandler.UserHandler
@@ -32,7 +32,6 @@ type routeHandlers struct {
 	clientAuth    gin.HandlerFunc
 	syncSvc       *changes.SyncService
 	redisClient   *redis.Client
-	photoSvc      *recordservice.PhotoService
 }
 
 func (h routeHandlers) router() *gin.Engine {
@@ -100,6 +99,11 @@ func (h routeHandlers) router() *gin.Engine {
 		records.GET("", h.adminRecordH.List)
 		records.GET("/:id", h.adminRecordH.Get)
 		records.PUT("/:id", h.adminRecordH.Update)
+		records.GET("/:id/photos", h.photoH.List)
+		records.GET("/:id/photos/:position", h.photoH.Get)
+		records.POST("/:id/photos", h.photoH.Create)
+		records.PUT("/:id/photos/:position", h.photoH.Replace)
+		records.DELETE("/:id/photos/:position", h.photoH.Delete)
 		records.POST("/:id/arrive", h.adminRecordH.Arrive)
 		records.POST("/:id/in-progress", h.adminRecordH.InProgress)
 		records.POST("/:id/complete", h.adminRecordH.Complete)

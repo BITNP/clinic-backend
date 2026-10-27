@@ -53,6 +53,7 @@ func Run() {
 		closeDatabase(db)
 		log.Fatalf("photo service: %v", err)
 	}
+	photoH := recordhandler.NewPhotoHandler(photoSvc)
 
 	// Redis is required infrastructure: fail fast if it is not configured or
 	// not reachable.
@@ -240,7 +241,7 @@ func Run() {
 		clientAuth:    clientAuth,
 		syncSvc:       syncSvc,
 		redisClient:   redisClient,
-		photoSvc:      photoSvc,
+		photoH:        photoH,
 	}).router()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

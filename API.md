@@ -765,6 +765,152 @@ curl -X PUT "$BASE/api/admin/records/1" \
   -d '{"worker_desc":"已更换风扇并清灰。"}'
 ```
 
+### Record photo positions
+
+Worker-note photos are ordered. `position` is **1-based and contiguous**:
+
+- A new photo appended with `POST` gets `position = count + 1`.
+- Replacing a photo with `PUT` keeps its position.
+- Deleting a photo shifts every later photo down by one.
+- `GET` always returns photos in ascending position order.
+
+Photo object:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | integer | Stable photo id. |
+| `position` | integer | 1-based position in the record's ordered photo list. |
+| `content_type` | string | `image/jpeg`, `image/png`, or `image/webp`. |
+| `size` | integer | Object size in bytes. |
+| `created_at` | string | RFC3339 creation time. |
+| `url` | string | Backend URL for the image bytes. |
+
+### `GET /api/admin/records/{id}/photos`
+
+**Description:** Lists a record's photos in position order, together with the
+active limits. Staff or admin only.
+
+**Response `200 OK`**
+
+```json
+{
+  "items": [
+    {
+      "id": 12,
+      "position": 1,
+      "content_type": "image/jpeg",
+      "size": 204800,
+      "created_at": "2026-10-27T12:00:00Z",
+      "url": "/api/admin/records/7/photos/1"
+    }
+  ],
+  "count": 1,
+  "max_count": 9,
+  "max_size_bytes": 10485760
+}
+```
+
+A record with no photos returns `200` with `items: []` and `count: 0`.
+
+**Error responses:** `400` (invalid id), `401`, `403`, `404`.
+
+**curl**
+
+```bash
+curl "$BASE/api/admin/records/7/photos" -b cookies.txt
+```
+
+### `GET /api/admin/records/{id}/photos/{position}`
+
+**Description:** Streams one photo's bytes through the backend. Staff or admin
+only. The S3 bucket remains private.
+
+**Response `200 OK`** — the image body, not JSON. Headers include:
+
+```http
+Content-Type: image/jpeg
+Content-Length: 204800
+ETag: "storage-etag"
+Cache-Control: private, no-cache
+X-Content-Type-Options: nosniff
+```
+
+**Error responses:** `400` (invalid id/position), `401`, `403`, `404`, `500`.
+
+**curl**
+
+```bash
+curl "$BASE/api/admin/records/7/photos/1" -b cookies.txt -o photo.jpg
+```
+
+### `POST /api/admin/records/{id}/photos`
+
+**Description:** Inserts one photo at the end of the record's ordered photo
+list. Staff or admin only. Bumps the `record` counter.
+
+**Request body** — `multipart/form-data`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `photo` | file | yes | One JPEG, PNG, or WebP image. |
+
+The server detects the image type from the bytes, so the part's declared
+`Content-Type` is ignored. The request and file are limited by
+`RECORD_PHOTO_MAX_SIZE_BYTES`; the record is limited by
+`RECORD_PHOTO_MAX_COUNT`.
+
+**Response `201 Created`** — the new photo object. A `Location` header points at
+its position URL.
+
+**Error responses:** `400` (invalid id, missing/empty file, more than one file,
+unsupported type), `401`, `403`, `404` (record missing), `409` (photo limit
+reached), `413` (file or request body too large), `500`.
+
+**curl**
+
+```bash
+curl -X POST "$BASE/api/admin/records/7/photos" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF" \
+  -F 'photo=@repair.jpg'
+```
+
+### `PUT /api/admin/records/{id}/photos/{position}`
+
+**Description:** Replaces the photo at an existing position without changing
+its position. Staff or admin only. Bumps the `record` counter.
+
+**Request body** — same `multipart/form-data` `photo` field as `POST`.
+
+**Response `200 OK`** — the updated photo object.
+
+**Error responses:** `400` (invalid id/position or invalid file), `401`, `403`,
+`404` (record or position missing), `413` (file too large), `500`.
+
+**curl**
+
+```bash
+curl -X PUT "$BASE/api/admin/records/7/photos/1" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF" \
+  -F 'photo=@repair-updated.jpg'
+```
+
+### `DELETE /api/admin/records/{id}/photos/{position}`
+
+**Description:** Removes the photo at a position and shifts every later photo
+down by one. Staff or admin only. Bumps the `record` counter.
+
+**Response `204 No Content`**
+
+**Error responses:** `400` (invalid id/position), `401`, `403`, `404` (record or
+position missing), `500`.
+
+**curl**
+
+```bash
+curl -X DELETE "$BASE/api/admin/records/7/photos/1" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF"
+```
+
 ### `POST /api/admin/records/{id}/confirm`
 
 **Description:** Approves a pending record (`pending` → `confirmed`). Admin only.
