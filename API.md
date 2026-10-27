@@ -2057,26 +2057,7 @@ curl "$BASE/api/announcement/toc/"
 
 ## Related configuration
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `CLINIC_API_KEY` | — (required) | Shared secret for API-key client signatures. |
-| `CLINIC_DB_DRIVER` / `CLINIC_DB_DSN` | sqlite / local file | Database connection (server must start successfully). |
-| `REDIS_ADDR` | — (required) | Redis for sync counters and revert journal; the server refuses to start without it. |
-| `REDIS_PASSWORD` | empty | Redis password. |
-| `REDIS_DB` | `0` | Redis database number. |
-| `CLINIC_TIMEZONE` | `UTC+8` | Timezone used for appointment day boundaries and announcement times. |
-| `SYNC_POLL_INTERVAL` | `10s` | Recommended client polling interval reported by `/sync/config`; `0s` disables periodic polling. |
-| `RECORD_ACTION_WINDOW` | `5m` | How long a staff action stays revertible. |
-| `RECORD_PHOTO_MAX_COUNT` | `9` | Maximum number of photos attached to one record. |
-| `RECORD_PHOTO_MAX_SIZE_BYTES` | `10485760` | Maximum size of one uploaded photo in bytes. |
-| `SESSION_COOKIE_NAME` | `sessionid` | Session cookie name. |
-| `CSRF_COOKIE_NAME` | `csrf_token` | CSRF cookie name. |
-| `SESSION_COOKIE_SECURE` | `false` | Set `Secure` on session cookies. |
-| `SESSION_COOKIE_SAMESITE` | `lax` | `none`, `lax`, or `strict`. |
-| `SESSION_TTL` | `336h` | Session lifetime. |
-| `STAFF_VERSION` | `0` | Raise to force all staff to log in again. |
-| `APP_BASE_URL` | empty | Public frontend URL used for CAS return URLs. Required when `CAS_SERVER_URL` is set. |
-| `CAS_SERVER_URL` | empty | CAS server; when empty, `/login` returns `503`. |
-| `CAS_DEFAULT_REDIRECT` | `/manage/` | Fallback post-login path. |
-| `CAS_HTTP_TIMEOUT` | `10s` | CAS request timeout. |
-| `KEYCLOAK_REALM_URL` / `KEYCLOAK_CLIENT_ID` | empty | Enables Keycloak Bearer authentication when both are set. |
+See [CONFIGURATION.md](CONFIGURATION.md) for every environment variable and
+deployment setting. Settings that affect API behavior are noted inline above:
+`CLINIC_API_KEY`, `CLINIC_TIMEZONE`, `STAFF_VERSION`, `SYNC_POLL_INTERVAL`,
+`SESSION_*`, `CAS_*`, and `KEYCLOAK_*`.
