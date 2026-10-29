@@ -694,6 +694,7 @@ Admin record view:
 | `worker_id` | integer | Staff id of the assigned worker; omitted when unset. |
 | `worker_realname` | string | Staff realname of the assigned worker; omitted when unset or unknown. |
 | `approver_id` | integer | Staff id of the approver; omitted when unset. |
+| `approver_realname` | string | Staff realname of the approver; omitted when unset or unknown. |
 | `revertible` | boolean | Whether the caller can undo their latest action now. |
 | `revertible_until` | string | RFC3339 deadline for that revert; omitted when not revertible. |
 | `revertible_count` | integer | Number of the caller's in-window actions on this record. |

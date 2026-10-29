@@ -310,10 +310,11 @@ func TestAdminRecordServiceListBatchedViews(t *testing.T) {
 	}
 
 	appt := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	approverID := uint(43)
 	full := recordmodel.ClinicRecord{
 		User: "u1", Realname: "r1", PhoneNum: "p1",
 		Status: recordmodel.RecordStatusCompleted, AppointmentTime: appt,
-		QuestionDesc: "broken", RoomID: roomA.ID,
+		QuestionDesc: "broken", RoomID: roomA.ID, ApproverID: &approverID,
 		LiquidMetalStatusIndex: taggingservice.LiquidMetalStatusIndex(taggingservice.LiquidMetalStatusYes),
 	}
 	sparse := recordmodel.ClinicRecord{
@@ -329,6 +330,9 @@ func TestAdminRecordServiceListBatchedViews(t *testing.T) {
 	}
 	if err := db.Create(&staffmodel.ClinicStaff{ID: 42, AccountID: "worker42", Realname: "维修员"}).Error; err != nil {
 		t.Fatalf("seed worker staff: %v", err)
+	}
+	if err := db.Create(&staffmodel.ClinicStaff{ID: 43, AccountID: "approver43", Realname: "审批员"}).Error; err != nil {
+		t.Fatalf("seed approver staff: %v", err)
 	}
 
 	arriveTime := appt.Add(time.Hour)
@@ -383,6 +387,12 @@ func TestAdminRecordServiceListBatchedViews(t *testing.T) {
 	if got.WorkerRealname != "维修员" {
 		t.Errorf("full worker_realname = %q, want 维修员", got.WorkerRealname)
 	}
+	if got.ApproverID == nil || *got.ApproverID != 43 {
+		t.Errorf("full approver_id = %v, want 43", got.ApproverID)
+	}
+	if got.ApproverRealname != "审批员" {
+		t.Errorf("full approver_realname = %q, want 审批员", got.ApproverRealname)
+	}
 	if want := finishTime.UTC().Format(time.RFC3339); got.FinishTime == nil || *got.FinishTime != want {
 		t.Errorf("full finish_time = %v, want %s", got.FinishTime, want)
 	}
@@ -411,6 +421,9 @@ func TestAdminRecordServiceListBatchedViews(t *testing.T) {
 	}
 	if empty.WorkerDesc != "" || empty.WorkerID != nil || empty.WorkerRealname != "" || empty.FinishTime != nil {
 		t.Errorf("sparse worker = %q/%v/%q/%v, want empty", empty.WorkerDesc, empty.WorkerID, empty.WorkerRealname, empty.FinishTime)
+	}
+	if empty.ApproverID != nil || empty.ApproverRealname != "" {
+		t.Errorf("sparse approver = %v/%q, want empty", empty.ApproverID, empty.ApproverRealname)
 	}
 	if empty.PhotoCount != 0 {
 		t.Errorf("sparse photo_count = %d, want 0", empty.PhotoCount)

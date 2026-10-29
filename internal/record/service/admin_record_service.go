@@ -85,6 +85,7 @@ type AdminRecordView struct {
 	WorkerID          *uint   `json:"worker_id,omitempty"`
 	WorkerRealname    string  `json:"worker_realname,omitempty"`
 	ApproverID        *uint   `json:"approver_id,omitempty"`
+	ApproverRealname  string  `json:"approver_realname,omitempty"`
 
 	// Revert fields describe whether the requesting staff member can undo their
 	// latest action on this record.
