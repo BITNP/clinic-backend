@@ -23,6 +23,8 @@ var (
 	ErrPhotoTooLarge        = errors.New("photo too large")
 	ErrPhotoUnsupportedType = errors.New("unsupported image type")
 	ErrPhotoFileRequired    = errors.New("photo file is required")
+	ErrPhotoOrderInvalid    = errors.New("invalid photo order")
+	ErrPhotoOrderConflict   = errors.New("photo order changed")
 )
 
 // photoStorage is the subset of storage.Service used by PhotoService.
@@ -228,6 +230,92 @@ func (s *PhotoService) Replace(ctx context.Context, recordID uint, position int,
 	photo.ContentType = contentType
 	photo.Size = upload.Size
 	return photo, nil
+}
+
+// Reorder rewrites the ordered photo list atomically. Every photo currently
+// attached to the record must appear exactly once in both expectedPhotoIDs and
+// photoIDs. expectedPhotoIDs is the client's snapshot of the current order; a
+// mismatch means another request changed the order and returns
+// ErrPhotoOrderConflict. Reordering never changes photo ids or image content.
+func (s *PhotoService) Reorder(ctx context.Context, recordID uint, expectedPhotoIDs, photoIDs []uint) ([]recordmodel.ClinicRecordPhoto, error) {
+	var photos []recordmodel.ClinicRecordPhoto
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var rec recordmodel.ClinicRecord
+		if err := lockPhotoRecordTx(tx, recordID, &rec); err != nil {
+			return err
+		}
+
+		if err := tx.Where("record_id = ?", recordID).
+			Order("position ASC").
+			Find(&photos).Error; err != nil {
+			return fmt.Errorf("list photos for record %d: %w", recordID, err)
+		}
+
+		byID := make(map[uint]struct{}, len(photos))
+		for _, photo := range photos {
+			byID[photo.ID] = struct{}{}
+		}
+		if !validPhotoOrder(expectedPhotoIDs, byID) || !validPhotoOrder(photoIDs, byID) {
+			return ErrPhotoOrderInvalid
+		}
+		for index, photo := range photos {
+			if expectedPhotoIDs[index] != photo.ID {
+				return ErrPhotoOrderConflict
+			}
+		}
+
+		unchanged := true
+		for index, photoID := range photoIDs {
+			if photos[index].ID != photoID {
+				unchanged = false
+				break
+			}
+		}
+		if unchanged {
+			return nil
+		}
+
+		// Move every row out of the 1..n range first. The current schema does
+		// not enforce uniqueness on position, but this keeps the update safe if
+		// that constraint is added later.
+		offset := len(photos)
+		for _, photo := range photos {
+			if err := tx.Model(&recordmodel.ClinicRecordPhoto{}).
+				Where("record_id = ? AND id = ?", recordID, photo.ID).
+				UpdateColumn("position", photo.Position+offset).Error; err != nil {
+				return fmt.Errorf("stage photo %d position: %w", photo.ID, err)
+			}
+		}
+		for index, photoID := range photoIDs {
+			if err := tx.Model(&recordmodel.ClinicRecordPhoto{}).
+				Where("record_id = ? AND id = ?", recordID, photoID).
+				UpdateColumn("position", index+1).Error; err != nil {
+				return fmt.Errorf("set photo %d position: %w", photoID, err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.List(ctx, recordID)
+}
+
+func validPhotoOrder(ids []uint, byID map[uint]struct{}) bool {
+	if len(ids) != len(byID) {
+		return false
+	}
+	seen := make(map[uint]struct{}, len(ids))
+	for _, id := range ids {
+		if _, ok := byID[id]; !ok {
+			return false
+		}
+		if _, duplicate := seen[id]; duplicate {
+			return false
+		}
+		seen[id] = struct{}{}
+	}
+	return true
 }
 
 // Delete removes the photo at position and shifts every later photo down by

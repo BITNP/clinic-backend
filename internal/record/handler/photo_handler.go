@@ -47,7 +47,35 @@ func (h *PhotoHandler) List(c *gin.Context) {
 		writePhotoError(c, err)
 		return
 	}
+	h.writePhotoList(c, photos)
+}
 
+type photoOrderRequest struct {
+	ExpectedPhotoIDs []uint `json:"expected_photo_ids"`
+	PhotoIDs         []uint `json:"photo_ids"`
+}
+
+func (h *PhotoHandler) Reorder(c *gin.Context) {
+	id, ok := httpx.ParseID(c)
+	if !ok {
+		return
+	}
+
+	var request photoOrderRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid photo order request"})
+		return
+	}
+
+	photos, err := h.svc.Reorder(c.Request.Context(), id, request.ExpectedPhotoIDs, request.PhotoIDs)
+	if err != nil {
+		writePhotoError(c, err)
+		return
+	}
+	h.writePhotoList(c, photos)
+}
+
+func (h *PhotoHandler) writePhotoList(c *gin.Context, photos []recordmodel.ClinicRecordPhoto) {
 	items := make([]photoView, 0, len(photos))
 	for _, photo := range photos {
 		items = append(items, photoViewFromModel(photo))
@@ -231,12 +259,14 @@ func writePhotoError(c *gin.Context, err error) {
 	case errors.Is(err, recordservice.ErrRecordNotFound),
 		errors.Is(err, recordservice.ErrPhotoNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-	case errors.Is(err, recordservice.ErrPhotoLimitReached):
+	case errors.Is(err, recordservice.ErrPhotoLimitReached),
+		errors.Is(err, recordservice.ErrPhotoOrderConflict):
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 	case errors.Is(err, recordservice.ErrPhotoTooLarge):
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": err.Error()})
 	case errors.Is(err, recordservice.ErrPhotoUnsupportedType),
-		errors.Is(err, recordservice.ErrPhotoFileRequired):
+		errors.Is(err, recordservice.ErrPhotoFileRequired),
+		errors.Is(err, recordservice.ErrPhotoOrderInvalid):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

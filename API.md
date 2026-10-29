@@ -879,10 +879,55 @@ curl -X POST "$BASE/api/admin/records/7/photos" \
   -F 'photo=@repair.jpg'
 ```
 
+### `PUT /api/admin/records/{id}/photos/order`
+
+**Description:** Reorders a record's existing photos without changing their
+image content, object keys, or stable ids. Staff or admin only. Bumps the
+`record` synchronization counter.
+
+Every photo currently attached to the record must appear exactly once in both
+lists. `expected_photo_ids` is the client's snapshot of the current order; if
+another request changed the order, the backend returns `409` and changes
+nothing. Updates are atomic.
+
+**Request body** — `application/json`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `expected_photo_ids` | integer[] | yes | Current ordered photo ids, as last seen by the client. |
+| `photo_ids` | integer[] | yes | Complete desired order of the same photo ids. |
+
+```json
+{
+  "expected_photo_ids": [11, 12, 13],
+  "photo_ids": [13, 11, 12]
+}
+```
+
+**Response `200 OK`** — the authoritative ordered photo list, in the same shape
+as `GET /api/admin/records/{id}/photos`.
+
+**Error responses:** `400` (invalid id or duplicate/missing/foreign photo ids),
+`401`, `403`, `404` (record missing), `409` (the current order differs from
+`expected_photo_ids`), `500`.
+
+**curl**
+
+```bash
+curl -X PUT "$BASE/api/admin/records/7/photos/order" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF" \
+  -H 'Content-Type: application/json' \
+  -d '{"expected_photo_ids":[11,12,13],"photo_ids":[13,11,12]}'
+```
+
 ### `PUT /api/admin/records/{id}/photos/{position}`
 
 **Description:** Replaces the photo at an existing position without changing
 its position. Staff or admin only. Bumps the `record` counter.
+
+> The admin frontend no longer uses this endpoint. Photo replacement was
+> removed in favor of deletion plus ordering. It remains available for API
+> compatibility.
 
 **Request body** — same `multipart/form-data` `photo` field as `POST`.
 

@@ -467,3 +467,94 @@ func TestPhotoHandlerMultipleFiles(t *testing.T) {
 		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
 	}
 }
+
+func TestPhotoHandlerReorder(t *testing.T) {
+	handler, svc, rec, _ := setupPhotoHandlerTest(t, 9, 1024)
+	ctx := context.Background()
+
+	photos := make([]recordmodel.ClinicRecordPhoto, 0, 3)
+	for _, data := range [][]byte{handlerTestJPEG, handlerTestPNG, append(append([]byte(nil), handlerTestJPEG...), 0x01)} {
+		photo, err := svc.Append(ctx, rec.ID, handlerPhotoUpload(data))
+		if err != nil {
+			t.Fatalf("seed photo: %v", err)
+		}
+		photos = append(photos, photo)
+	}
+
+	target := fmt.Sprintf("/api/admin/records/%d/photos/order", rec.ID)
+	body := fmt.Sprintf(`{"expected_photo_ids":[%d,%d,%d],"photo_ids":[%d,%d,%d]}`,
+		photos[0].ID, photos[1].ID, photos[2].ID, photos[2].ID, photos[0].ID, photos[1].ID)
+	c, w := newPhotoContext(http.MethodPut, target, strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = recordParams(rec.ID, "")
+	handler.Reorder(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	var response photoListResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	want := []uint{photos[2].ID, photos[0].ID, photos[1].ID}
+	if response.Count != 3 || len(response.Items) != 3 {
+		t.Fatalf("items = %d count = %d, want 3", len(response.Items), response.Count)
+	}
+	for index, item := range response.Items {
+		if item.ID != want[index] || item.Position != index+1 {
+			t.Fatalf("item[%d] = id %d position %d, want id %d position %d", index, item.ID, item.Position, want[index], index+1)
+		}
+	}
+}
+
+func TestPhotoHandlerReorderConflictAndInvalid(t *testing.T) {
+	handler, svc, rec, _ := setupPhotoHandlerTest(t, 9, 1024)
+	ctx := context.Background()
+	first, err := svc.Append(ctx, rec.ID, handlerPhotoUpload(handlerTestJPEG))
+	if err != nil {
+		t.Fatalf("seed first photo: %v", err)
+	}
+	second, err := svc.Append(ctx, rec.ID, handlerPhotoUpload(handlerTestPNG))
+	if err != nil {
+		t.Fatalf("seed second photo: %v", err)
+	}
+
+	target := fmt.Sprintf("/api/admin/records/%d/photos/order", rec.ID)
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{
+			name: "stale expected order",
+			body: fmt.Sprintf(`{"expected_photo_ids":[%d,%d],"photo_ids":[%d,%d]}`, second.ID, first.ID, first.ID, second.ID),
+			want: http.StatusConflict,
+		},
+		{
+			name: "duplicate id",
+			body: fmt.Sprintf(`{"expected_photo_ids":[%d,%d],"photo_ids":[%d,%d]}`, first.ID, second.ID, first.ID, first.ID),
+			want: http.StatusBadRequest,
+		},
+		{
+			name: "foreign id",
+			body: fmt.Sprintf(`{"expected_photo_ids":[%d,%d],"photo_ids":[%d,%d]}`, first.ID, second.ID, first.ID, 9999),
+			want: http.StatusBadRequest,
+		},
+		{
+			name: "malformed json",
+			body: `{"expected_photo_ids":`,
+			want: http.StatusBadRequest,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, w := newPhotoContext(http.MethodPut, target, strings.NewReader(tc.body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			c.Params = recordParams(rec.ID, "")
+			handler.Reorder(c)
+			if w.Code != tc.want {
+				t.Fatalf("status = %d, want %d; body: %s", w.Code, tc.want, w.Body.String())
+			}
+		})
+	}
+}

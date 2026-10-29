@@ -102,6 +102,7 @@ func (h routeHandlers) router() *gin.Engine {
 		records.GET("/:id/photos", h.photoH.List)
 		records.GET("/:id/photos/:position", h.photoH.Get)
 		records.POST("/:id/photos", h.photoH.Create)
+		records.PUT("/:id/photos/order", h.photoH.Reorder)
 		records.PUT("/:id/photos/:position", h.photoH.Replace)
 		records.DELETE("/:id/photos/:position", h.photoH.Delete)
 		records.POST("/:id/arrive", h.adminRecordH.Arrive)

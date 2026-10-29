@@ -493,3 +493,97 @@ func TestNewPhotoServiceValidation(t *testing.T) {
 		t.Fatal("expected an error for zero max size")
 	}
 }
+
+func TestPhotoServiceReorderKeepsIDsAndContent(t *testing.T) {
+	_, store, svc, rec := setupPhotoServiceTest(t, 9, 1024)
+	ctx := context.Background()
+
+	first, err := svc.Append(ctx, rec.ID, photoUpload(testJPEG))
+	if err != nil {
+		t.Fatalf("Append(first) error = %v", err)
+	}
+	second, err := svc.Append(ctx, rec.ID, photoUpload(testPNG))
+	if err != nil {
+		t.Fatalf("Append(second) error = %v", err)
+	}
+	third, err := svc.Append(ctx, rec.ID, photoUpload(testWebP))
+	if err != nil {
+		t.Fatalf("Append(third) error = %v", err)
+	}
+	objectsBefore := len(store.objects)
+
+	photos, err := svc.Reorder(
+		ctx,
+		rec.ID,
+		[]uint{first.ID, second.ID, third.ID},
+		[]uint{third.ID, first.ID, second.ID},
+	)
+	if err != nil {
+		t.Fatalf("Reorder() error = %v", err)
+	}
+	want := []uint{third.ID, first.ID, second.ID}
+	for index, photo := range photos {
+		if photo.ID != want[index] || photo.Position != index+1 {
+			t.Fatalf("photo[%d] = id %d position %d, want id %d position %d", index, photo.ID, photo.Position, want[index], index+1)
+		}
+	}
+	if photos[0].ContentType != "image/webp" || photos[1].ContentType != "image/jpeg" || photos[2].ContentType != "image/png" {
+		t.Fatalf("content types = %q/%q/%q", photos[0].ContentType, photos[1].ContentType, photos[2].ContentType)
+	}
+	if len(store.objects) != objectsBefore {
+		t.Fatalf("stored objects = %d, want %d", len(store.objects), objectsBefore)
+	}
+	if len(store.deleted) != 0 {
+		t.Fatalf("deleted objects = %v, want none", store.deleted)
+	}
+}
+
+func TestPhotoServiceReorderRejectsConflictsAndInvalidOrders(t *testing.T) {
+	_, _, svc, rec := setupPhotoServiceTest(t, 9, 1024)
+	ctx := context.Background()
+
+	first, err := svc.Append(ctx, rec.ID, photoUpload(testJPEG))
+	if err != nil {
+		t.Fatalf("Append(first) error = %v", err)
+	}
+	second, err := svc.Append(ctx, rec.ID, photoUpload(testPNG))
+	if err != nil {
+		t.Fatalf("Append(second) error = %v", err)
+	}
+
+	if _, err := svc.Reorder(ctx, rec.ID, []uint{second.ID, first.ID}, []uint{first.ID, second.ID}); !errors.Is(err, recordservice.ErrPhotoOrderConflict) {
+		t.Fatalf("Reorder(stale expected) error = %v, want ErrPhotoOrderConflict", err)
+	}
+
+	invalid := []struct {
+		name     string
+		expected []uint
+		order    []uint
+	}{
+		{name: "missing", expected: []uint{first.ID}, order: []uint{first.ID}},
+		{name: "duplicate", expected: []uint{first.ID, second.ID}, order: []uint{first.ID, first.ID}},
+		{name: "foreign", expected: []uint{first.ID, second.ID}, order: []uint{first.ID, 9999}},
+	}
+	for _, test := range invalid {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := svc.Reorder(ctx, rec.ID, test.expected, test.order); !errors.Is(err, recordservice.ErrPhotoOrderInvalid) {
+				t.Fatalf("Reorder() error = %v, want ErrPhotoOrderInvalid", err)
+			}
+		})
+	}
+
+	photos, err := svc.List(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(photos) != 2 || photos[0].ID != first.ID || photos[1].ID != second.ID {
+		t.Fatalf("photos after rejected orders = %+v, want original order", photos)
+	}
+}
+
+func TestPhotoServiceReorderMissingRecord(t *testing.T) {
+	_, _, svc, _ := setupPhotoServiceTest(t, 9, 1024)
+	if _, err := svc.Reorder(context.Background(), 9999, nil, nil); !errors.Is(err, recordservice.ErrRecordNotFound) {
+		t.Fatalf("Reorder() error = %v, want ErrRecordNotFound", err)
+	}
+}
