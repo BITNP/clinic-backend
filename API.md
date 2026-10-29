@@ -692,6 +692,7 @@ Admin record view:
 | `arrive_time` | string | RFC3339; omitted until arrival. |
 | `finish_time` | string | RFC3339; omitted until completion. |
 | `worker_id` | integer | Staff id of the assigned worker; omitted when unset. |
+| `worker_realname` | string | Staff realname of the assigned worker; omitted when unset or unknown. |
 | `approver_id` | integer | Staff id of the approver; omitted when unset. |
 | `revertible` | boolean | Whether the caller can undo their latest action now. |
 | `revertible_until` | string | RFC3339 deadline for that revert; omitted when not revertible. |

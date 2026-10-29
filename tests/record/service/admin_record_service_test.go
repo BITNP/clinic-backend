@@ -9,6 +9,7 @@ import (
 	recordmodel "clinic-backend/internal/record/model"
 	recordservice "clinic-backend/internal/record/service"
 	roommodel "clinic-backend/internal/room/model"
+	staffmodel "clinic-backend/internal/staff/model"
 	taggingservice "clinic-backend/internal/tagging/service"
 
 	"gorm.io/driver/sqlite"
@@ -31,6 +32,7 @@ func setupAdminRecordTestDB(t *testing.T) *gorm.DB {
 		&recordmodel.ClinicRecordArrival{},
 		&recordmodel.ClinicRecordRejection{},
 		&recordmodel.ClinicRecordReferral{},
+		&staffmodel.ClinicStaff{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -325,6 +327,9 @@ func TestAdminRecordServiceListBatchedViews(t *testing.T) {
 	if err := db.Create(&sparse).Error; err != nil {
 		t.Fatalf("seed sparse record: %v", err)
 	}
+	if err := db.Create(&staffmodel.ClinicStaff{ID: 42, AccountID: "worker42", Realname: "维修员"}).Error; err != nil {
+		t.Fatalf("seed worker staff: %v", err)
+	}
 
 	arriveTime := appt.Add(time.Hour)
 	finishTime := appt.Add(2 * time.Hour)
@@ -375,6 +380,9 @@ func TestAdminRecordServiceListBatchedViews(t *testing.T) {
 	if got.WorkerID == nil || *got.WorkerID != 42 {
 		t.Errorf("full worker_id = %v, want 42", got.WorkerID)
 	}
+	if got.WorkerRealname != "维修员" {
+		t.Errorf("full worker_realname = %q, want 维修员", got.WorkerRealname)
+	}
 	if want := finishTime.UTC().Format(time.RFC3339); got.FinishTime == nil || *got.FinishTime != want {
 		t.Errorf("full finish_time = %v, want %s", got.FinishTime, want)
 	}
@@ -401,8 +409,8 @@ func TestAdminRecordServiceListBatchedViews(t *testing.T) {
 	if empty.Model != "" || empty.Password != "" {
 		t.Errorf("sparse device = %q/%q, want empty", empty.Model, empty.Password)
 	}
-	if empty.WorkerDesc != "" || empty.WorkerID != nil || empty.FinishTime != nil {
-		t.Errorf("sparse worker = %q/%v/%v, want empty", empty.WorkerDesc, empty.WorkerID, empty.FinishTime)
+	if empty.WorkerDesc != "" || empty.WorkerID != nil || empty.WorkerRealname != "" || empty.FinishTime != nil {
+		t.Errorf("sparse worker = %q/%v/%q/%v, want empty", empty.WorkerDesc, empty.WorkerID, empty.WorkerRealname, empty.FinishTime)
 	}
 	if empty.PhotoCount != 0 {
 		t.Errorf("sparse photo_count = %d, want 0", empty.PhotoCount)

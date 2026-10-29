@@ -83,6 +83,7 @@ type AdminRecordView struct {
 	ArriveTime        *string `json:"arrive_time,omitempty"`
 	FinishTime        *string `json:"finish_time,omitempty"`
 	WorkerID          *uint   `json:"worker_id,omitempty"`
+	WorkerRealname    string  `json:"worker_realname,omitempty"`
 	ApproverID        *uint   `json:"approver_id,omitempty"`
 
 	// Revert fields describe whether the requesting staff member can undo their

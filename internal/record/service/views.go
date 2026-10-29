@@ -6,6 +6,7 @@ import (
 
 	recordmodel "clinic-backend/internal/record/model"
 	roommodel "clinic-backend/internal/room/model"
+	staffmodel "clinic-backend/internal/staff/model"
 	taggingservice "clinic-backend/internal/tagging/service"
 
 	"gorm.io/gorm"
@@ -23,6 +24,7 @@ type recordViewRelations struct {
 	rooms       map[uint]string
 	devices     map[uint]recordmodel.ClinicRecordDevice
 	workers     map[uint]recordmodel.ClinicRecordWorker
+	workerNames map[int]string
 	photoCounts map[uint]int64
 	rejections  map[uint]recordmodel.ClinicRecordRejection
 	referrals   map[uint]recordmodel.ClinicRecordReferral
@@ -36,6 +38,7 @@ func loadRecordViewRelationsTx(tx *gorm.DB, recs []recordmodel.ClinicRecord) (re
 		rooms:       make(map[uint]string),
 		devices:     make(map[uint]recordmodel.ClinicRecordDevice),
 		workers:     make(map[uint]recordmodel.ClinicRecordWorker),
+		workerNames: make(map[int]string),
 		photoCounts: make(map[uint]int64),
 		rejections:  make(map[uint]recordmodel.ClinicRecordRejection),
 		referrals:   make(map[uint]recordmodel.ClinicRecordReferral),
@@ -80,8 +83,19 @@ func loadRecordViewRelationsTx(tx *gorm.DB, recs []recordmodel.ClinicRecord) (re
 	if err := tx.Where("record_id IN ?", ids).Find(&workers).Error; err != nil {
 		return rel, fmt.Errorf("load workers: %w", err)
 	}
+	workerIDs := make([]int, 0, len(workers))
 	for _, w := range workers {
 		rel.workers[w.RecordID] = w
+		workerIDs = append(workerIDs, int(w.WorkerID))
+	}
+	if len(workerIDs) > 0 {
+		var staff []staffmodel.ClinicStaff
+		if err := tx.Select("id", "realname").Where("id IN ?", workerIDs).Find(&staff).Error; err != nil {
+			return rel, fmt.Errorf("load worker names: %w", err)
+		}
+		for _, st := range staff {
+			rel.workerNames[st.ID] = st.Realname
+		}
 	}
 
 	var photoCounts []struct {
@@ -175,6 +189,7 @@ func (s *AdminRecordService) assembleView(rec recordmodel.ClinicRecord, rel reco
 	if worker, ok := rel.workers[rec.ID]; ok {
 		v.WorkerDesc = worker.WorkerDesc
 		v.WorkerID = &worker.WorkerID
+		v.WorkerRealname = rel.workerNames[int(worker.WorkerID)]
 		if !worker.FinishTime.IsZero() {
 			v.FinishTime = new(worker.FinishTime.UTC().Format(time.RFC3339))
 		}
