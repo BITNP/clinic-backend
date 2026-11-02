@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"clinic-backend/internal/agent"
+	"clinic-backend/internal/agent/tagger"
 	"clinic-backend/internal/announcement"
 	authclient "clinic-backend/internal/auth/client"
 	authhandler "clinic-backend/internal/auth/handler"
@@ -26,7 +28,6 @@ import (
 	schedulingservice "clinic-backend/internal/scheduling/service"
 	staffhandler "clinic-backend/internal/staff/handler"
 	staffservice "clinic-backend/internal/staff/service"
-	taggingclient "clinic-backend/internal/tagging/client"
 	taggingservice "clinic-backend/internal/tagging/service"
 
 	"gorm.io/gorm"
@@ -110,26 +111,49 @@ func Run() {
 		log.Fatalf("failed to backfill record tag_id: %v", err)
 	}
 
-	taggerURL := envString("TAGGER_URL", "http://127.0.0.1:4514")
-	taggerToken := os.Getenv("TAGGER_API_TOKEN")
-	taggerTagSet := envString("TAGGER_TAG_SET", "clinic_record")
-	liquidMetalTagSet := envString("LM_TAGGER_TAG_SET", "clinic_laptop_liquid_metal")
-	var taggerClient taggingservice.TaggerClient
+	taggerAPIKey := os.Getenv("TAGGER_LLM_API_KEY")
 	var recordTagger *taggingservice.RecordTagger
-	var liquidMetalTagger *taggingservice.LiquidMetalTagger
-	if taggerURL != "" && taggerToken != "" {
-		taggerClient = taggingclient.NewTaggerHTTPClient(taggerURL, taggerToken, envDuration("TAGGER_TIMEOUT", 15*time.Second))
-		recordTagger = taggingservice.NewRecordTagger(taggerClient, taggerTagSet, db, recordTagSvc)
+	if taggerAPIKey != "" {
+		taggerBaseURL := os.Getenv("TAGGER_LLM_BASE_URL")
+		taggerModel := os.Getenv("TAGGER_LLM_MODEL")
+		if taggerBaseURL == "" || taggerModel == "" {
+			log.Fatal("TAGGER_LLM_BASE_URL and TAGGER_LLM_MODEL are required when TAGGER_LLM_API_KEY is set")
+		}
+
+		poolCfg := tagger.PoolConfig{
+			Size:          envInt("TAGGER_AGENT_POOL_SIZE", 4),
+			Timeout:       envDuration("TAGGER_TIMEOUT", 30*time.Second),
+			ContextTokens: envInt("TAGGER_CONTEXT_TOKENS", 32000),
+		}
+		modelCfg := agent.ChatModelConfig{
+			APIKey:  taggerAPIKey,
+			BaseURL: taggerBaseURL,
+			Model:   taggerModel,
+			Timeout: poolCfg.Timeout,
+		}
+		factory := agent.NewChatModelFactory(context.Background(), modelCfg)
+
+		recordSet := taggingservice.RecordTagSet(recordTagSvc)
+		recordPool, err := tagger.NewPool(poolCfg, recordSet, factory)
+		if err != nil {
+			log.Fatalf("failed to build record tagger pool: %v", err)
+		}
+		recordTagger = taggingservice.NewRecordTagger(recordPool, db, recordTagSvc)
+		recordTagger.SetWorkers(recordPool.Size())
 		recordTagger.SetSyncService(syncSvc)
 
-		lm, lmErr := taggingservice.NewLiquidMetalTagger(taggerClient, liquidMetalTagSet)
-		if lmErr != nil {
-			log.Fatalf("failed to build liquid metal tagger: %v", lmErr)
+		liquidMetalSet, err := taggingservice.LiquidMetalTagSet()
+		if err != nil {
+			log.Fatalf("failed to build liquid metal tag set: %v", err)
 		}
-		liquidMetalTagger = lm
-		recordTagger.SetLiquidMetalTagger(lm)
+		liquidMetalPool, err := tagger.NewPool(poolCfg, liquidMetalSet, factory)
+		if err != nil {
+			log.Fatalf("failed to build liquid metal tagger pool: %v", err)
+		}
+		recordTagger.SetLiquidMetalTagger(taggingservice.NewLiquidMetalTagger(liquidMetalPool, liquidMetalSet))
+		log.Printf("tagger agent: enabled (model %s, %d sessions per tag set, context limit %d tokens)", taggerModel, poolCfg.Size, poolCfg.ContextTokens)
 	} else {
-		log.Println("tagger disabled: set TAGGER_URL and TAGGER_API_TOKEN to enable")
+		log.Println("tagger disabled: set TAGGER_LLM_API_KEY to enable")
 	}
 
 	announcementSvc := announcement.NewAnnouncementService(db)
@@ -249,20 +273,7 @@ func Run() {
 	defer stop()
 
 	if recordTagger != nil {
-		if err := recordTagger.RegisterTagSet(ctx); err != nil {
-			log.Printf("record tagger: not connected at startup (tag set %q, url %s): %v", taggerTagSet, taggerURL, err)
-		} else {
-			log.Printf("record tagger: connected at startup (tag set %q, url %s)", taggerTagSet, taggerURL)
-		}
 		go recordTagger.Run(ctx)
-	}
-
-	if liquidMetalTagger != nil {
-		if err := liquidMetalTagger.RegisterTagSet(ctx); err != nil {
-			log.Printf("liquid metal tagger: not connected at startup (tag set %q, url %s): %v", liquidMetalTagSet, taggerURL, err)
-		} else {
-			log.Printf("liquid metal tagger: connected at startup (tag set %q, url %s)", liquidMetalTagSet, taggerURL)
-		}
 	}
 
 	go func() {

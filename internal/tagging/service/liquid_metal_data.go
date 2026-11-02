@@ -8,6 +8,8 @@ import (
 	"io"
 	"strings"
 	"sync"
+
+	tagger "clinic-backend/internal/agent/tagger"
 )
 
 // liquidMetalCSVColumns is the number of columns in the liquid-metal laptop
@@ -33,7 +35,7 @@ var (
 	liquidMetalRowsErr  error
 
 	liquidMetalTagsOnce sync.Once
-	liquidMetalTags     []TaggerTag
+	liquidMetalTags     []tagger.Tag
 	liquidMetalTagsErr  error
 )
 
@@ -44,7 +46,7 @@ const liquidMetalTagCSVColumns = 3
 // LiquidMetalTags returns the liquid-metal tag definitions parsed from the
 // embedded CSV. The CSV is parsed once and the result is reused on later
 // calls.
-func LiquidMetalTags() ([]TaggerTag, error) {
+func LiquidMetalTags() ([]tagger.Tag, error) {
 	liquidMetalTagsOnce.Do(func() {
 		liquidMetalTags, liquidMetalTagsErr = parseLiquidMetalTagCSV(liquidMetalTagCSV)
 	})
@@ -53,7 +55,7 @@ func LiquidMetalTags() ([]TaggerTag, error) {
 
 // parseLiquidMetalTagCSV decodes the tag catalog and trims whitespace from
 // every field. The header row is validated but not returned.
-func parseLiquidMetalTagCSV(data []byte) ([]TaggerTag, error) {
+func parseLiquidMetalTagCSV(data []byte) ([]tagger.Tag, error) {
 	// The file may start with a UTF-8 BOM, which would otherwise end up in the
 	// first header field.
 	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
@@ -65,7 +67,7 @@ func parseLiquidMetalTagCSV(data []byte) ([]TaggerTag, error) {
 		return nil, fmt.Errorf("parse liquid metal tag csv header: %w", err)
 	}
 
-	var tags []TaggerTag
+	var tags []tagger.Tag
 	for {
 		rec, err := r.Read()
 		if errors.Is(err, io.EOF) {
@@ -74,7 +76,7 @@ func parseLiquidMetalTagCSV(data []byte) ([]TaggerTag, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parse liquid metal tag csv row %d: %w", len(tags)+2, err)
 		}
-		tag := TaggerTag{
+		tag := tagger.Tag{
 			Name:        strings.TrimSpace(rec[0]),
 			Description: strings.TrimSpace(rec[1]),
 			ApplyRule:   strings.TrimSpace(rec[2]),

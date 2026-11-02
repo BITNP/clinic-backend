@@ -6,47 +6,41 @@ import (
 	"strings"
 	"testing"
 
+	tagger "clinic-backend/internal/agent/tagger"
 	taggingservice "clinic-backend/internal/tagging/service"
 )
 
-func newLiquidMetalTagger(t *testing.T, client taggingservice.TaggerClient) *taggingservice.LiquidMetalTagger {
+func newLiquidMetalTagger(t *testing.T, tagAgent taggingservice.TagAgent) *taggingservice.LiquidMetalTagger {
 	t.Helper()
-	svc, err := taggingservice.NewLiquidMetalTagger(client, "")
+	set, err := taggingservice.LiquidMetalTagSet()
 	if err != nil {
-		t.Fatalf("new liquid metal tagger: %v", err)
+		t.Fatalf("liquid metal tag set: %v", err)
 	}
-	return svc
+	return taggingservice.NewLiquidMetalTagger(tagAgent, set)
 }
 
-func TestLiquidMetalTagger_RegisterTagSet(t *testing.T) {
-	client := &fakeTaggerClient{}
-	svc := newLiquidMetalTagger(t, client)
-
-	if err := svc.RegisterTagSet(context.Background()); err != nil {
-		t.Fatalf("register: %v", err)
+func TestLiquidMetalTagSet(t *testing.T) {
+	set, err := taggingservice.LiquidMetalTagSet()
+	if err != nil {
+		t.Fatalf("liquid metal tag set: %v", err)
 	}
-
-	name, prompt, tags, registerHits, _ := client.snapshot()
-	if name != "clinic_laptop_liquid_metal" {
-		t.Errorf("tag set name = %q, want clinic_laptop_liquid_metal", name)
+	if set.Name != "clinic_laptop_liquid_metal" {
+		t.Errorf("tag set name = %q, want clinic_laptop_liquid_metal", set.Name)
 	}
-	if registerHits != 1 {
-		t.Errorf("register hits = %d, want 1", registerHits)
-	}
-	if strings.Contains(prompt, "{{TABLE}}") {
+	if strings.Contains(set.Prompt, "{{TABLE}}") {
 		t.Error("prompt still contains the {{TABLE}} placeholder")
 	}
 	for _, want := range []string{"液金机型表", "GX701L", "RTX 2080 SUPER", "【判定目标】", "【常见普通款边界】", "【判定示例】"} {
-		if !strings.Contains(prompt, want) {
+		if !strings.Contains(set.Prompt, want) {
 			t.Errorf("prompt missing %q", want)
 		}
 	}
 
-	if len(tags) != 6 {
-		t.Fatalf("registered %d tags, want 6", len(tags))
+	if len(set.Tags) != 6 {
+		t.Fatalf("tags = %d, want 6", len(set.Tags))
 	}
-	byName := make(map[string]taggingservice.TaggerTag, len(tags))
-	for _, tag := range tags {
+	byName := make(map[string]tagger.Tag, len(set.Tags))
+	for _, tag := range set.Tags {
 		byName[tag.Name] = tag
 	}
 	for _, want := range []string{
@@ -59,7 +53,7 @@ func TestLiquidMetalTagger_RegisterTagSet(t *testing.T) {
 	} {
 		tag, ok := byName[want]
 		if !ok {
-			t.Errorf("tag %q not registered", want)
+			t.Errorf("tag %q not found", want)
 			continue
 		}
 		if tag.ApplyRule == "" {
@@ -86,9 +80,10 @@ func TestLiquidMetalTagger_ClassifyMapsTags(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			client := &fakeTaggerClient{}
-			client.tagFn = func(string) (string, error) { return tc.tag, nil }
-			svc := newLiquidMetalTagger(t, client)
+			agent := &fakeTagAgent{tagFn: func(string) (tagger.Result, error) {
+				return tagger.Result{Name: tc.tag, Reason: "reason"}, nil
+			}}
+			svc := newLiquidMetalTagger(t, agent)
 
 			got, err := svc.Classify(context.Background(), "GX701L", "RTX 2080 SUPER", "")
 			if err != nil {
@@ -129,74 +124,46 @@ func TestLiquidMetalStatusIndexRoundTrip(t *testing.T) {
 }
 
 func TestLiquidMetalTagger_ClassifyRequiresModel(t *testing.T) {
-	client := &fakeTaggerClient{}
-	svc := newLiquidMetalTagger(t, client)
+	agent := &fakeTagAgent{}
+	svc := newLiquidMetalTagger(t, agent)
 
 	if _, err := svc.Classify(context.Background(), "   ", "", ""); !errors.Is(err, taggingservice.ErrLiquidMetalModelRequired) {
 		t.Fatalf("error = %v, want ErrLiquidMetalModelRequired", err)
 	}
-	_, _, _, _, tagHits := client.snapshot()
-	if tagHits != 0 {
-		t.Errorf("tagger was called %d times for a blank model", tagHits)
+	if got := agent.hitCount(); got != 0 {
+		t.Errorf("tagger was called %d times for a blank model", got)
 	}
 }
 
-func TestLiquidMetalTagger_ClassifyRetriesAfterNotFound(t *testing.T) {
-	client := &fakeTaggerClient{}
-	attempts := 0
-	client.tagFn = func(string) (string, error) {
-		attempts++
-		if attempts == 1 {
-			return "", taggingservice.ErrTagSetNotFound
-		}
-		return taggingservice.LiquidMetalTagCPU, nil
-	}
-	svc := newLiquidMetalTagger(t, client)
+func TestLiquidMetalTagger_ClassifyPropagatesAgentError(t *testing.T) {
+	agent := &fakeTagAgent{tagFn: func(string) (tagger.Result, error) {
+		return tagger.Result{}, errors.New("agent down")
+	}}
+	svc := newLiquidMetalTagger(t, agent)
 
-	got, err := svc.Classify(context.Background(), "GX701L", "", "")
-	if err != nil {
-		t.Fatalf("classify: %v", err)
+	if _, err := svc.Classify(context.Background(), "GX701L", "", ""); err == nil || !strings.Contains(err.Error(), "agent down") {
+		t.Fatalf("error = %v, want agent error", err)
 	}
-	if got.Tag != taggingservice.LiquidMetalTagCPU {
-		t.Errorf("tag = %q, want %q", got.Tag, taggingservice.LiquidMetalTagCPU)
-	}
-	_, _, _, registerHits, tagHits := client.snapshot()
-	if registerHits != 2 {
-		t.Errorf("register hits = %d, want 2 (initial + after 404)", registerHits)
-	}
-	if tagHits != 2 {
-		t.Errorf("tag hits = %d, want 2", tagHits)
-	}
-}
-
-// recordingTaggerClient records the text passed to Tag.
-type recordingTaggerClient struct {
-	fakeTaggerClient
-	lastText string
-}
-
-func (c *recordingTaggerClient) Tag(ctx context.Context, name, text string) (string, error) {
-	c.lastText = text
-	return c.fakeTaggerClient.Tag(ctx, name, text)
 }
 
 func TestLiquidMetalTagger_ClassifySendsFormattedText(t *testing.T) {
-	client := &recordingTaggerClient{}
-	client.tagFn = func(string) (string, error) { return taggingservice.LiquidMetalTagCPU, nil }
-	svc := newLiquidMetalTagger(t, client)
+	agent := &fakeTagAgent{tagFn: func(string) (tagger.Result, error) {
+		return tagger.Result{Name: taggingservice.LiquidMetalTagCPU, Reason: "reason"}, nil
+	}}
+	svc := newLiquidMetalTagger(t, agent)
 
 	if _, err := svc.Classify(context.Background(), " GA401Q ", " RTX 3060 ", " 2021 幻14 "); err != nil {
 		t.Fatalf("classify: %v", err)
 	}
 	want := "型号: GA401Q\nGPU: RTX 3060\n其他信息: 2021 幻14"
-	if client.lastText != want {
-		t.Errorf("tag text = %q, want %q", client.lastText, want)
+	if got := agent.lastText(); got != want {
+		t.Errorf("tag text = %q, want %q", got, want)
 	}
 
 	if _, err := svc.Classify(context.Background(), "GA401Q", "  ", ""); err != nil {
 		t.Fatalf("classify without optional fields: %v", err)
 	}
-	if want := "型号: GA401Q"; client.lastText != want {
-		t.Errorf("tag text = %q, want %q", client.lastText, want)
+	if got, want := agent.lastText(), "型号: GA401Q"; got != want {
+		t.Errorf("tag text = %q, want %q", got, want)
 	}
 }

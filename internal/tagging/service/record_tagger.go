@@ -5,7 +5,9 @@ import (
 	"errors"
 	"log"
 	"strings"
+	"sync"
 
+	"clinic-backend/internal/agent/tagger"
 	"clinic-backend/internal/changes"
 	recordmodel "clinic-backend/internal/record/model"
 
@@ -25,32 +27,30 @@ type recordTagJob struct {
 	extra    string
 }
 
-// RecordTagger tags newly created records by calling an external tagger API
+// RecordTagger tags newly created records with the in-process tagger agent
 // and, when configured, classifies their laptop for liquid metal. Work is
-// queued by Enqueue and processed asynchronously by a single worker started
-// with Run, so ticket creation never blocks on the tagger. Tag-set registration
-// and tag calls are handled by the shared GeneralTagger.
+// queued by Enqueue and processed asynchronously by Run, so ticket creation
+// never blocks on the tagger.
 type RecordTagger struct {
-	tagger      *GeneralTagger
+	tagAgent    TagAgent
 	liquidMetal *LiquidMetalTagger
 	tagSvc      *RecordTagService
 	db          *gorm.DB
 	syncSvc     *changes.SyncService
 	jobs        chan recordTagJob
+	workers     int
 }
 
-// NewRecordTagger builds a record tagger worker. client performs the actual
-// talk to the tagger; db and tagSvc resolve a matched tag name back to a
+// NewRecordTagger builds a record tagger worker. tagAgent performs the actual
+// tagging; db and tagSvc resolve a matched tag name back to a
 // clinic_record_tag id.
-func NewRecordTagger(client TaggerClient, tagSetName string, db *gorm.DB, tagSvc *RecordTagService) *RecordTagger {
-	if tagSetName == "" {
-		tagSetName = defaultTaggerTagSetName
-	}
+func NewRecordTagger(tagAgent TagAgent, db *gorm.DB, tagSvc *RecordTagService) *RecordTagger {
 	return &RecordTagger{
-		tagger: NewGeneralTagger(client, tagSetName, tagSvc.Prompt(), buildRecordTags(tagSvc)),
-		tagSvc: tagSvc,
-		db:     db,
-		jobs:   make(chan recordTagJob, recordTaggerQueueSize),
+		tagAgent: tagAgent,
+		tagSvc:   tagSvc,
+		db:       db,
+		jobs:     make(chan recordTagJob, recordTaggerQueueSize),
+		workers:  1,
 	}
 }
 
@@ -65,11 +65,30 @@ func (s *RecordTagger) SetLiquidMetalTagger(t *LiquidMetalTagger) {
 	s.liquidMetal = t
 }
 
+// SetWorkers sets how many queued jobs are processed concurrently. Values
+// below one fall back to one worker.
+func (s *RecordTagger) SetWorkers(n int) {
+	if n < 1 {
+		n = 1
+	}
+	s.workers = n
+}
+
+// RecordTagSet builds the record tagger tag set from the in-memory catalog.
+// The default fallback tag and tags without an apply rule are skipped.
+func RecordTagSet(tagSvc *RecordTagService) tagger.TagSet {
+	return tagger.TagSet{
+		Name:   defaultTaggerTagSetName,
+		Prompt: strings.TrimSpace(tagSvc.Prompt()),
+		Tags:   buildRecordTags(tagSvc),
+	}
+}
+
 // buildRecordTags maps the in-memory record tag catalog onto tagger tag
 // definitions. The default fallback tag and tags without an apply rule are
-// skipped because the tagger API rejects blank rules.
-func buildRecordTags(tagSvc *RecordTagService) []TaggerTag {
-	var tags []TaggerTag
+// skipped.
+func buildRecordTags(tagSvc *RecordTagService) []tagger.Tag {
+	var tags []tagger.Tag
 	for _, t := range tagSvc.All() {
 		name := strings.TrimSpace(t.Title)
 		if name == "" || name == DefaultRecordTagTitle {
@@ -79,7 +98,7 @@ func buildRecordTags(tagSvc *RecordTagService) []TaggerTag {
 		if rule == "" {
 			continue
 		}
-		tags = append(tags, TaggerTag{
+		tags = append(tags, tagger.Tag{
 			Name:        name,
 			Description: strings.TrimSpace(t.Description),
 			ApplyRule:   rule,
@@ -96,15 +115,17 @@ func normalizeApplyRule(rule string) string {
 	return strings.TrimSpace(rule)
 }
 
-// RegisterTagSet registers (or replaces) the record tag set.
-func (s *RecordTagger) RegisterTagSet(ctx context.Context) error {
-	return s.tagger.RegisterTagSet(ctx)
-}
-
 // Tag applies the record tag set to text and returns the matched tag name, or
 // an empty string when no tag applies.
 func (s *RecordTagger) Tag(ctx context.Context, text string) (string, error) {
-	return s.tagger.Tag(ctx, text)
+	if s.tagAgent == nil {
+		return "", errors.New("tagger: no tag agent configured")
+	}
+	result, err := s.tagAgent.Tag(ctx, text)
+	if err != nil {
+		return "", err
+	}
+	return result.Name, nil
 }
 
 // Enqueue schedules a record for tagging. text is used by the record tagger;
@@ -126,14 +147,20 @@ func (s *RecordTagger) Enqueue(recordID uint, text, model, extra string) {
 }
 
 // Run processes queued jobs until ctx is cancelled. It is intended to be
-// started as a single goroutine. The tag set is normally registered by the
-// caller at startup; when that has not happened yet, the worker registers it
-// before processing jobs.
+// started as a single goroutine; SetWorkers controls internal concurrency.
 func (s *RecordTagger) Run(ctx context.Context) {
-	if err := s.tagger.EnsureRegistered(ctx); err != nil {
-		log.Printf("tagger: initial tag-set registration failed: %v", err)
+	var wg sync.WaitGroup
+	for i := 0; i < s.workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.loop(ctx)
+		}()
 	}
+	wg.Wait()
+}
 
+func (s *RecordTagger) loop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():

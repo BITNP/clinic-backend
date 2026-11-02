@@ -3,6 +3,7 @@ package service_test
 import (
 	"testing"
 
+	tagger "clinic-backend/internal/agent/tagger"
 	taggingservice "clinic-backend/internal/tagging/service"
 )
 
@@ -47,7 +48,7 @@ func TestLiquidMetalTags_LoadsEmbeddedCSV(t *testing.T) {
 		t.Fatal("expected at least one tag")
 	}
 
-	byName := make(map[string]taggingservice.TaggerTag, len(tags))
+	byName := make(map[string]tagger.Tag, len(tags))
 	for _, tag := range tags {
 		if tag.Description == "" {
 			t.Errorf("tag %q has an empty description", tag.Name)
