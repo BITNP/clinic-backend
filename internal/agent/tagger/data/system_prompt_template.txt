@@ -1,0 +1,7 @@
+{{SYSTEM_PROMPT}}
+
+Tag set: {{TAG_SET_NAME}}
+Set instructions: {{SET_INSTRUCTIONS}}
+
+Tags:
+{{TAGS}}
