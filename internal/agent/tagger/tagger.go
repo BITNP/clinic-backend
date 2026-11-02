@@ -30,12 +30,17 @@ func NewTagger(chat model.BaseChatModel, set TagSet, maxTokens int) (*Tagger, er
 	if err != nil {
 		return nil, err
 	}
+	return newTagger(chat, normalized, systemPrompt, maxTokens)
+}
 
+// newTagger builds a tagger from an already prepared tag set and system prompt.
+// It lets a pool render the prompt once and reuse it for every slot.
+func newTagger(chat model.BaseChatModel, set TagSet, systemPrompt string, maxTokens int) (*Tagger, error) {
 	session, err := agent.NewSession(chat, systemPrompt, maxTokens)
 	if err != nil {
 		return nil, err
 	}
-	return &Tagger{session: session, tags: normalized.Tags}, nil
+	return &Tagger{session: session, tags: append([]Tag(nil), set.Tags...)}, nil
 }
 
 // Tag appends text to the session and returns the best-matching tag. A Result
