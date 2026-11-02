@@ -22,6 +22,7 @@ in `scheduling`.
 main.go                 # small entry point; go run . still works
 cmd/benchseed/          # benchmark data generator
 internal/
+  agent/               # Eino chat models, sessions, and the tagger agent
   app/                 # startup, configuration, database setup, routes, shutdown
   auth/                # handler/, service/, model/, client/
   record/              # handler/, service/, model/
@@ -29,7 +30,7 @@ internal/
   room/                # handler/, service/, model/
   staff/               # handler/, service/, model/
   announcement/        # small module with model, service, and handler files
-  tagging/             # service/, model/, client/; embedded catalogs in service/data/
+  tagging/             # service/, model/; embedded catalogs in service/data/
   changes/             # refresh counters, middleware, and Redis storage
   legacy/              # old customer API compatibility
   calendar/            # shared calendar-date rules

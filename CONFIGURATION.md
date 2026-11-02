@@ -54,15 +54,26 @@ nonzero exit status.
 | `CAS_LOGOUT_RETURN_PARAM` | empty | Query parameter name used by the CAS server for the post-logout return URL. |
 | `KEYCLOAK_REALM_URL` / `KEYCLOAK_CLIENT_ID` | empty | Enables Keycloak Bearer authentication when both are set. |
 
-### Tagger
+### Tagger agent
+
+The tagger runs in-process with Eino. It keeps `TAGGER_AGENT_POOL_SIZE`
+long-lived chat models per tag set, one pool for record tags and one for
+liquid-metal tags. Each model owns a session preloaded with the system prompt.
+Requests are dispatched to an idle session. A session is reset back to its
+system prompt when its context reaches `TAGGER_CONTEXT_TOKENS`; the chat model
+is reused. Tagging is disabled while `TAGGER_LLM_API_KEY` is empty.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `TAGGER_URL` | `http://127.0.0.1:4514` | External tagger service endpoint. |
-| `TAGGER_API_TOKEN` | empty | Enables tagging when non-empty; otherwise new records keep the default `no_pending` tag. |
-| `TAGGER_TAG_SET` | `clinic_record` | Tag set used for record tagging. |
-| `LM_TAGGER_TAG_SET` | `clinic_laptop_liquid_metal` | Tag set used for liquid-metal tagging. |
-| `TAGGER_TIMEOUT` | `15s` | Tagger request timeout. |
+| `TAGGER_LLM_API_KEY` | empty | Enables the tagger when non-empty; otherwise new records keep the default `no_pending` tag. |
+| `TAGGER_LLM_BASE_URL` | required when enabled | OpenAI-compatible endpoint. |
+| `TAGGER_LLM_MODEL` | required when enabled | Model ID. |
+| `TAGGER_AGENT_POOL_SIZE` | `4` | Long-lived chat models and sessions per tag set. Minimum `1`. |
+| `TAGGER_CONTEXT_TOKENS` | `32000` | Session reset threshold. Must be below the model's context window. |
+| `TAGGER_TIMEOUT` | `30s` | Per-call timeout, including waiting for a free session. |
+
+Prompt caching is provider-dependent. The system prompt is a stable prefix for
+each session, so providers with prefix caching can reuse it across calls.
 
 ### Object storage (S3)
 

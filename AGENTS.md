@@ -25,7 +25,7 @@ Organize production code by business module under `internal/`. Before adding a
 file, identify the module that owns the behavior and inspect its existing packages.
 Do not recreate global `handlers/`, `services/`, or `models/` directories.
 
-* Modules include `auth`, `record`, `scheduling`, `room`, `staff`,
+* Modules include `agent`, `auth`, `record`, `scheduling`, `room`, `staff`,
   `announcement`, `tagging`, `changes`, and `legacy`.
 * Customer tickets and staff/admin repair operations belong to `record`; service
   dates and work schedules belong to `scheduling`. Organize by business ownership,

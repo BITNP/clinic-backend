@@ -1794,8 +1794,8 @@ curl "$BASE/api/tickets?username=$USERNAME&page=1" \
 ### `POST /api/tickets`
 
 **Description:** Creates a booking for the authenticated customer and (when the
-tagger service is configured) starts asynchronous record tagging. Bumps the
-`record` counter.
+in-process tagger agent is configured) starts asynchronous record tagging. Bumps
+the `record` counter.
 
 **Request body**
 
