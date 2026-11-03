@@ -33,7 +33,10 @@ import (
 	"gorm.io/gorm"
 )
 
-const storageCheckTimeout = 10 * time.Second
+const (
+	storageCheckTimeout = 10 * time.Second
+	agentCheckTimeout   = 10 * time.Second
+)
 
 // Run initializes the backend and serves requests until shutdown.
 func Run() {
@@ -131,6 +134,15 @@ func Run() {
 			Model:   taggerModel,
 			Timeout: poolCfg.Timeout,
 		}
+		agentCheckCtx, cancelAgentCheck := context.WithTimeout(context.Background(), agentCheckTimeout)
+		agentCheckErr := agent.CheckConnection(agentCheckCtx, modelCfg)
+		cancelAgentCheck()
+		if agentCheckErr != nil {
+			log.Printf("tagger agent: model provider connection check failed: %v", agentCheckErr)
+		} else {
+			log.Printf("tagger agent: model provider connection check succeeded (model %s)", taggerModel)
+		}
+
 		factory := agent.NewChatModelFactory(context.Background(), modelCfg)
 
 		recordSet := taggingservice.RecordTagSet(recordTagSvc)

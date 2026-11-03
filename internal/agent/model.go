@@ -9,6 +9,7 @@ import (
 
 	einoopenai "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
 )
 
 // maxIdleConnsPerHost keeps one warm connection per slot model.
@@ -73,6 +74,29 @@ func NewChatModel(ctx context.Context, cfg ChatModelConfig) (model.BaseChatModel
 		return nil, fmt.Errorf("agent: create chat model: %w", err)
 	}
 	return chat, nil
+}
+
+// CheckConnection verifies that the configured provider accepts a minimal chat
+// completion. It builds a dedicated model so the check never touches tagger
+// sessions.
+func CheckConnection(ctx context.Context, cfg ChatModelConfig) error {
+	chat, err := NewChatModel(ctx, cfg)
+	if err != nil {
+		return err
+	}
+
+	resp, err := chat.Generate(ctx,
+		[]*schema.Message{schema.UserMessage(`Reply with this JSON object: {"ok":true}`)},
+		model.WithTemperature(0),
+		model.WithMaxTokens(16),
+	)
+	if err != nil {
+		return fmt.Errorf("agent: model provider request: %w", err)
+	}
+	if resp == nil {
+		return fmt.Errorf("agent: model provider returned no message")
+	}
+	return nil
 }
 
 // ChatModelFactory creates one chat model. The pool calls it once per slot.

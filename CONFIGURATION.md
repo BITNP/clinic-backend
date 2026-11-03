@@ -63,6 +63,11 @@ Requests are dispatched to an idle session. A session is reset back to its
 system prompt when its context reaches `TAGGER_CONTEXT_TOKENS`; the chat model
 is reused. Tagging is disabled while `TAGGER_LLM_API_KEY` is empty.
 
+At startup the backend sends one minimal chat completion to the configured
+provider and logs whether the connection succeeded. The check has a 10-second
+timeout and does not stop startup when it fails; tagging requests keep failing
+until the provider is reachable.
+
 | Variable | Default | Description |
 | --- | --- | --- |
 | `TAGGER_LLM_API_KEY` | empty | Enables the tagger when non-empty; otherwise new records keep the default `no_pending` tag. |
