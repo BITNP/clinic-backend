@@ -80,6 +80,55 @@ until the provider is reachable.
 Prompt caching is provider-dependent. The system prompt is a stable prefix for
 each session, so providers with prefix caching can reuse it across calls.
 
+### Messaging (NapCat)
+
+The backend can send QQ messages through NapCat's OneBot 11 HTTP API. Messaging
+is disabled when `NAPCAT_BASE_URL` is empty. When enabled, the backend keeps one
+in-memory FIFO queue per sender and spaces sends according to the configured gap
+policy. Pending messages are lost on restart.
+
+Enable the OneBot **HTTP server** in NapCat's WebUI network settings on port
+`3001`. A host-run backend uses `http://127.0.0.1:3001`; the Compose backend
+uses `http://napcat:3001`.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `NAPCAT_BASE_URL` | empty | OneBot HTTP endpoint. Empty disables messaging. |
+| `NAPCAT_INTERNAL_BASE_URL` | empty | Compose-only override for the backend's OneBot endpoint. Empty uses `http://napcat:3001` inside Compose. |
+| `NAPCAT_ACCESS_TOKEN` | empty | Bearer token for the OneBot HTTP server. |
+| `NAPCAT_TIMEOUT` | `10s` | Per-request HTTP timeout. |
+| `NAPCAT_SENDER_KEY` | `qq` | Queue key. Use distinct keys for multiple accounts. |
+| `NAPCAT_DIRECTORY_REFRESH` | `30m` | Friend/group/member directory refresh interval. |
+| `NAPCAT_DIRECTORY_RETRY` | `5s` | Initial directory sync retry interval. |
+| `NAPCAT_DIRECTORY_TIMEOUT` | `60s` | One full directory sync timeout. |
+| `NAPCAT_GROUP_TEMP_SESSION` | `true` | Allow delivery to non-friends through shared groups. |
+| `MESSAGE_QUEUE_SIZE` | `100` | Per-sender queue capacity. |
+| `MESSAGE_SEND_TIMEOUT` | `30s` | Whole send operation timeout. |
+| `MESSAGE_MAX_ATTEMPTS` | `3` | Total attempts before a message is dropped. |
+| `MESSAGE_RETRY_BACKOFF` | `2s` | Delay after a transient failure. |
+| `MESSAGE_GAP_MODE` | `fixed` | `fixed` or `length`. |
+| `MESSAGE_GAP_FIXED` | `3s` | Base gap in fixed mode. |
+| `MESSAGE_GAP_LENGTH_BASE` | `1s` | Base gap in length mode. |
+| `MESSAGE_GAP_PER_RUNE` | `50ms` | Additional gap per message character in length mode. |
+| `MESSAGE_GAP_JITTER` | `1s` | Random extra gap in `[0, jitter)`. |
+| `MESSAGE_GAP_MIN` | `1s` | Lower bound for any computed gap. |
+
+Gap calculation:
+
+- `fixed`: `MESSAGE_GAP_FIXED + random[0, MESSAGE_GAP_JITTER)`
+- `length`: `MESSAGE_GAP_LENGTH_BASE + MESSAGE_GAP_PER_RUNE × runeCount + random[0, MESSAGE_GAP_JITTER)`
+- The result is never below `MESSAGE_GAP_MIN`.
+
+For private messages, the background directory sync records the bot's friends
+and which groups each user shares with the bot. Friends receive a normal private
+message. Non-friends are tried through each shared group's temporary session,
+then fall back to a plain private message. Set
+`NAPCAT_GROUP_TEMP_SESSION=false` to disable the shared-group path.
+
+The message queue is in-memory and assumes one backend instance owns each
+sender. Multiple backend replicas against the same QQ account would each pace
+sends independently.
+
 ### Object storage (S3)
 
 Storage is a required startup dependency. The backend validates the S3

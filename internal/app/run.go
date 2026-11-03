@@ -20,6 +20,8 @@ import (
 	"clinic-backend/internal/calendar"
 	"clinic-backend/internal/changes"
 	"clinic-backend/internal/legacy"
+	"clinic-backend/internal/message"
+	"clinic-backend/internal/message/napcat"
 	recordhandler "clinic-backend/internal/record/handler"
 	recordservice "clinic-backend/internal/record/service"
 	roomhandler "clinic-backend/internal/room/handler"
@@ -48,6 +50,26 @@ func Run() {
 	photoCfg, err := loadPhotoConfig(os.Getenv)
 	if err != nil {
 		log.Fatalf("photo configuration: %v", err)
+	}
+
+	msgCfg, err := LoadMessageConfig(os.Getenv)
+	if err != nil {
+		log.Fatalf("message configuration: %v", err)
+	}
+	msgMgr, err := message.NewManager(msgCfg.Manager)
+	if err != nil {
+		log.Fatalf("message manager: %v", err)
+	}
+
+	var napcatClient *napcat.Client
+	if msgCfg.Enabled {
+		napcatClient, err = napcat.NewClient(msgCfg.NapCat)
+		if err != nil {
+			log.Fatalf("napcat client: %v", err)
+		}
+		if err := msgMgr.Register(msgCfg.SenderKey, napcatClient, msgCfg.Gap); err != nil {
+			log.Fatalf("register napcat sender: %v", err)
+		}
 	}
 
 	db := openDatabase()
@@ -284,6 +306,19 @@ func Run() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if napcatClient != nil {
+		go napcatClient.Run(ctx)
+		log.Printf("message manager: napcat enabled at %s (sender %s)", msgCfg.NapCat.BaseURL, msgCfg.SenderKey)
+	} else {
+		log.Println("message manager disabled: NAPCAT_BASE_URL not set")
+	}
+
+	msgDone := make(chan struct{})
+	go func() {
+		defer close(msgDone)
+		msgMgr.Run(ctx)
+	}()
+
 	if recordTagger != nil {
 		go recordTagger.Run(ctx)
 	}
@@ -337,6 +372,11 @@ func Run() {
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("server shutdown error: %v", err)
+	}
+	select {
+	case <-msgDone:
+	case <-time.After(5 * time.Second):
+		log.Println("message manager shutdown timed out")
 	}
 	if err := redisClient.Close(); err != nil {
 		log.Printf("redis close error: %v", err)

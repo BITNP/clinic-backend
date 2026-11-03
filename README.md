@@ -151,6 +151,11 @@ ssh -L 6099:127.0.0.1:6099 server
 Later restarts reuse the saved session; set `NAPCAT_QUICK_ACCOUNT` in `.env` to
 auto-login without scanning again.
 
+The backend sends messages through NapCat's OneBot HTTP server. Enable it on
+port `3001` in the WebUI and set `NAPCAT_BASE_URL` in `.env` to
+`http://127.0.0.1:3001` for a host-run backend or leave the Compose default
+(`http://napcat:3001`) for the container stack.
+
 The image tags in the commands above come from `.env`; see
 [CONFIGURATION.md](CONFIGURATION.md#production-stack-docker-composeprodyml) for
 pinning specific versions.
