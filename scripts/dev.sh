@@ -6,15 +6,17 @@
 #   1. fake CAS server        -> http://127.0.0.1:9999
 #   2. Redis                  -> 127.0.0.1:6379 (docker, falls back to redis-server)
 #   3. RustFS + provisioning  -> http://127.0.0.1:9000, when S3 storage is local
-#   4. backend (this repo)    -> http://127.0.0.1:8080
+#   4. NapCat                 -> WebUI on http://127.0.0.1:6099/webui
+#   5. backend (this repo)    -> http://127.0.0.1:8080
 #
 # The backend runs in the foreground with its stdout/stderr untouched, so
 # everything main.go logs (Gin routes, request logs, startup messages) stays
-# in your terminal. Only the helpers (fake CAS, Redis, RustFS) are backgrounded.
-# Ctrl-C stops the backend and the helpers this script started. RustFS is left
-# running if it was already running before this script started.
+# in your terminal. Only the helpers (fake CAS, Redis, RustFS, NapCat) are
+# backgrounded. Ctrl-C stops the backend and the helpers this script started.
+# RustFS and NapCat are left running if they were already running before this
+# script started.
 #
-# Usage: scripts/dev.sh [--no-cas] [--no-redis] [--no-storage]
+# Usage: scripts/dev.sh [--no-cas] [--no-redis] [--no-storage] [--no-napcat]
 
 set -Eeuo pipefail
 
@@ -39,12 +41,15 @@ LOG_DIR=${LOG_DIR:-${TMPDIR:-/tmp}/clinic-dev}
 CAS_LOG=$LOG_DIR/fake_cas.log
 REDIS_LOG=$LOG_DIR/redis.log
 STORAGE_LOG=$LOG_DIR/rustfs.log
+NAPCAT_LOG=$LOG_DIR/napcat.log
 mkdir -p "$LOG_DIR"
 
 START_CAS=1
 START_REDIS=1
 START_STORAGE=1
+START_NAPCAT=1
 STORAGE_STARTED=0
+NAPCAT_STARTED=0
 
 usage() {
 	cat <<'EOF'
@@ -58,6 +63,7 @@ Options:
   --no-redis      Do not start Redis (assume one is running)
   --no-storage    Do not start or provision local RustFS (assume configured
                   storage is already running, or use an external S3 endpoint)
+  --no-napcat     Do not start the NapCat QQ gateway (assume one is running)
   -h, --help      Show this help
 EOF
 }
@@ -67,6 +73,7 @@ while (($# > 0)); do
 	--no-cas) START_CAS=0 ;;
 	--no-redis) START_REDIS=0 ;;
 	--no-storage | --no-rustfs) START_STORAGE=0 ;;
+	--no-napcat) START_NAPCAT=0 ;;
 	-h | --help)
 		usage
 		exit 0
@@ -132,6 +139,11 @@ cleanup() {
 	if ((STORAGE_STARTED)); then
 		log "stopping RustFS container"
 		docker compose stop rustfs >/dev/null 2>&1 || true
+	fi
+
+	if ((NAPCAT_STARTED)); then
+		log "stopping NapCat container"
+		docker compose stop napcat >/dev/null 2>&1 || true
 	fi
 
 	if [[ -n "$CAS_PGID" ]]; then
@@ -289,7 +301,48 @@ start_storage() {
 	log "storage ready"
 }
 
-# --- 4. backend --------------------------------------------------------------
+# --- 4. NapCat ---------------------------------------------------------------
+
+start_napcat() {
+	if ((!START_NAPCAT)); then
+		log "skipping NapCat; using configured/remote QQ gateway"
+		return
+	fi
+
+	if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+		warn "Docker is unavailable - not starting NapCat"
+		return
+	fi
+	docker compose version >/dev/null 2>&1 ||
+		{ warn "docker compose is unavailable - not starting NapCat"; return; }
+
+	if docker compose ps -q napcat 2>/dev/null | grep -q .; then
+		log "NapCat already running - reusing it"
+		return
+	fi
+	if port_open 127.0.0.1 6099 || port_open 127.0.0.1 3001; then
+		log "NapCat ports already in use - reusing existing QQ gateway"
+		return
+	fi
+
+	: >"$NAPCAT_LOG"
+	log "starting NapCat (log: $NAPCAT_LOG)"
+	if ! docker compose up -d napcat >>"$NAPCAT_LOG" 2>&1; then
+		tail -n 30 "$NAPCAT_LOG" >&2 || true
+		warn "could not start NapCat; continuing without it (see $NAPCAT_LOG)"
+		return
+	fi
+	NAPCAT_STARTED=1
+
+	if ! wait_for_port 127.0.0.1 6099 "NapCat WebUI" 180; then
+		warn "NapCat is still starting; follow it with: docker compose logs -f napcat"
+		return
+	fi
+	log "NapCat ready - WebUI: http://127.0.0.1:6099/webui (first run: scan the QR code)"
+	log "NapCat WebUI token (first run): docker compose logs napcat"
+}
+
+# --- 5. backend --------------------------------------------------------------
 
 start_backend() {
 	if port_open 127.0.0.1 "$BACKEND_PORT"; then
@@ -320,4 +373,5 @@ fi
 ((START_CAS)) && start_cas
 ((START_REDIS)) && start_redis
 start_storage
+start_napcat
 start_backend

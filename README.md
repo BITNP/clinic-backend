@@ -112,13 +112,15 @@ docker pull ghcr.io/bitnp/clinic_admin_frontend:${ADMIN_FRONTEND_IMAGE_TAG:-late
 docker pull redis:7-alpine
 docker pull rustfs/rustfs:${RUSTFS_IMAGE_TAG:-latest}
 docker pull rustfs/rc:${RUSTFS_CLI_IMAGE_TAG:-v0.1.36}
+docker pull mlikiowa/napcat-docker:latest
 
 docker save -o clinic-images.tar \
   ghcr.io/bitnp/clinic-backend:${BACKEND_IMAGE_TAG:-latest} \
   ghcr.io/bitnp/clinic_admin_frontend:${ADMIN_FRONTEND_IMAGE_TAG:-latest} \
   redis:7-alpine \
   rustfs/rustfs:${RUSTFS_IMAGE_TAG:-latest} \
-  rustfs/rc:${RUSTFS_CLI_IMAGE_TAG:-v0.1.36}
+  rustfs/rc:${RUSTFS_CLI_IMAGE_TAG:-v0.1.36} \
+  mlikiowa/napcat-docker:latest
 
 sha256sum clinic-images.tar > clinic-images.tar.sha256
 
@@ -135,6 +137,19 @@ Do not use `--pull always` or `docker compose pull` for this stack: those bypass
 `pull_policy` and would try to fetch images from registries the server cannot
 reach. Every bundled service in the production compose file uses
 `pull_policy: never` and is served from the loaded tarball.
+
+NapCat persists its config and QQ login state in `./napcat/config` and
+`./napcat/QQ` next to the compose file. After the first start, open the WebUI
+through an SSH tunnel and scan the QR code once:
+
+```bash
+ssh -L 6099:127.0.0.1:6099 server
+# then open http://127.0.0.1:6099/webui
+# first login token: docker compose -f docker-compose.prod.yml logs napcat
+```
+
+Later restarts reuse the saved session; set `NAPCAT_QUICK_ACCOUNT` in `.env` to
+auto-login without scanning again.
 
 The image tags in the commands above come from `.env`; see
 [CONFIGURATION.md](CONFIGURATION.md#production-stack-docker-composeprodyml) for
@@ -285,14 +300,14 @@ the backend to the frontend's address. Because the frontend proxies `/api`,
 ## Run locally (development)
 
 `scripts/dev.sh` loads `.env` and starts the fake CAS server, Redis, local
-RustFS (when `S3_ENDPOINT` points at it), and the backend:
+RustFS (when `S3_ENDPOINT` points at it), NapCat, and the backend:
 
 ```bash
 scripts/dev.sh
 ```
 
-Use `--no-cas`, `--no-redis`, or `--no-storage` when a service is already
-running or storage is managed elsewhere. The complete local-development
+Use `--no-cas`, `--no-redis`, `--no-storage`, or `--no-napcat` when a service is
+already running or storage is managed elsewhere. The complete local-development
 settings, defaults, and manual steps are in
 [CONFIGURATION.md](CONFIGURATION.md#local-development).
 

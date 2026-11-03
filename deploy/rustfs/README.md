@@ -398,21 +398,11 @@ outside the server, and test a restore periodically.
 
 ## Offline packaging
 
-There is no packaging helper script. Pull and save the production images,
-including RustFS and the `rc` provisioner, as shown in the root
-[README](../../README.md#deploy-to-a-server):
-
-```bash
-docker pull rustfs/rustfs:${RUSTFS_IMAGE_TAG:-latest}
-docker pull rustfs/rc:${RUSTFS_CLI_IMAGE_TAG:-v0.1.36}
-docker save -o clinic-images.tar \
-  ghcr.io/bitnp/clinic-backend:${BACKEND_IMAGE_TAG:-latest} \
-  ghcr.io/bitnp/clinic_admin_frontend:${ADMIN_FRONTEND_IMAGE_TAG:-latest} \
-  redis:7-alpine \
-  rustfs/rustfs:${RUSTFS_IMAGE_TAG:-latest} \
-  rustfs/rc:${RUSTFS_CLI_IMAGE_TAG:-v0.1.36}
-sha256sum clinic-images.tar > clinic-images.tar.sha256
-```
+The complete list of production images and the `docker pull` / `docker save`
+commands are in the root [README](../../README.md#deploy-to-a-server). RustFS
+accounts for two of them: `rustfs/rustfs` (the S3 service) and `rustfs/rc` (the
+one-shot provisioning CLI), pinned with `RUSTFS_IMAGE_TAG` and
+`RUSTFS_CLI_IMAGE_TAG`.
 
 Copy the tarball, `docker-compose.prod.yml`, `.env`, and `deploy/rustfs/` to the
 server, then `docker load -i clinic-images.tar`. Every bundled service in the

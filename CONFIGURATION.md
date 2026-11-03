@@ -189,21 +189,23 @@ openssl rand -hex 24                                 # secret key
 | `POSTGRES_PASSWORD` | `clinic` | Bundled Postgres password. |
 | `POSTGRES_DB` | `clinic` | Bundled Postgres database. |
 | `POSTGRES_PORT` | `5432` | Host port for the bundled Postgres. |
+| `NAPCAT_QUICK_ACCOUNT` | empty | QQ account NapCat quick-logs into after the first QR login. |
 
-The dev stack bundles Postgres, Redis, RustFS, `rustfs-init`, and the backend.
-The backend is on `:8080`; the RustFS S3 API and console are loopback-only on
-`:9000` and `:9001` by default. For local development without Compose, see
-[Local development](#local-development).
+The dev stack bundles Postgres, Redis, RustFS, `rustfs-init`, NapCat, and the
+backend. The backend is on `:8080`; the RustFS S3 API and console are
+loopback-only on `:9000` and `:9001`, and NapCat's WebUI and OneBot are
+loopback-only on `:6099` and `:3001`, by default. For local development without
+Compose, see [Local development](#local-development).
 
 ### Production stack (`docker-compose.prod.yml`)
 
 `docker-compose.prod.yml` is a standalone deploy config: only this file,
 `.env`, `deploy/rustfs/` and the packaged image tarball are needed on the
-server. It runs the backend, the admin frontend, a bundled Redis service, and
-RustFS object storage, and connects to the Postgres already running on the
-server via `host.containers.internal` (no bundled database). It refuses to start
-if `CLINIC_API_KEY`, the required S3 settings, or the RustFS provisioning
-credentials are missing.
+server. It runs the backend, the admin frontend, NapCat, a bundled Redis
+service, and RustFS object storage, and connects to the Postgres already running
+on the server via `host.containers.internal` (no bundled database). It refuses
+to start if `CLINIC_API_KEY`, the required S3 settings, or the RustFS
+provisioning credentials are missing.
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -212,6 +214,7 @@ credentials are missing.
 | `ADMIN_FRONTEND_PORT` | `5173` | Host port for the admin frontend. |
 | `BACKEND_UPSTREAM` | `http://backend:8080` | Upstream the frontend proxies `/api`, `/login`, and `/logout` to. |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `clinic` | Used to build the default `CLINIC_DB_DSN` when it is not set. |
+| `NAPCAT_QUICK_ACCOUNT` | empty | QQ account NapCat quick-logs into after the first QR login. |
 
 Services and ports on the server:
 
@@ -224,6 +227,11 @@ Services and ports on the server:
   on the host (loopback only).
 - RustFS console: `127.0.0.1:9001` (SSH tunnel only).
 - RustFS data: `rustfsdata` named volume.
+- NapCat WebUI: `127.0.0.1:6099` (SSH tunnel only). Open
+  `http://127.0.0.1:6099/webui` for the first QR login.
+- NapCat OneBot: `127.0.0.1:3001`; the backend reaches it at `napcat:3001` on
+  the compose network.
+- NapCat data: `./napcat/config` and `./napcat/QQ` next to the compose file.
 - Admin frontend: `:5173`.
 - Backend: `:8080` (compose-internal; expose a host port if you need to reach
   it directly).
@@ -265,11 +273,15 @@ override existing environment variables) and then starts:
 2. Redis on `:6379` (container, falling back to `redis-server`);
 3. RustFS and `rustfs-init` on `:9000` / `:9001` when `S3_ENDPOINT` points at
    local storage;
-4. the backend on `:8080`.
+4. NapCat, with its WebUI on `:6099` and OneBot on `:3001`;
+5. the backend on `:8080`.
 
 For a local `S3_ENDPOINT`, it starts RustFS and runs `rustfs-init` before
 starting the backend. Use `--no-storage` when storage is already managed
-elsewhere or points at an external S3 endpoint. Other flags: `--no-cas` and
+elsewhere or points at an external S3 endpoint. On the first NapCat start, open
+`http://127.0.0.1:6099/webui` and scan the QR code (the WebUI token is in
+`docker compose logs napcat`); later starts reuse the saved session. Use
+`--no-napcat` when a QQ gateway is already running. Other flags: `--no-cas` and
 `--no-redis` when those services are already running.
 
 Defaults applied by `scripts/dev.sh` when the variables are unset:
@@ -304,6 +316,11 @@ docker run --rm -p 6379:6379 redis:7-alpine
 #     (set RUSTFS_* and S3_* in .env first)
 #     S3 API on http://127.0.0.1:9000, console on http://127.0.0.1:9001
 docker compose up -d rustfs rustfs-init
+
+# 2c. Optional: start NapCat. Its WebUI is on http://127.0.0.1:6099/webui;
+#     scan the QR code there once, and set NAPCAT_QUICK_ACCOUNT in .env to
+#     reuse the saved login on later starts.
+docker compose up -d napcat
 
 # 3. Start the backend. scripts/dev.sh loads .env, including S3_*.
 export CLINIC_API_KEY=local-dev-key

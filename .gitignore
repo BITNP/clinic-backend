@@ -8,3 +8,5 @@ clinic.db-shm
 clinic.db-wal
 clinic-images.tar
 clinic-images.tar.sha256
+# NapCat runtime data (configs, plugins, QQ login state).
+napcat/

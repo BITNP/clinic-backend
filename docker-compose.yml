@@ -77,6 +77,24 @@ services:
     volumes:
       - ./deploy/rustfs/init.sh:/opt/rustfs/init.sh:ro
 
+  napcat:
+    image: mlikiowa/napcat-docker:latest
+    container_name: napcat
+    restart: unless-stopped
+    environment:
+      NAPCAT_UID: "1000"
+      NAPCAT_GID: "1000"
+      # QQ account NapCat should quick-login automatically after the first QR
+      # login. The value comes from the gitignored .env (compose interpolation),
+      # never from this tracked file.
+      NAPCAT_QUICK_ACCOUNT: "${NAPCAT_QUICK_ACCOUNT:-}"
+    ports:
+      - "127.0.0.1:3001:3001"
+      - "127.0.0.1:6099:6099"
+    volumes:
+      - ./napcat/config:/app/napcat/config:z
+      - ./napcat/QQ:/app/.config/QQ:z
+
   backend:
     image: ghcr.io/bitnp/clinic-backend:latest
     build: .

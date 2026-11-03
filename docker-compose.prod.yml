@@ -1,13 +1,13 @@
 version: "3"
 
 # Production deployment: runs pre-built images — no local build.
-# Runs the backend, the admin frontend, Redis and RustFS object storage as a
-# single stack.
+# Runs the backend, the admin frontend, NapCat, Redis and RustFS object storage
+# as a single stack.
 # Uses the Postgres already running on the server (host.containers.internal:5432),
-# same as the other clinic services. Redis and RustFS are bundled as compose
-# services (reachable at redis:6379 and rustfs:9000 on the compose network) and
-# are loaded from locally packaged image tarballs rather than pulled from a
-# registry.
+# same as the other clinic services. Redis, RustFS and NapCat are bundled as
+# compose services (reachable at redis:6379, rustfs:9000 and napcat:3001 on the
+# compose network) and are loaded from locally packaged image tarballs rather
+# than pulled from a registry.
 #
 # Podman alternative (rootless, same compose file):
 #   systemctl --user enable --now podman.socket
@@ -114,6 +114,30 @@ services:
     entrypoint: ["/bin/sh", "/opt/rustfs/init.sh"]
     volumes:
       - ./deploy/rustfs/init.sh:/opt/rustfs/init.sh:ro
+
+  # QQ gateway. Ports are loopback-only: reach the WebUI through an SSH tunnel
+  #   ssh -L 6099:127.0.0.1:6099 server
+  # and open http://127.0.0.1:6099/webui for the first QR login. OneBot is
+  # published on 127.0.0.1:3001 for host tooling; the backend reaches NapCat at
+  # napcat:3001 on the compose network.
+  napcat:
+    image: mlikiowa/napcat-docker:latest
+    # The image is shipped to the server in the packaged tarball, never pulled.
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      NAPCAT_UID: "1000"
+      NAPCAT_GID: "1000"
+      # QQ account NapCat should quick-login automatically after the first QR
+      # login. The value comes from the gitignored .env (compose interpolation),
+      # never from this tracked file.
+      NAPCAT_QUICK_ACCOUNT: "${NAPCAT_QUICK_ACCOUNT:-}"
+    ports:
+      - "127.0.0.1:3001:3001"
+      - "127.0.0.1:6099:6099"
+    volumes:
+      - ./napcat/config:/app/napcat/config:z
+      - ./napcat/QQ:/app/.config/QQ:z
 
   backend:
     image: ghcr.io/bitnp/clinic-backend:${BACKEND_IMAGE_TAG:-latest}
