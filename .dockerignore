@@ -11,4 +11,4 @@ cookies.txt
 tests
 Dockerfile
 docker-compose.yml
-napcat
+/napcat
