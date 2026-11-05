@@ -1,10 +1,10 @@
 version: "3"
 
 # Production deployment: runs pre-built images — no local build.
-# Runs the backend, the admin frontend, Redis and RustFS object storage as a
-# single stack. The message gateway is deployed separately from
-# ../message-gateway; NapCat is external, with an optional sample stack in
-# ../message-gateway/docker-compose.napcat.yml.
+# Runs the backend, the admin frontend, the backend health monitor, Redis and
+# RustFS object storage as a single stack. The message gateway is deployed
+# separately from ../message-gateway; NapCat is external, with an optional
+# sample stack in ../message-gateway/docker-compose.napcat.yml.
 # Uses the Postgres already running on the server (host.containers.internal:5432),
 # same as the other clinic services. Redis and RustFS are bundled as compose
 # services (reachable at redis:6379 and rustfs:9000 on the compose network) and
@@ -21,12 +21,13 @@ version: "3"
 #   cp .env.example .env            # then set real secrets:
 #                                   #   CLINIC_API_KEY, APP_BASE_URL,
 #                                   #   CAS_SERVER_URL, CLINIC_DB_DSN,
+#                                   #   MAINTAINER_QQ_IDS, MESSAGE_GATEWAY_API_KEY,
 #                                   #   RUSTFS_*, S3_*, ...
 #   docker compose -f docker-compose.prod.yml up -d
 #
 # Override image tags with BACKEND_IMAGE_TAG / ADMIN_FRONTEND_IMAGE_TAG /
-# RUSTFS_IMAGE_TAG / RUSTFS_CLI_IMAGE_TAG. RustFS defaults to latest;
-# set RUSTFS_IMAGE_TAG to match the server when needed.
+# HEALTH_MONITOR_IMAGE_TAG / RUSTFS_IMAGE_TAG / RUSTFS_CLI_IMAGE_TAG. RustFS
+# defaults to latest; set RUSTFS_IMAGE_TAG to match the server when needed.
 #
 # RustFS operations (bucket setup, credential rotation, backup/restore) are
 # documented in deploy/rustfs/README.md.
@@ -174,6 +175,41 @@ services:
       - default
       - message-gateway
     restart: unless-stopped
+
+  health-monitor:
+    image: ghcr.io/bitnp/clinic-health-monitor:${HEALTH_MONITOR_IMAGE_TAG:-latest}
+    # The image is shipped to the server in the packaged tarball, never pulled.
+    pull_policy: never
+    restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
+    environment:
+      # The monitor reaches the backend through the default compose network and
+      # the gateway through the external message-gateway network.
+      MONITOR_TARGET_URL: ${MONITOR_TARGET_URL:-http://backend:8080/healthz}
+      MONITOR_TARGET_NAME: ${MONITOR_TARGET_NAME:-clinic-backend}
+      MONITOR_INTERVAL: ${MONITOR_INTERVAL:-30s}
+      MONITOR_TIMEOUT: ${MONITOR_TIMEOUT:-5s}
+      MONITOR_FAILURE_THRESHOLD: ${MONITOR_FAILURE_THRESHOLD:-3}
+      MONITOR_RECOVERY_THRESHOLD: ${MONITOR_RECOVERY_THRESHOLD:-1}
+      MONITOR_ALERT_REPEAT_INTERVAL: ${MONITOR_ALERT_REPEAT_INTERVAL:-0s}
+      MONITOR_NOTIFY_RECOVERY: ${MONITOR_NOTIFY_RECOVERY:-true}
+      MONITOR_HTTP_ADDR: ":8082"
+      MONITOR_INSTANCE_NAME: ${MONITOR_INSTANCE_NAME:-clinic-prod}
+      MAINTAINER_QQ_IDS: ${MAINTAINER_QQ_IDS:?set MAINTAINER_QQ_IDS in .env}
+      MESSAGE_GATEWAY_URL: http://message-gateway:8081
+      MESSAGE_GATEWAY_API_KEY: ${MESSAGE_GATEWAY_API_KEY:?set MESSAGE_GATEWAY_API_KEY in .env}
+      MESSAGE_GATEWAY_TIMEOUT: ${MESSAGE_GATEWAY_TIMEOUT:-5s}
+      TZ: ${TZ:-Asia/Shanghai}
+    networks:
+      - default
+      - message-gateway
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8082/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
   admin-frontend:
     image: ghcr.io/bitnp/clinic_admin_frontend:${ADMIN_FRONTEND_IMAGE_TAG:-latest}
