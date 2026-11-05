@@ -11,12 +11,13 @@
 #
 # The backend runs in the foreground with its stdout/stderr untouched, so
 # everything main.go logs (Gin routes, request logs, startup messages) stays
-# in your terminal. Only the helpers (fake CAS, Redis, RustFS, message-gateway)
-# are backgrounded. Ctrl-C stops the backend and the helpers this script started.
+# in your terminal. Only the helpers (fake CAS, Redis, RustFS, message-gateway,
+# and optionally fake NapCat) are backgrounded. Ctrl-C stops the backend and
+# the helpers this script started.
 # RustFS and message-gateway are left running if they were already running before
 # this script started.
 #
-# Usage: scripts/dev.sh [--no-cas] [--no-redis] [--no-storage] [--no-message-gateway]
+# Usage: scripts/dev.sh [--no-cas] [--no-redis] [--no-storage] [--no-message-gateway] [--fake-napcat]
 
 set -Eeuo pipefail
 
@@ -43,14 +44,17 @@ CAS_LOG=$LOG_DIR/fake_cas.log
 REDIS_LOG=$LOG_DIR/redis.log
 STORAGE_LOG=$LOG_DIR/rustfs.log
 MESSAGE_GATEWAY_LOG=$LOG_DIR/message-gateway.log
+FAKE_NAPCAT_LOG=$LOG_DIR/fake-napcat.log
 mkdir -p "$LOG_DIR"
 
 START_CAS=1
 START_REDIS=1
 START_STORAGE=1
 START_MESSAGE_GATEWAY=1
+START_FAKE_NAPCAT=0
 STORAGE_STARTED=0
 MESSAGE_GATEWAY_STARTED=0
+FAKE_NAPCAT_STARTED=0
 
 usage() {
 	cat <<'EOF'
@@ -66,6 +70,8 @@ Options:
                   storage is already running, or use an external S3 endpoint)
   --no-message-gateway
                   Do not start message-gateway (assume one is running)
+  --fake-napcat   Start the dev fake NapCat stack for local testing. It uses
+                  the gateway network and does not connect to QQ.
   --no-napcat     Deprecated alias for --no-message-gateway
   -h, --help      Show this help
 EOF
@@ -77,6 +83,7 @@ while (($# > 0)); do
 	--no-redis) START_REDIS=0 ;;
 	--no-storage | --no-rustfs) START_STORAGE=0 ;;
 	--no-message-gateway | --no-napcat) START_MESSAGE_GATEWAY=0 ;;
+	--fake-napcat) START_FAKE_NAPCAT=1 ;;
 	-h | --help)
 		usage
 		exit 0
@@ -142,6 +149,12 @@ cleanup() {
 	if ((STORAGE_STARTED)); then
 		log "stopping RustFS container"
 		docker compose stop rustfs >/dev/null 2>&1 || true
+	fi
+
+	if ((FAKE_NAPCAT_STARTED)); then
+		log "stopping fake NapCat stack"
+		(cd "$MESSAGE_GATEWAY_DIR" &&
+			docker compose -f docker-compose.fake-napcat.yml down) >/dev/null 2>&1 || true
 	fi
 
 	if ((MESSAGE_GATEWAY_STARTED)); then
@@ -352,8 +365,50 @@ start_message_gateway() {
 		return
 	fi
 	log "message-gateway ready: http://127.0.0.1:8081"
-	log "NapCat is external; sample stack: (cd $MESSAGE_GATEWAY_DIR && docker compose -f docker-compose.napcat.yml up -d)"
-	log "NapCat WebUI: http://127.0.0.1:6099/webui (first run: scan the QR code)"
+	if ((!START_FAKE_NAPCAT)); then
+		log "NapCat is external; sample stack: (cd $MESSAGE_GATEWAY_DIR && docker compose -f docker-compose.napcat.yml up -d)"
+		log "NapCat WebUI: http://127.0.0.1:6099/webui (first run: scan the QR code)"
+	fi
+}
+
+start_fake_napcat() {
+	if ((!START_FAKE_NAPCAT)); then
+		return
+	fi
+
+	if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+		warn "Docker is unavailable - not starting fake NapCat"
+		return
+	fi
+	if ! docker compose version >/dev/null 2>&1; then
+		warn "docker compose is unavailable - not starting fake NapCat"
+		return
+	fi
+
+	[[ -f "$MESSAGE_GATEWAY_DIR/docker-compose.fake-napcat.yml" ]] ||
+		die "fake NapCat compose file not found at $MESSAGE_GATEWAY_DIR"
+
+	if (cd "$MESSAGE_GATEWAY_DIR" && docker compose -f docker-compose.fake-napcat.yml ps -q napcat 2>/dev/null | grep -q .); then
+		log "fake NapCat already running - reusing it"
+		return
+	fi
+
+	: >"$FAKE_NAPCAT_LOG"
+	log "starting fake NapCat (log: $FAKE_NAPCAT_LOG)"
+	if ! (cd "$MESSAGE_GATEWAY_DIR" && docker compose -f docker-compose.fake-napcat.yml up -d --build) >>"$FAKE_NAPCAT_LOG" 2>&1; then
+		tail -n 30 "$FAKE_NAPCAT_LOG" >&2 || true
+		die "fake NapCat failed to start; see $FAKE_NAPCAT_LOG"
+	fi
+	FAKE_NAPCAT_STARTED=1
+
+	NAPCAT_ONEBOT_PORT=$(sed -n 's/^NAPCAT_ONEBOT_PORT=//p' "$MESSAGE_GATEWAY_DIR/.env" | head -n 1)
+	NAPCAT_ONEBOT_PORT=${NAPCAT_ONEBOT_PORT:-3001}
+	if ! wait_for_port 127.0.0.1 "$NAPCAT_ONEBOT_PORT" "fake NapCat" 30; then
+		warn "fake NapCat is still starting; follow it with: (cd $MESSAGE_GATEWAY_DIR && docker compose -f docker-compose.fake-napcat.yml logs -f napcat)"
+		return
+	fi
+	log "fake NapCat ready: http://127.0.0.1:$NAPCAT_ONEBOT_PORT"
+	log "fake NapCat messages: curl http://127.0.0.1:$NAPCAT_ONEBOT_PORT/_messages"
 }
 
 # --- 5. backend --------------------------------------------------------------
@@ -390,4 +445,5 @@ fi
 ((START_REDIS)) && start_redis
 start_storage
 start_message_gateway
+start_fake_napcat
 start_backend
