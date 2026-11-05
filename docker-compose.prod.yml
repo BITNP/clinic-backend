@@ -2,8 +2,9 @@ version: "3"
 
 # Production deployment: runs pre-built images — no local build.
 # Runs the backend, the admin frontend, Redis and RustFS object storage as a
-# single stack. The message gateway and its bundled NapCat are deployed
-# separately from ../message-gateway.
+# single stack. The message gateway is deployed separately from
+# ../message-gateway; NapCat is external, with an optional sample stack in
+# ../message-gateway/docker-compose.napcat.yml.
 # Uses the Postgres already running on the server (host.containers.internal:5432),
 # same as the other clinic services. Redis and RustFS are bundled as compose
 # services (reachable at redis:6379 and rustfs:9000 on the compose network) and

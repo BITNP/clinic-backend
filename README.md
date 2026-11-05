@@ -129,18 +129,23 @@ sha256sum clinic-images.tar > clinic-images.tar.sha256
 scp clinic-images.tar clinic-images.tar.sha256 docker-compose.prod.yml .env server:
 ssh server 'mkdir -p deploy message-gateway'
 scp -r deploy/rustfs server:deploy/
-scp ../message-gateway/docker-compose.yml ../message-gateway/.env server:message-gateway/
+scp ../message-gateway/docker-compose.yml \
+  ../message-gateway/docker-compose.napcat.yml \
+  ../message-gateway/.env server:message-gateway/
 
 # On the server: load the images and start the stacks.
 docker load -i clinic-images.tar
-cd message-gateway && docker compose --profile bundled-napcat up -d --no-build
+cd message-gateway && docker compose up -d --no-build
+# Optional sample NapCat stack:
+# docker compose -f docker-compose.napcat.yml up -d --no-build
 cd .. && docker compose -f docker-compose.prod.yml up -d
 ```
 
 Before starting, update `message-gateway/.env` for the server: set
-`MESSAGE_GATEWAY_API_KEY`, `NAPCAT_QUICK_ACCOUNT`, and the NapCat data paths
-(relative `./napcat/config` and `./napcat/QQ` under the copied
-`message-gateway` directory work best). The backend `.env` must contain the same
+`MESSAGE_GATEWAY_API_KEY` and `NAPCAT_BASE_URL`. If you use the sample NapCat
+stack, also set `NAPCAT_QUICK_ACCOUNT` and the NapCat data paths (relative
+`./napcat/config` and `./napcat/QQ` under the copied `message-gateway`
+directory work best). The backend `.env` must contain the same
 `MESSAGE_GATEWAY_API_KEY` and `MESSAGE_GATEWAY_URL=http://message-gateway:8081`.
 
 Do not use `--pull always` or `docker compose pull` for this stack: those bypass
@@ -148,15 +153,18 @@ Do not use `--pull always` or `docker compose pull` for this stack: those bypass
 reach. Every bundled service in the production compose file uses
 `pull_policy: never` and is served from the loaded tarball.
 
-NapCat is owned by the `message-gateway` stack, not this backend. Deploy the
+NapCat is external to the gateway stack, not part of this backend. Deploy the
 gateway from `../message-gateway`:
 
 ```bash
 cd ../message-gateway
-docker compose --profile bundled-napcat up -d
+docker compose up -d
+
+# Optional sample NapCat stack:
+# docker compose -f docker-compose.napcat.yml up -d
 ```
 
-NapCat persists its config and QQ login state in
+If you use the sample NapCat stack, it persists its config and QQ login state in
 `../message-gateway/napcat/config` and `../message-gateway/napcat/QQ`. After the
 first start, open the WebUI through an SSH tunnel and scan the QR code once:
 
@@ -167,7 +175,9 @@ ssh -L 6099:127.0.0.1:6099 server
 ```
 
 Later restarts reuse the saved session; set `NAPCAT_QUICK_ACCOUNT` in the
-gateway `.env` to auto-login without scanning again.
+gateway `.env` to auto-login without scanning again. If you use an external
+NapCat instead of the sample stack, set `NAPCAT_BASE_URL` to its OneBot
+endpoint.
 
 The backend calls the gateway over HTTP. Set `MESSAGE_GATEWAY_URL` and
 `MESSAGE_GATEWAY_API_KEY` in the backend `.env` (the default URL is
@@ -323,8 +333,9 @@ the backend to the frontend's address. Because the frontend proxies `/api`,
 ## Run locally (development)
 
 `scripts/dev.sh` loads `.env` and starts the fake CAS server, Redis, local
-RustFS (when `S3_ENDPOINT` points at it), `message-gateway` with its bundled
-NapCat, and the backend:
+RustFS (when `S3_ENDPOINT` points at it), `message-gateway`, and the backend.
+NapCat is external to the gateway stack; its optional sample stack is in
+`../message-gateway/docker-compose.napcat.yml`.
 
 ```bash
 scripts/dev.sh

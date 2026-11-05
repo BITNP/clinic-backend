@@ -6,7 +6,7 @@
 #   1. fake CAS server        -> http://127.0.0.1:9999
 #   2. Redis                  -> 127.0.0.1:6379 (docker, falls back to redis-server)
 #   3. RustFS + provisioning  -> http://127.0.0.1:9000, when S3 storage is local
-#   4. message-gateway + bundled NapCat -> http://127.0.0.1:8081
+#   4. message-gateway        -> http://127.0.0.1:8081 (NapCat external)
 #   5. backend (this repo)    -> http://127.0.0.1:8080
 #
 # The backend runs in the foreground with its stdout/stderr untouched, so
@@ -146,8 +146,7 @@ cleanup() {
 
 	if ((MESSAGE_GATEWAY_STARTED)); then
 		log "stopping message-gateway stack"
-		(cd "$MESSAGE_GATEWAY_DIR" &&
-			docker compose --profile bundled-napcat stop) >/dev/null 2>&1 || true
+		(cd "$MESSAGE_GATEWAY_DIR" && docker compose stop) >/dev/null 2>&1 || true
 	fi
 
 	if [[ -n "$CAS_PGID" ]]; then
@@ -327,16 +326,12 @@ start_message_gateway() {
 	[[ -f "$MESSAGE_GATEWAY_DIR/.env" ]] ||
 		die "message-gateway .env not found at $MESSAGE_GATEWAY_DIR"
 
-	if (cd "$MESSAGE_GATEWAY_DIR" && docker compose --profile bundled-napcat ps -q message-gateway 2>/dev/null | grep -q .); then
+	if (cd "$MESSAGE_GATEWAY_DIR" && docker compose ps -q message-gateway 2>/dev/null | grep -q .); then
 		log "message-gateway already running - reusing it"
 	else
-		if port_open 127.0.0.1 3001 || port_open 127.0.0.1 6099; then
-			die "NapCat ports 3001/6099 are already in use; stop the other NapCat or use --no-message-gateway"
-		fi
-
 		: >"$MESSAGE_GATEWAY_LOG"
-		log "starting message-gateway with bundled NapCat (log: $MESSAGE_GATEWAY_LOG)"
-		if ! (cd "$MESSAGE_GATEWAY_DIR" && docker compose --profile bundled-napcat up -d) >>"$MESSAGE_GATEWAY_LOG" 2>&1; then
+		log "starting message-gateway (log: $MESSAGE_GATEWAY_LOG)"
+		if ! (cd "$MESSAGE_GATEWAY_DIR" && docker compose up -d) >>"$MESSAGE_GATEWAY_LOG" 2>&1; then
 			tail -n 30 "$MESSAGE_GATEWAY_LOG" >&2 || true
 			die "message-gateway failed to start; see $MESSAGE_GATEWAY_LOG"
 		fi
@@ -353,10 +348,11 @@ start_message_gateway() {
 	fi
 
 	if ! wait_for_port 127.0.0.1 8081 "message-gateway" 60; then
-		warn "message-gateway is still starting; follow it with: (cd $MESSAGE_GATEWAY_DIR && docker compose --profile bundled-napcat logs -f message-gateway)"
+		warn "message-gateway is still starting; follow it with: (cd $MESSAGE_GATEWAY_DIR && docker compose logs -f message-gateway)"
 		return
 	fi
 	log "message-gateway ready: http://127.0.0.1:8081"
+	log "NapCat is external; sample stack: (cd $MESSAGE_GATEWAY_DIR && docker compose -f docker-compose.napcat.yml up -d)"
 	log "NapCat WebUI: http://127.0.0.1:6099/webui (first run: scan the QR code)"
 }
 

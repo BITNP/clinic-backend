@@ -84,18 +84,22 @@ each session, so providers with prefix caching can reuse it across calls.
 
 Outbound messaging is handled by the separate `message-gateway` project. The
 gateway owns platform adapters (currently NapCat/QQ), per-sender queues, gap
-policy, retry behavior, and the HTTP/WebSocket API. The backend does not connect
-to NapCat directly.
+policy, retry behavior, and the HTTP API. The backend does not connect to NapCat
+directly.
 
-The preferred deployment is the gateway's bundled stack:
+The preferred deployment is the gateway stack:
 
 ```bash
 cd message-gateway
-docker compose --profile bundled-napcat up -d
+docker compose up -d
+
+# Optional sample NapCat stack:
+# docker compose -f docker-compose.napcat.yml up -d
 ```
 
-`clinic-backend/scripts/dev.sh` starts this stack automatically and exports the
-gateway URL and API key to the backend.
+`clinic-backend/scripts/dev.sh` starts the gateway automatically and exports the
+gateway URL and API key to the backend. NapCat is external to the gateway stack;
+start the sample stack separately if you need it.
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -226,9 +230,11 @@ openssl rand -hex 24                                 # secret key
 
 The dev stack bundles Postgres, Redis, RustFS, `rustfs-init`, and the backend.
 The backend is on `:8080`; the RustFS S3 API and console are loopback-only on
-`:9000` and `:9001`. The message gateway and its bundled NapCat are a separate
-stack in `../message-gateway`; `scripts/dev.sh` starts it automatically. For
-local development without Compose, see [Local development](#local-development).
+`:9000` and `:9001`. The message gateway is a separate stack in
+`../message-gateway`; `scripts/dev.sh` starts it automatically. NapCat is
+external to that stack, with an optional sample in
+`../message-gateway/docker-compose.napcat.yml`. For local development without
+Compose, see [Local development](#local-development).
 
 ### Production stack (`docker-compose.prod.yml`)
 
@@ -237,10 +243,11 @@ local development without Compose, see [Local development](#local-development).
 server. It runs the backend, the admin frontend, a bundled Redis service, and
 RustFS object storage, and connects to the Postgres already running on the
 server via `host.containers.internal` (no bundled database). The message
-gateway and its NapCat are deployed separately from `../message-gateway`; the
-backend joins the `message-gateway` external network. It refuses to start if
-`CLINIC_API_KEY`, the required S3 settings, or the RustFS provisioning
-credentials are missing.
+gateway is deployed separately from `../message-gateway`; NapCat is external to
+that stack, with an optional sample in
+`../message-gateway/docker-compose.napcat.yml`. The backend joins the
+`message-gateway` external network. It refuses to start if `CLINIC_API_KEY`, the
+required S3 settings, or the RustFS provisioning credentials are missing.
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -262,8 +269,9 @@ Services and ports on the server:
 - RustFS console: `127.0.0.1:9001` (SSH tunnel only).
 - RustFS data: `rustfsdata` named volume.
 - Message gateway: `message-gateway:8081` on the external `message-gateway`
-  network (deployed separately from `../message-gateway`). Its bundled NapCat
-  owns the QQ connection and the NapCat WebUI/OneBot ports.
+  network (deployed separately from `../message-gateway`). NapCat is external to
+  that stack; the optional sample owns the QQ connection and the NapCat
+  WebUI/OneBot ports.
 - Admin frontend: `:5173`.
 - Backend: `:8080` (compose-internal; expose a host port if you need to reach
   it directly).
@@ -305,13 +313,19 @@ override existing environment variables) and then starts:
 2. Redis on `:6379` (container, falling back to `redis-server`);
 3. RustFS and `rustfs-init` on `:9000` / `:9001` when `S3_ENDPOINT` points at
    local storage;
-4. message-gateway with its bundled NapCat, gateway API on `:8081` and NapCat
-   WebUI on `:6099`;
+4. message-gateway, gateway API on `:8081`;
 5. the backend on `:8080`.
+
+NapCat is external to the gateway stack. To use the optional sample, start it
+after the gateway network exists:
+
+```bash
+(cd ../message-gateway && docker compose -f docker-compose.napcat.yml up -d)
+```
 
 For a local `S3_ENDPOINT`, it starts RustFS and runs `rustfs-init` before
 starting the backend. Use `--no-storage` when storage is already managed
-elsewhere or points at an external S3 endpoint. On the first gateway/NapCat
+elsewhere or points at an external S3 endpoint. On the first sample-NapCat
 start, open `http://127.0.0.1:6099/webui` and scan the QR code (the WebUI token
 is in `../message-gateway/napcat/config/webui.json`); later starts reuse the
 saved session. `scripts/dev.sh` reads the gateway API key from
@@ -355,10 +369,11 @@ docker run --rm -p 6379:6379 redis:7-alpine
 #     S3 API on http://127.0.0.1:9000, console on http://127.0.0.1:9001
 docker compose up -d rustfs rustfs-init
 
-# 2c. Optional: start message-gateway with its bundled NapCat. Its WebUI is on
-#     http://127.0.0.1:6099/webui; scan the QR code there once. The gateway
-#     data lives in ../message-gateway/napcat.
-(cd ../message-gateway && docker compose --profile bundled-napcat up -d)
+# 2c. Start message-gateway. NapCat is external; optionally start the sample
+#     stack. Its WebUI is on http://127.0.0.1:6099/webui; scan the QR code
+#     there once. The sample data lives in ../message-gateway/napcat.
+(cd ../message-gateway && docker compose up -d)
+(cd ../message-gateway && docker compose -f docker-compose.napcat.yml up -d)  # optional
 # Export these if running the backend outside scripts/dev.sh. The API key is in
 # ../message-gateway/.env.
 export MESSAGE_GATEWAY_URL=http://127.0.0.1:8081
