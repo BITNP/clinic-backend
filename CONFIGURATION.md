@@ -107,8 +107,9 @@ start the sample stack separately if you need it.
 | `MESSAGE_GATEWAY_API_KEY` | required when messaging is enabled | Bearer token for the gateway. |
 | `MESSAGE_GATEWAY_TIMEOUT` | `5s` | Per-request client timeout. |
 
-No business caller is wired to the gateway yet. These settings are the contract
-for the first caller and are already provided by Compose and `dev.sh`.
+The backend has no business caller wired to the gateway yet. The first consumer
+is `clinic-health-monitor`, which uses the same URL and API key in the
+production stack.
 
 The legacy `NAPCAT_*` and `MESSAGE_*` variables belong to the frozen
 `internal/message` copy and must not be set in new deployments. In particular,
@@ -117,6 +118,35 @@ keep `NAPCAT_BASE_URL` empty so the in-process manager stays disabled.
 The gateway queue is in-memory and assumes one gateway instance per sender/QQ
 account. Pending messages are lost on gateway restart. See
 `message-gateway/README.md` and `message-gateway/API.md`.
+
+### Health monitor (`clinic-health-monitor`)
+
+`clinic-health-monitor` polls the backend's `/healthz` endpoint and sends one
+private QQ alert per outage to the configured maintainers through
+`message-gateway`. It runs in the production Compose stack, joins the
+`message-gateway` external network, and has no host port.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `HEALTH_MONITOR_IMAGE_TAG` | `latest` | Monitor image tag to deploy. |
+| `MAINTAINER_QQ_IDS` | — (required) | Comma-separated QQ user ids that receive alerts. |
+| `MONITOR_TARGET_URL` | `http://backend:8080/healthz` | Health endpoint polled by the monitor. |
+| `MONITOR_TARGET_NAME` | `clinic-backend` | Name used in alert text. |
+| `MONITOR_INSTANCE_NAME` | `clinic-prod` | Instance name used in alert text. |
+| `MONITOR_INTERVAL` | `30s` | Delay between checks. |
+| `MONITOR_TIMEOUT` | `5s` | Per-check HTTP timeout. |
+| `MONITOR_FAILURE_THRESHOLD` | `3` | Consecutive failures before an alert. |
+| `MONITOR_RECOVERY_THRESHOLD` | `1` | Consecutive successes before recovery. |
+| `MONITOR_ALERT_REPEAT_INTERVAL` | `0s` | Repeat interval while down; `0s` disables repeats. |
+| `MONITOR_NOTIFY_RECOVERY` | `true` | Send a recovery message after an outage. |
+
+Inside Compose the monitor always calls `http://message-gateway:8081`; it
+reuses `MESSAGE_GATEWAY_API_KEY` and `MESSAGE_GATEWAY_TIMEOUT`.
+`MAINTAINER_QQ_IDS` and a non-empty `MESSAGE_GATEWAY_API_KEY` are required for
+the production stack to start.
+
+`/healthz` currently pings Redis only; it does not check Postgres or S3. See
+`clinic-health-monitor/README.md` for the alert state machine and limitations.
 
 ### Object storage (S3)
 
@@ -240,19 +270,21 @@ Compose, see [Local development](#local-development).
 
 `docker-compose.prod.yml` is a standalone deploy config: only this file,
 `.env`, `deploy/rustfs/` and the packaged image tarball are needed on the
-server. It runs the backend, the admin frontend, a bundled Redis service, and
-RustFS object storage, and connects to the Postgres already running on the
-server via `host.containers.internal` (no bundled database). The message
-gateway is deployed separately from `../message-gateway`; NapCat is external to
-that stack, with an optional sample in
-`../message-gateway/docker-compose.napcat.yml`. The backend joins the
-`message-gateway` external network. It refuses to start if `CLINIC_API_KEY`, the
-required S3 settings, or the RustFS provisioning credentials are missing.
+server. It runs the backend, the admin frontend, the health monitor, a bundled
+Redis service, and RustFS object storage, and connects to the Postgres already
+running on the server via `host.containers.internal` (no bundled database). The
+message gateway is deployed separately from `../message-gateway`; NapCat is
+external to that stack, with an optional sample in
+`../message-gateway/docker-compose.napcat.yml`. The backend and health monitor
+join the `message-gateway` external network. It refuses to start if
+`CLINIC_API_KEY`, the required S3 settings, the RustFS provisioning
+credentials, `MAINTAINER_QQ_IDS`, or `MESSAGE_GATEWAY_API_KEY` are missing.
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `BACKEND_IMAGE_TAG` | `latest` | Backend image tag to deploy. |
 | `ADMIN_FRONTEND_IMAGE_TAG` | `latest` | Admin frontend image tag to deploy. |
+| `HEALTH_MONITOR_IMAGE_TAG` | `latest` | Health monitor image tag to deploy. |
 | `ADMIN_FRONTEND_PORT` | `5173` | Host port for the admin frontend. |
 | `BACKEND_UPSTREAM` | `http://backend:8080` | Upstream the frontend proxies `/api`, `/login`, and `/logout` to. |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `clinic` | Used to build the default `CLINIC_DB_DSN` when it is not set. |
@@ -272,13 +304,17 @@ Services and ports on the server:
   network (deployed separately from `../message-gateway`). NapCat is external to
   that stack; the optional sample owns the QQ connection and the NapCat
   WebUI/OneBot ports.
+- Health monitor: `health-monitor:8082` on the compose network (no host port;
+  liveness only). It polls `http://backend:8080/healthz` and alerts maintainers
+  through the gateway.
 - Admin frontend: `:5173`.
 - Backend: `:8080` (compose-internal; expose a host port if you need to reach
   it directly).
 
 Image versions can be pinned with `BACKEND_IMAGE_TAG`,
-`ADMIN_FRONTEND_IMAGE_TAG`, `RUSTFS_IMAGE_TAG`, and `RUSTFS_CLI_IMAGE_TAG` in
-`.env`; use the same tags in the `docker pull` / `docker save` commands.
+`ADMIN_FRONTEND_IMAGE_TAG`, `HEALTH_MONITOR_IMAGE_TAG`, `RUSTFS_IMAGE_TAG`, and
+`RUSTFS_CLI_IMAGE_TAG` in `.env`; use the same tags in the `docker pull` /
+`docker save` commands.
 
 Do not use `--pull always` or `docker compose pull` for this stack: those bypass
 `pull_policy` and would try to fetch images from registries the server cannot

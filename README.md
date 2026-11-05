@@ -4,9 +4,9 @@ Backend for the clinic management system, built with Go and Gin.
 
 - Dev: the backend and the admin frontend run as separate compose stacks
   (`docker-compose.yml` in each repo).
-- Prod: `docker-compose.prod.yml` deploys both as a single stack, pulling
-  pre-built images from GHCR (backend on `:8080`, admin frontend on `:5173`),
-  together with Redis and RustFS object storage.
+- Prod: `docker-compose.prod.yml` deploys the backend, admin frontend, health
+  monitor, Redis, and RustFS as a single stack, pulling pre-built images from
+  GHCR (backend on `:8080`, admin frontend on `:5173`).
 
 Runtime, deployment, and local-development settings are documented in
 [CONFIGURATION.md](CONFIGURATION.md). This README covers the project layout and
@@ -84,10 +84,11 @@ echo $PAT | docker login ghcr.io -u Potato-Yao --password-stdin
 
 `docker-compose.prod.yml` is a standalone deploy config — only this file, `.env`,
 `deploy/rustfs/` and the packaged image tarball are needed on the server, no
-source checkout. It runs the backend, the admin frontend, a bundled Redis
-service and RustFS object storage, and connects to the Postgres already running
-on the server via `host.containers.internal` (no bundled database), like the
-other clinic services. It refuses to start if `CLINIC_API_KEY`, the required
+source checkout. It runs the backend, the admin frontend, the health monitor, a
+bundled Redis service and RustFS object storage, and connects to the Postgres
+already running on the server via `host.containers.internal` (no bundled
+database), like the other clinic services. It refuses to start if
+`CLINIC_API_KEY`, `MAINTAINER_QQ_IDS`, `MESSAGE_GATEWAY_API_KEY`, the required
 S3 settings, or the RustFS provisioning credentials are missing.
 
 The server cannot pull images from Docker Hub or GHCR, so package the images on
@@ -109,6 +110,7 @@ set +a
 
 docker pull ghcr.io/bitnp/clinic-backend:${BACKEND_IMAGE_TAG:-latest}
 docker pull ghcr.io/bitnp/clinic_admin_frontend:${ADMIN_FRONTEND_IMAGE_TAG:-latest}
+docker pull ghcr.io/bitnp/clinic-health-monitor:${HEALTH_MONITOR_IMAGE_TAG:-latest}
 docker pull redis:7-alpine
 docker pull rustfs/rustfs:${RUSTFS_IMAGE_TAG:-latest}
 docker pull rustfs/rc:${RUSTFS_CLI_IMAGE_TAG:-v0.1.36}
@@ -118,6 +120,7 @@ docker pull ghcr.io/bitnp/message-gateway:${MESSAGE_GATEWAY_IMAGE_TAG:-latest}
 docker save -o clinic-images.tar \
   ghcr.io/bitnp/clinic-backend:${BACKEND_IMAGE_TAG:-latest} \
   ghcr.io/bitnp/clinic_admin_frontend:${ADMIN_FRONTEND_IMAGE_TAG:-latest} \
+  ghcr.io/bitnp/clinic-health-monitor:${HEALTH_MONITOR_IMAGE_TAG:-latest} \
   redis:7-alpine \
   rustfs/rustfs:${RUSTFS_IMAGE_TAG:-latest} \
   rustfs/rc:${RUSTFS_CLI_IMAGE_TAG:-v0.1.36} \
@@ -147,6 +150,8 @@ stack, also set `NAPCAT_QUICK_ACCOUNT` and the NapCat data paths (relative
 `./napcat/config` and `./napcat/QQ` under the copied `message-gateway`
 directory work best). The backend `.env` must contain the same
 `MESSAGE_GATEWAY_API_KEY` and `MESSAGE_GATEWAY_URL=http://message-gateway:8081`.
+Also set `MAINTAINER_QQ_IDS` there; the health monitor uses those ids for
+private QQ alerts and requires a non-empty gateway key.
 
 Do not use `--pull always` or `docker compose pull` for this stack: those bypass
 `pull_policy` and would try to fetch images from registries the server cannot
@@ -186,7 +191,13 @@ the legacy in-process manager must remain disabled.
 
 The image tags in the commands above come from `.env`; see
 [CONFIGURATION.md](CONFIGURATION.md#production-stack-docker-composeprodyml) for
-pinning specific versions.
+pinning specific versions, including `HEALTH_MONITOR_IMAGE_TAG`.
+
+The health monitor polls `http://backend:8080/healthz` and sends one private QQ
+message per outage to each id in `MAINTAINER_QQ_IDS`. Its `MONITOR_*` settings
+and limitations are documented in
+[CONFIGURATION.md](CONFIGURATION.md#health-monitor-clinic-health-monitor) and
+`clinic-health-monitor/README.md`.
 
 ### Object storage (RustFS)
 
