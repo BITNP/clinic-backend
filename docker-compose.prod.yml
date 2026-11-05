@@ -1,13 +1,14 @@
 version: "3"
 
 # Production deployment: runs pre-built images — no local build.
-# Runs the backend, the admin frontend, NapCat, Redis and RustFS object storage
-# as a single stack.
+# Runs the backend, the admin frontend, Redis and RustFS object storage as a
+# single stack. The message gateway and its bundled NapCat are deployed
+# separately from ../message-gateway.
 # Uses the Postgres already running on the server (host.containers.internal:5432),
-# same as the other clinic services. Redis, RustFS and NapCat are bundled as
-# compose services (reachable at redis:6379, rustfs:9000 and napcat:3001 on the
-# compose network) and are loaded from locally packaged image tarballs rather
-# than pulled from a registry.
+# same as the other clinic services. Redis and RustFS are bundled as compose
+# services (reachable at redis:6379 and rustfs:9000 on the compose network) and
+# are loaded from locally packaged image tarballs rather than pulled from a
+# registry.
 #
 # Podman alternative (rootless, same compose file):
 #   systemctl --user enable --now podman.socket
@@ -115,29 +116,7 @@ services:
     volumes:
       - ./deploy/rustfs/init.sh:/opt/rustfs/init.sh:ro
 
-  # QQ gateway. Ports are loopback-only: reach the WebUI through an SSH tunnel
-  #   ssh -L 6099:127.0.0.1:6099 server
-  # and open http://127.0.0.1:6099/webui for the first QR login. OneBot is
-  # published on 127.0.0.1:3001 for host tooling; the backend reaches NapCat at
-  # napcat:3001 on the compose network.
-  napcat:
-    image: mlikiowa/napcat-docker:latest
-    # The image is shipped to the server in the packaged tarball, never pulled.
-    pull_policy: never
-    restart: unless-stopped
-    environment:
-      NAPCAT_UID: "1000"
-      NAPCAT_GID: "1000"
-      # QQ account NapCat should quick-login automatically after the first QR
-      # login. The value comes from the gitignored .env (compose interpolation),
-      # never from this tracked file.
-      NAPCAT_QUICK_ACCOUNT: "${NAPCAT_QUICK_ACCOUNT:-}"
-    ports:
-      - "127.0.0.1:3001:3001"
-      - "127.0.0.1:6099:6099"
-    volumes:
-      - ./napcat/config:/app/napcat/config:z
-      - ./napcat/QQ:/app/.config/QQ:z
+  # NapCat is owned by the message-gateway stack. See ../message-gateway.
 
   backend:
     image: ghcr.io/bitnp/clinic-backend:${BACKEND_IMAGE_TAG:-latest}
@@ -176,7 +155,9 @@ services:
       TAGGER_AGENT_POOL_SIZE: ${TAGGER_AGENT_POOL_SIZE:-4}
       TAGGER_CONTEXT_TOKENS: ${TAGGER_CONTEXT_TOKENS:-32000}
       TAGGER_TIMEOUT: ${TAGGER_TIMEOUT:-30s}
-      NAPCAT_BASE_URL: ${NAPCAT_INTERNAL_BASE_URL:-http://napcat:3001}
+      MESSAGE_GATEWAY_URL: ${MESSAGE_GATEWAY_URL:-http://message-gateway:8081}
+      MESSAGE_GATEWAY_API_KEY: ${MESSAGE_GATEWAY_API_KEY:-}
+      MESSAGE_GATEWAY_TIMEOUT: ${MESSAGE_GATEWAY_TIMEOUT:-5s}
       RECORD_ACTION_WINDOW: ${RECORD_ACTION_WINDOW:-5m}
       RECORD_PHOTO_MAX_COUNT: ${RECORD_PHOTO_MAX_COUNT:-9}
       RECORD_PHOTO_MAX_SIZE_BYTES: ${RECORD_PHOTO_MAX_SIZE_BYTES:-10485760}
@@ -188,6 +169,9 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
       S3_PUT_URL_TTL: ${S3_PUT_URL_TTL:-5m}
       S3_GET_URL_TTL: ${S3_GET_URL_TTL:-10m}
+    networks:
+      - default
+      - message-gateway
     restart: unless-stopped
 
   admin-frontend:
@@ -206,3 +190,8 @@ services:
 volumes:
   redisdata:
   rustfsdata:
+
+networks:
+  message-gateway:
+    external: true
+    name: ${MESSAGE_GATEWAY_NETWORK:-message-gateway}

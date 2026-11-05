@@ -308,9 +308,9 @@ func Run() {
 
 	if napcatClient != nil {
 		go napcatClient.Run(ctx)
-		log.Printf("message manager: napcat enabled at %s (sender %s)", msgCfg.NapCat.BaseURL, msgCfg.SenderKey)
+		log.Printf("legacy in-process message manager enabled at %s (sender %s); prefer message-gateway", msgCfg.NapCat.BaseURL, msgCfg.SenderKey)
 	} else {
-		log.Println("message manager disabled: NAPCAT_BASE_URL not set")
+		log.Println("legacy in-process message manager disabled; outbound messaging is handled by message-gateway")
 	}
 
 	msgDone := make(chan struct{})

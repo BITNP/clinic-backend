@@ -62,6 +62,10 @@ Do not recreate global `handlers/`, `services/`, or `models/` directories.
 * Organization changes must preserve HTTP routes, JSON formats, database table
   and column names, and behavior unless a behavior change is explicitly requested.
 
+## Messaging
+
+Outbound messaging is owned by the separate `message-gateway` project. Do not add platform adapters, queues, or rate-limiting logic to `internal/message`; it is frozen legacy code. Backend callers use the gateway HTTP API with `MESSAGE_GATEWAY_URL` and `MESSAGE_GATEWAY_API_KEY`. Keep `NAPCAT_BASE_URL` unset so the legacy in-process manager stays disabled.
+
 ## Go Style
 
 * Run `gofmt` on all changed Go files.

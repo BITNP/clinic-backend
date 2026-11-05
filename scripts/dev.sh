@@ -6,21 +6,22 @@
 #   1. fake CAS server        -> http://127.0.0.1:9999
 #   2. Redis                  -> 127.0.0.1:6379 (docker, falls back to redis-server)
 #   3. RustFS + provisioning  -> http://127.0.0.1:9000, when S3 storage is local
-#   4. NapCat                 -> WebUI on http://127.0.0.1:6099/webui
+#   4. message-gateway + bundled NapCat -> http://127.0.0.1:8081
 #   5. backend (this repo)    -> http://127.0.0.1:8080
 #
 # The backend runs in the foreground with its stdout/stderr untouched, so
 # everything main.go logs (Gin routes, request logs, startup messages) stays
-# in your terminal. Only the helpers (fake CAS, Redis, RustFS, NapCat) are
-# backgrounded. Ctrl-C stops the backend and the helpers this script started.
-# RustFS and NapCat are left running if they were already running before this
-# script started.
+# in your terminal. Only the helpers (fake CAS, Redis, RustFS, message-gateway)
+# are backgrounded. Ctrl-C stops the backend and the helpers this script started.
+# RustFS and message-gateway are left running if they were already running before
+# this script started.
 #
-# Usage: scripts/dev.sh [--no-cas] [--no-redis] [--no-storage] [--no-napcat]
+# Usage: scripts/dev.sh [--no-cas] [--no-redis] [--no-storage] [--no-message-gateway]
 
 set -Eeuo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+MESSAGE_GATEWAY_DIR=${MESSAGE_GATEWAY_DIR:-$ROOT_DIR/../message-gateway}
 cd "$ROOT_DIR"
 
 # Export the local configuration to the backend and helper processes.
@@ -41,15 +42,15 @@ LOG_DIR=${LOG_DIR:-${TMPDIR:-/tmp}/clinic-dev}
 CAS_LOG=$LOG_DIR/fake_cas.log
 REDIS_LOG=$LOG_DIR/redis.log
 STORAGE_LOG=$LOG_DIR/rustfs.log
-NAPCAT_LOG=$LOG_DIR/napcat.log
+MESSAGE_GATEWAY_LOG=$LOG_DIR/message-gateway.log
 mkdir -p "$LOG_DIR"
 
 START_CAS=1
 START_REDIS=1
 START_STORAGE=1
-START_NAPCAT=1
+START_MESSAGE_GATEWAY=1
 STORAGE_STARTED=0
-NAPCAT_STARTED=0
+MESSAGE_GATEWAY_STARTED=0
 
 usage() {
 	cat <<'EOF'
@@ -63,7 +64,9 @@ Options:
   --no-redis      Do not start Redis (assume one is running)
   --no-storage    Do not start or provision local RustFS (assume configured
                   storage is already running, or use an external S3 endpoint)
-  --no-napcat     Do not start the NapCat QQ gateway (assume one is running)
+  --no-message-gateway
+                  Do not start message-gateway (assume one is running)
+  --no-napcat     Deprecated alias for --no-message-gateway
   -h, --help      Show this help
 EOF
 }
@@ -73,7 +76,7 @@ while (($# > 0)); do
 	--no-cas) START_CAS=0 ;;
 	--no-redis) START_REDIS=0 ;;
 	--no-storage | --no-rustfs) START_STORAGE=0 ;;
-	--no-napcat) START_NAPCAT=0 ;;
+	--no-message-gateway | --no-napcat) START_MESSAGE_GATEWAY=0 ;;
 	-h | --help)
 		usage
 		exit 0
@@ -141,9 +144,10 @@ cleanup() {
 		docker compose stop rustfs >/dev/null 2>&1 || true
 	fi
 
-	if ((NAPCAT_STARTED)); then
-		log "stopping NapCat container"
-		docker compose stop napcat >/dev/null 2>&1 || true
+	if ((MESSAGE_GATEWAY_STARTED)); then
+		log "stopping message-gateway stack"
+		(cd "$MESSAGE_GATEWAY_DIR" &&
+			docker compose --profile bundled-napcat stop) >/dev/null 2>&1 || true
 	fi
 
 	if [[ -n "$CAS_PGID" ]]; then
@@ -301,45 +305,59 @@ start_storage() {
 	log "storage ready"
 }
 
-# --- 4. NapCat ---------------------------------------------------------------
+# --- 4. message-gateway ------------------------------------------------------
 
-start_napcat() {
-	if ((!START_NAPCAT)); then
-		log "skipping NapCat; using configured/remote QQ gateway"
+start_message_gateway() {
+	if ((!START_MESSAGE_GATEWAY)); then
+		log "skipping message-gateway; using configured gateway"
 		return
 	fi
 
 	if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-		warn "Docker is unavailable - not starting NapCat"
+		warn "Docker is unavailable - not starting message-gateway"
 		return
 	fi
-	docker compose version >/dev/null 2>&1 ||
-		{ warn "docker compose is unavailable - not starting NapCat"; return; }
-
-	if docker compose ps -q napcat 2>/dev/null | grep -q .; then
-		log "NapCat already running - reusing it"
-		return
-	fi
-	if port_open 127.0.0.1 6099 || port_open 127.0.0.1 3001; then
-		log "NapCat ports already in use - reusing existing QQ gateway"
+	if ! docker compose version >/dev/null 2>&1; then
+		warn "docker compose is unavailable - not starting message-gateway"
 		return
 	fi
 
-	: >"$NAPCAT_LOG"
-	log "starting NapCat (log: $NAPCAT_LOG)"
-	if ! docker compose up -d napcat >>"$NAPCAT_LOG" 2>&1; then
-		tail -n 30 "$NAPCAT_LOG" >&2 || true
-		warn "could not start NapCat; continuing without it (see $NAPCAT_LOG)"
-		return
-	fi
-	NAPCAT_STARTED=1
+	[[ -f "$MESSAGE_GATEWAY_DIR/docker-compose.yml" ]] ||
+		die "message-gateway compose file not found at $MESSAGE_GATEWAY_DIR"
+	[[ -f "$MESSAGE_GATEWAY_DIR/.env" ]] ||
+		die "message-gateway .env not found at $MESSAGE_GATEWAY_DIR"
 
-	if ! wait_for_port 127.0.0.1 6099 "NapCat WebUI" 180; then
-		warn "NapCat is still starting; follow it with: docker compose logs -f napcat"
+	if (cd "$MESSAGE_GATEWAY_DIR" && docker compose --profile bundled-napcat ps -q message-gateway 2>/dev/null | grep -q .); then
+		log "message-gateway already running - reusing it"
+	else
+		if port_open 127.0.0.1 3001 || port_open 127.0.0.1 6099; then
+			die "NapCat ports 3001/6099 are already in use; stop the other NapCat or use --no-message-gateway"
+		fi
+
+		: >"$MESSAGE_GATEWAY_LOG"
+		log "starting message-gateway with bundled NapCat (log: $MESSAGE_GATEWAY_LOG)"
+		if ! (cd "$MESSAGE_GATEWAY_DIR" && docker compose --profile bundled-napcat up -d) >>"$MESSAGE_GATEWAY_LOG" 2>&1; then
+			tail -n 30 "$MESSAGE_GATEWAY_LOG" >&2 || true
+			die "message-gateway failed to start; see $MESSAGE_GATEWAY_LOG"
+		fi
+		MESSAGE_GATEWAY_STARTED=1
+	fi
+
+	export MESSAGE_GATEWAY_URL=${MESSAGE_GATEWAY_URL:-http://127.0.0.1:8081}
+	if [[ -z "${MESSAGE_GATEWAY_API_KEY:-}" ]]; then
+		MESSAGE_GATEWAY_API_KEY=$(sed -n 's/^MESSAGE_GATEWAY_API_KEY=//p' "$MESSAGE_GATEWAY_DIR/.env" | head -n 1)
+		if [[ -z "$MESSAGE_GATEWAY_API_KEY" ]]; then
+			die "MESSAGE_GATEWAY_API_KEY is not set in $MESSAGE_GATEWAY_DIR/.env"
+		fi
+		export MESSAGE_GATEWAY_API_KEY
+	fi
+
+	if ! wait_for_port 127.0.0.1 8081 "message-gateway" 60; then
+		warn "message-gateway is still starting; follow it with: (cd $MESSAGE_GATEWAY_DIR && docker compose --profile bundled-napcat logs -f message-gateway)"
 		return
 	fi
-	log "NapCat ready - WebUI: http://127.0.0.1:6099/webui (first run: scan the QR code)"
-	log "NapCat WebUI token (first run): docker compose logs napcat"
+	log "message-gateway ready: http://127.0.0.1:8081"
+	log "NapCat WebUI: http://127.0.0.1:6099/webui (first run: scan the QR code)"
 }
 
 # --- 5. backend --------------------------------------------------------------
@@ -349,6 +367,8 @@ start_backend() {
 		die "port $BACKEND_PORT is already in use; stop the other backend first"
 	fi
 
+	# Outbound messaging goes through message-gateway; keep the legacy manager off.
+	export NAPCAT_BASE_URL=
 	export CLINIC_API_KEY=${CLINIC_API_KEY:-local-dev-key}
 	export REDIS_ADDR=${REDIS_ADDR:-127.0.0.1:$REDIS_PORT}
 	export REDIS_PASSWORD=${REDIS_PASSWORD:-}
@@ -373,5 +393,5 @@ fi
 ((START_CAS)) && start_cas
 ((START_REDIS)) && start_redis
 start_storage
-start_napcat
+start_message_gateway
 start_backend

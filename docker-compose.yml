@@ -77,23 +77,7 @@ services:
     volumes:
       - ./deploy/rustfs/init.sh:/opt/rustfs/init.sh:ro
 
-  napcat:
-    image: mlikiowa/napcat-docker:latest
-    container_name: napcat
-    restart: unless-stopped
-    environment:
-      NAPCAT_UID: "1000"
-      NAPCAT_GID: "1000"
-      # QQ account NapCat should quick-login automatically after the first QR
-      # login. The value comes from the gitignored .env (compose interpolation),
-      # never from this tracked file.
-      NAPCAT_QUICK_ACCOUNT: "${NAPCAT_QUICK_ACCOUNT:-}"
-    ports:
-      - "127.0.0.1:3001:3001"
-      - "127.0.0.1:6099:6099"
-    volumes:
-      - ./napcat/config:/app/napcat/config:z
-      - ./napcat/QQ:/app/.config/QQ:z
+  # NapCat is owned by the message-gateway stack. See ../message-gateway.
 
   backend:
     image: ghcr.io/bitnp/clinic-backend:latest
@@ -132,24 +116,9 @@ services:
       TAGGER_AGENT_POOL_SIZE: ${TAGGER_AGENT_POOL_SIZE:-4}
       TAGGER_CONTEXT_TOKENS: ${TAGGER_CONTEXT_TOKENS:-32000}
       TAGGER_TIMEOUT: ${TAGGER_TIMEOUT:-30s}
-      NAPCAT_BASE_URL: ${NAPCAT_INTERNAL_BASE_URL:-http://napcat:3001}
-      NAPCAT_ACCESS_TOKEN: ${NAPCAT_ACCESS_TOKEN:-}
-      NAPCAT_TIMEOUT: ${NAPCAT_TIMEOUT:-10s}
-      NAPCAT_SENDER_KEY: ${NAPCAT_SENDER_KEY:-qq}
-      NAPCAT_DIRECTORY_REFRESH: ${NAPCAT_DIRECTORY_REFRESH:-30m}
-      NAPCAT_DIRECTORY_RETRY: ${NAPCAT_DIRECTORY_RETRY:-5s}
-      NAPCAT_DIRECTORY_TIMEOUT: ${NAPCAT_DIRECTORY_TIMEOUT:-60s}
-      NAPCAT_GROUP_TEMP_SESSION: ${NAPCAT_GROUP_TEMP_SESSION:-true}
-      MESSAGE_QUEUE_SIZE: ${MESSAGE_QUEUE_SIZE:-100}
-      MESSAGE_SEND_TIMEOUT: ${MESSAGE_SEND_TIMEOUT:-30s}
-      MESSAGE_MAX_ATTEMPTS: ${MESSAGE_MAX_ATTEMPTS:-3}
-      MESSAGE_RETRY_BACKOFF: ${MESSAGE_RETRY_BACKOFF:-2s}
-      MESSAGE_GAP_MODE: ${MESSAGE_GAP_MODE:-fixed}
-      MESSAGE_GAP_FIXED: ${MESSAGE_GAP_FIXED:-3s}
-      MESSAGE_GAP_LENGTH_BASE: ${MESSAGE_GAP_LENGTH_BASE:-1s}
-      MESSAGE_GAP_PER_RUNE: ${MESSAGE_GAP_PER_RUNE:-50ms}
-      MESSAGE_GAP_JITTER: ${MESSAGE_GAP_JITTER:-1s}
-      MESSAGE_GAP_MIN: ${MESSAGE_GAP_MIN:-1s}
+      MESSAGE_GATEWAY_URL: ${MESSAGE_GATEWAY_URL:-http://message-gateway:8081}
+      MESSAGE_GATEWAY_API_KEY: ${MESSAGE_GATEWAY_API_KEY:-}
+      MESSAGE_GATEWAY_TIMEOUT: ${MESSAGE_GATEWAY_TIMEOUT:-5s}
       RECORD_ACTION_WINDOW: ${RECORD_ACTION_WINDOW:-5m}
       RECORD_PHOTO_MAX_COUNT: ${RECORD_PHOTO_MAX_COUNT:-9}
       RECORD_PHOTO_MAX_SIZE_BYTES: ${RECORD_PHOTO_MAX_SIZE_BYTES:-10485760}
@@ -163,6 +132,14 @@ services:
       S3_GET_URL_TTL: ${S3_GET_URL_TTL:-10m}
     ports:
       - "8080:8080"
+    networks:
+      - default
+      - message-gateway
+
+networks:
+  message-gateway:
+    external: true
+    name: ${MESSAGE_GATEWAY_NETWORK:-message-gateway}
 
 volumes:
   pgdata:

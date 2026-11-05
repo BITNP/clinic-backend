@@ -113,6 +113,7 @@ docker pull redis:7-alpine
 docker pull rustfs/rustfs:${RUSTFS_IMAGE_TAG:-latest}
 docker pull rustfs/rc:${RUSTFS_CLI_IMAGE_TAG:-v0.1.36}
 docker pull mlikiowa/napcat-docker:latest
+docker pull ghcr.io/bitnp/message-gateway:${MESSAGE_GATEWAY_IMAGE_TAG:-latest}
 
 docker save -o clinic-images.tar \
   ghcr.io/bitnp/clinic-backend:${BACKEND_IMAGE_TAG:-latest} \
@@ -120,41 +121,58 @@ docker save -o clinic-images.tar \
   redis:7-alpine \
   rustfs/rustfs:${RUSTFS_IMAGE_TAG:-latest} \
   rustfs/rc:${RUSTFS_CLI_IMAGE_TAG:-v0.1.36} \
-  mlikiowa/napcat-docker:latest
+  mlikiowa/napcat-docker:latest \
+  ghcr.io/bitnp/message-gateway:${MESSAGE_GATEWAY_IMAGE_TAG:-latest}
 
 sha256sum clinic-images.tar > clinic-images.tar.sha256
 
 scp clinic-images.tar clinic-images.tar.sha256 docker-compose.prod.yml .env server:
-ssh server 'mkdir -p deploy'
+ssh server 'mkdir -p deploy message-gateway'
 scp -r deploy/rustfs server:deploy/
+scp ../message-gateway/docker-compose.yml ../message-gateway/.env server:message-gateway/
 
-# On the server: load the images and start the stack.
+# On the server: load the images and start the stacks.
 docker load -i clinic-images.tar
-docker compose -f docker-compose.prod.yml up -d
+cd message-gateway && docker compose --profile bundled-napcat up -d --no-build
+cd .. && docker compose -f docker-compose.prod.yml up -d
 ```
+
+Before starting, update `message-gateway/.env` for the server: set
+`MESSAGE_GATEWAY_API_KEY`, `NAPCAT_QUICK_ACCOUNT`, and the NapCat data paths
+(relative `./napcat/config` and `./napcat/QQ` under the copied
+`message-gateway` directory work best). The backend `.env` must contain the same
+`MESSAGE_GATEWAY_API_KEY` and `MESSAGE_GATEWAY_URL=http://message-gateway:8081`.
 
 Do not use `--pull always` or `docker compose pull` for this stack: those bypass
 `pull_policy` and would try to fetch images from registries the server cannot
 reach. Every bundled service in the production compose file uses
 `pull_policy: never` and is served from the loaded tarball.
 
-NapCat persists its config and QQ login state in `./napcat/config` and
-`./napcat/QQ` next to the compose file. After the first start, open the WebUI
-through an SSH tunnel and scan the QR code once:
+NapCat is owned by the `message-gateway` stack, not this backend. Deploy the
+gateway from `../message-gateway`:
+
+```bash
+cd ../message-gateway
+docker compose --profile bundled-napcat up -d
+```
+
+NapCat persists its config and QQ login state in
+`../message-gateway/napcat/config` and `../message-gateway/napcat/QQ`. After the
+first start, open the WebUI through an SSH tunnel and scan the QR code once:
 
 ```bash
 ssh -L 6099:127.0.0.1:6099 server
 # then open http://127.0.0.1:6099/webui
-# first login token: docker compose -f docker-compose.prod.yml logs napcat
+# WebUI token: ../message-gateway/napcat/config/webui.json
 ```
 
-Later restarts reuse the saved session; set `NAPCAT_QUICK_ACCOUNT` in `.env` to
-auto-login without scanning again.
+Later restarts reuse the saved session; set `NAPCAT_QUICK_ACCOUNT` in the
+gateway `.env` to auto-login without scanning again.
 
-The backend sends messages through NapCat's OneBot HTTP server. Enable it on
-port `3001` in the WebUI and set `NAPCAT_BASE_URL` in `.env` to
-`http://127.0.0.1:3001` for a host-run backend or leave the Compose default
-(`http://napcat:3001`) for the container stack.
+The backend calls the gateway over HTTP. Set `MESSAGE_GATEWAY_URL` and
+`MESSAGE_GATEWAY_API_KEY` in the backend `.env` (the default URL is
+`http://message-gateway:8081` inside Compose). Do not set `NAPCAT_BASE_URL`;
+the legacy in-process manager must remain disabled.
 
 The image tags in the commands above come from `.env`; see
 [CONFIGURATION.md](CONFIGURATION.md#production-stack-docker-composeprodyml) for
@@ -305,14 +323,16 @@ the backend to the frontend's address. Because the frontend proxies `/api`,
 ## Run locally (development)
 
 `scripts/dev.sh` loads `.env` and starts the fake CAS server, Redis, local
-RustFS (when `S3_ENDPOINT` points at it), NapCat, and the backend:
+RustFS (when `S3_ENDPOINT` points at it), `message-gateway` with its bundled
+NapCat, and the backend:
 
 ```bash
 scripts/dev.sh
 ```
 
-Use `--no-cas`, `--no-redis`, `--no-storage`, or `--no-napcat` when a service is
-already running or storage is managed elsewhere. The complete local-development
+Use `--no-cas`, `--no-redis`, `--no-storage`, or `--no-message-gateway` when a
+service is already running or storage is managed elsewhere. `--no-napcat` is a
+deprecated alias for `--no-message-gateway`. The complete local-development
 settings, defaults, and manual steps are in
 [CONFIGURATION.md](CONFIGURATION.md#local-development).
 

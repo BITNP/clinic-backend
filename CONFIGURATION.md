@@ -80,54 +80,39 @@ until the provider is reachable.
 Prompt caching is provider-dependent. The system prompt is a stable prefix for
 each session, so providers with prefix caching can reuse it across calls.
 
-### Messaging (NapCat)
+### Outbound messaging (message-gateway)
 
-The backend can send QQ messages through NapCat's OneBot 11 HTTP API. Messaging
-is disabled when `NAPCAT_BASE_URL` is empty. When enabled, the backend keeps one
-in-memory FIFO queue per sender and spaces sends according to the configured gap
-policy. Pending messages are lost on restart.
+Outbound messaging is handled by the separate `message-gateway` project. The
+gateway owns platform adapters (currently NapCat/QQ), per-sender queues, gap
+policy, retry behavior, and the HTTP/WebSocket API. The backend does not connect
+to NapCat directly.
 
-Enable the OneBot **HTTP server** in NapCat's WebUI network settings on port
-`3001`. A host-run backend uses `http://127.0.0.1:3001`; the Compose backend
-uses `http://napcat:3001`.
+The preferred deployment is the gateway's bundled stack:
+
+```bash
+cd message-gateway
+docker compose --profile bundled-napcat up -d
+```
+
+`clinic-backend/scripts/dev.sh` starts this stack automatically and exports the
+gateway URL and API key to the backend.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `NAPCAT_BASE_URL` | empty | OneBot HTTP endpoint. Empty disables messaging. |
-| `NAPCAT_INTERNAL_BASE_URL` | empty | Compose-only override for the backend's OneBot endpoint. Empty uses `http://napcat:3001` inside Compose. |
-| `NAPCAT_ACCESS_TOKEN` | empty | Bearer token for the OneBot HTTP server. |
-| `NAPCAT_TIMEOUT` | `10s` | Per-request HTTP timeout. |
-| `NAPCAT_SENDER_KEY` | `qq` | Queue key. Use distinct keys for multiple accounts. |
-| `NAPCAT_DIRECTORY_REFRESH` | `30m` | Friend/group/member directory refresh interval. |
-| `NAPCAT_DIRECTORY_RETRY` | `5s` | Initial directory sync retry interval. |
-| `NAPCAT_DIRECTORY_TIMEOUT` | `60s` | One full directory sync timeout. |
-| `NAPCAT_GROUP_TEMP_SESSION` | `true` | Allow delivery to non-friends through shared groups. |
-| `MESSAGE_QUEUE_SIZE` | `100` | Per-sender queue capacity. |
-| `MESSAGE_SEND_TIMEOUT` | `30s` | Whole send operation timeout. |
-| `MESSAGE_MAX_ATTEMPTS` | `3` | Total attempts before a message is dropped. |
-| `MESSAGE_RETRY_BACKOFF` | `2s` | Delay after a transient failure. |
-| `MESSAGE_GAP_MODE` | `fixed` | `fixed` or `length`. |
-| `MESSAGE_GAP_FIXED` | `3s` | Base gap in fixed mode. |
-| `MESSAGE_GAP_LENGTH_BASE` | `1s` | Base gap in length mode. |
-| `MESSAGE_GAP_PER_RUNE` | `50ms` | Additional gap per message character in length mode. |
-| `MESSAGE_GAP_JITTER` | `1s` | Random extra gap in `[0, jitter)`. |
-| `MESSAGE_GAP_MIN` | `1s` | Lower bound for any computed gap. |
+| `MESSAGE_GATEWAY_URL` | `http://127.0.0.1:8081` for host dev | Gateway HTTP endpoint. Compose uses `http://message-gateway:8081`. |
+| `MESSAGE_GATEWAY_API_KEY` | required when messaging is enabled | Bearer token for the gateway. |
+| `MESSAGE_GATEWAY_TIMEOUT` | `5s` | Per-request client timeout. |
 
-Gap calculation:
+No business caller is wired to the gateway yet. These settings are the contract
+for the first caller and are already provided by Compose and `dev.sh`.
 
-- `fixed`: `MESSAGE_GAP_FIXED + random[0, MESSAGE_GAP_JITTER)`
-- `length`: `MESSAGE_GAP_LENGTH_BASE + MESSAGE_GAP_PER_RUNE × runeCount + random[0, MESSAGE_GAP_JITTER)`
-- The result is never below `MESSAGE_GAP_MIN`.
+The legacy `NAPCAT_*` and `MESSAGE_*` variables belong to the frozen
+`internal/message` copy and must not be set in new deployments. In particular,
+keep `NAPCAT_BASE_URL` empty so the in-process manager stays disabled.
 
-For private messages, the background directory sync records the bot's friends
-and which groups each user shares with the bot. Friends receive a normal private
-message. Non-friends are tried through each shared group's temporary session,
-then fall back to a plain private message. Set
-`NAPCAT_GROUP_TEMP_SESSION=false` to disable the shared-group path.
-
-The message queue is in-memory and assumes one backend instance owns each
-sender. Multiple backend replicas against the same QQ account would each pace
-sends independently.
+The gateway queue is in-memory and assumes one gateway instance per sender/QQ
+account. Pending messages are lost on gateway restart. See
+`message-gateway/README.md` and `message-gateway/API.md`.
 
 ### Object storage (S3)
 
@@ -238,23 +223,24 @@ openssl rand -hex 24                                 # secret key
 | `POSTGRES_PASSWORD` | `clinic` | Bundled Postgres password. |
 | `POSTGRES_DB` | `clinic` | Bundled Postgres database. |
 | `POSTGRES_PORT` | `5432` | Host port for the bundled Postgres. |
-| `NAPCAT_QUICK_ACCOUNT` | empty | QQ account NapCat quick-logs into after the first QR login. |
 
-The dev stack bundles Postgres, Redis, RustFS, `rustfs-init`, NapCat, and the
-backend. The backend is on `:8080`; the RustFS S3 API and console are
-loopback-only on `:9000` and `:9001`, and NapCat's WebUI and OneBot are
-loopback-only on `:6099` and `:3001`, by default. For local development without
-Compose, see [Local development](#local-development).
+The dev stack bundles Postgres, Redis, RustFS, `rustfs-init`, and the backend.
+The backend is on `:8080`; the RustFS S3 API and console are loopback-only on
+`:9000` and `:9001`. The message gateway and its bundled NapCat are a separate
+stack in `../message-gateway`; `scripts/dev.sh` starts it automatically. For
+local development without Compose, see [Local development](#local-development).
 
 ### Production stack (`docker-compose.prod.yml`)
 
 `docker-compose.prod.yml` is a standalone deploy config: only this file,
 `.env`, `deploy/rustfs/` and the packaged image tarball are needed on the
-server. It runs the backend, the admin frontend, NapCat, a bundled Redis
-service, and RustFS object storage, and connects to the Postgres already running
-on the server via `host.containers.internal` (no bundled database). It refuses
-to start if `CLINIC_API_KEY`, the required S3 settings, or the RustFS
-provisioning credentials are missing.
+server. It runs the backend, the admin frontend, a bundled Redis service, and
+RustFS object storage, and connects to the Postgres already running on the
+server via `host.containers.internal` (no bundled database). The message
+gateway and its NapCat are deployed separately from `../message-gateway`; the
+backend joins the `message-gateway` external network. It refuses to start if
+`CLINIC_API_KEY`, the required S3 settings, or the RustFS provisioning
+credentials are missing.
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -263,7 +249,6 @@ provisioning credentials are missing.
 | `ADMIN_FRONTEND_PORT` | `5173` | Host port for the admin frontend. |
 | `BACKEND_UPSTREAM` | `http://backend:8080` | Upstream the frontend proxies `/api`, `/login`, and `/logout` to. |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `clinic` | Used to build the default `CLINIC_DB_DSN` when it is not set. |
-| `NAPCAT_QUICK_ACCOUNT` | empty | QQ account NapCat quick-logs into after the first QR login. |
 
 Services and ports on the server:
 
@@ -276,11 +261,9 @@ Services and ports on the server:
   on the host (loopback only).
 - RustFS console: `127.0.0.1:9001` (SSH tunnel only).
 - RustFS data: `rustfsdata` named volume.
-- NapCat WebUI: `127.0.0.1:6099` (SSH tunnel only). Open
-  `http://127.0.0.1:6099/webui` for the first QR login.
-- NapCat OneBot: `127.0.0.1:3001`; the backend reaches it at `napcat:3001` on
-  the compose network.
-- NapCat data: `./napcat/config` and `./napcat/QQ` next to the compose file.
+- Message gateway: `message-gateway:8081` on the external `message-gateway`
+  network (deployed separately from `../message-gateway`). Its bundled NapCat
+  owns the QQ connection and the NapCat WebUI/OneBot ports.
 - Admin frontend: `:5173`.
 - Backend: `:8080` (compose-internal; expose a host port if you need to reach
   it directly).
@@ -322,16 +305,20 @@ override existing environment variables) and then starts:
 2. Redis on `:6379` (container, falling back to `redis-server`);
 3. RustFS and `rustfs-init` on `:9000` / `:9001` when `S3_ENDPOINT` points at
    local storage;
-4. NapCat, with its WebUI on `:6099` and OneBot on `:3001`;
+4. message-gateway with its bundled NapCat, gateway API on `:8081` and NapCat
+   WebUI on `:6099`;
 5. the backend on `:8080`.
 
 For a local `S3_ENDPOINT`, it starts RustFS and runs `rustfs-init` before
 starting the backend. Use `--no-storage` when storage is already managed
-elsewhere or points at an external S3 endpoint. On the first NapCat start, open
-`http://127.0.0.1:6099/webui` and scan the QR code (the WebUI token is in
-`docker compose logs napcat`); later starts reuse the saved session. Use
-`--no-napcat` when a QQ gateway is already running. Other flags: `--no-cas` and
-`--no-redis` when those services are already running.
+elsewhere or points at an external S3 endpoint. On the first gateway/NapCat
+start, open `http://127.0.0.1:6099/webui` and scan the QR code (the WebUI token
+is in `../message-gateway/napcat/config/webui.json`); later starts reuse the
+saved session. `scripts/dev.sh` reads the gateway API key from
+`../message-gateway/.env` and exports it as `MESSAGE_GATEWAY_API_KEY`. Use
+`--no-message-gateway` when a gateway is already running; `--no-napcat` is a
+deprecated alias. Other flags: `--no-cas` and `--no-redis` when those services
+are already running.
 
 Defaults applied by `scripts/dev.sh` when the variables are unset:
 
@@ -341,6 +328,8 @@ Defaults applied by `scripts/dev.sh` when the variables are unset:
 | `REDIS_PORT` | `6379` |
 | `BACKEND_PORT` | `8080` |
 | `REDIS_CONTAINER` | `clinic-dev-redis` |
+| `MESSAGE_GATEWAY_DIR` | `../message-gateway` |
+| `MESSAGE_GATEWAY_URL` | `http://127.0.0.1:8081` |
 | `CLINIC_API_KEY` | `local-dev-key` |
 | `REDIS_ADDR` | `127.0.0.1:6379` |
 | `REDIS_PASSWORD` | empty |
@@ -366,10 +355,14 @@ docker run --rm -p 6379:6379 redis:7-alpine
 #     S3 API on http://127.0.0.1:9000, console on http://127.0.0.1:9001
 docker compose up -d rustfs rustfs-init
 
-# 2c. Optional: start NapCat. Its WebUI is on http://127.0.0.1:6099/webui;
-#     scan the QR code there once, and set NAPCAT_QUICK_ACCOUNT in .env to
-#     reuse the saved login on later starts.
-docker compose up -d napcat
+# 2c. Optional: start message-gateway with its bundled NapCat. Its WebUI is on
+#     http://127.0.0.1:6099/webui; scan the QR code there once. The gateway
+#     data lives in ../message-gateway/napcat.
+(cd ../message-gateway && docker compose --profile bundled-napcat up -d)
+# Export these if running the backend outside scripts/dev.sh. The API key is in
+# ../message-gateway/.env.
+export MESSAGE_GATEWAY_URL=http://127.0.0.1:8081
+export MESSAGE_GATEWAY_API_KEY=<gateway-api-key>
 
 # 3. Start the backend. scripts/dev.sh loads .env, including S3_*.
 export CLINIC_API_KEY=local-dev-key
