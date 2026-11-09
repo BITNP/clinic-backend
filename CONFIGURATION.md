@@ -121,17 +121,20 @@ account. Pending messages are lost on gateway restart. See
 
 ### Health monitor (`clinic-health-monitor`)
 
-`clinic-health-monitor` polls the backend's `/healthz` endpoint and sends one
-private QQ alert per outage to the configured maintainers through
-`message-gateway`. It runs in the production Compose stack, joins the
-`message-gateway` external network, and has no host port.
+`clinic-health-monitor` polls the backend's `/healthz` endpoint and the admin
+frontend's `/` endpoint, and sends one private QQ alert per outage per target
+to the configured maintainers through `message-gateway`. It runs in the
+production stack, joins the `message-gateway` external network, and has no host
+port.
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `HEALTH_MONITOR_IMAGE_TAG` | `latest` | Monitor image tag to deploy. |
 | `MAINTAINER_QQ_IDS` | — (required) | Comma-separated QQ user ids that receive alerts. |
-| `MONITOR_TARGET_URL` | `http://backend:8080/healthz` | Health endpoint polled by the monitor. |
-| `MONITOR_TARGET_NAME` | `clinic-backend` | Name used in alert text. |
+| `MONITOR_TARGET_URL` | `http://backend:8080/healthz` | Backend health endpoint polled by the monitor. |
+| `MONITOR_TARGET_NAME` | `clinic-backend` | Backend target name used in alert text. |
+| `MONITOR_FRONTEND_URL` | `http://admin-frontend:80/` in Compose | Optional admin frontend endpoint. Empty disables frontend monitoring. |
+| `MONITOR_FRONTEND_NAME` | `clinic-admin-frontend` | Frontend target name used in alert text. |
 | `MONITOR_INSTANCE_NAME` | `clinic-prod` | Instance name used in alert text. |
 | `MONITOR_INTERVAL` | `30s` | Delay between checks. |
 | `MONITOR_TIMEOUT` | `5s` | Per-check HTTP timeout. |
@@ -145,7 +148,9 @@ reuses `MESSAGE_GATEWAY_API_KEY` and `MESSAGE_GATEWAY_TIMEOUT`.
 `MAINTAINER_QQ_IDS` and a non-empty `MESSAGE_GATEWAY_API_KEY` are required for
 the production stack to start.
 
-`/healthz` currently pings Redis only; it does not check Postgres or S3. See
+`/healthz` currently pings Redis only; it does not check Postgres or S3. The
+frontend `/` probe verifies Caddy serves `index.html`; it does not execute
+JavaScript or check the public ingress path. See
 `clinic-health-monitor/README.md` for the alert state machine and limitations.
 
 ### Object storage (S3)

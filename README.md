@@ -193,9 +193,10 @@ The image tags in the commands above come from `.env`; see
 [CONFIGURATION.md](CONFIGURATION.md#production-stack-docker-composeprodyml) for
 pinning specific versions, including `HEALTH_MONITOR_IMAGE_TAG`.
 
-The health monitor polls `http://backend:8080/healthz` and sends one private QQ
-message per outage to each id in `MAINTAINER_QQ_IDS`. Its `MONITOR_*` settings
-and limitations are documented in
+The health monitor polls the backend's `/healthz` endpoint and the admin
+frontend's `/` endpoint, and sends one private QQ message per outage per target
+to each id in `MAINTAINER_QQ_IDS`. Its `MONITOR_*` settings and limitations are
+documented in
 [CONFIGURATION.md](CONFIGURATION.md#health-monitor-clinic-health-monitor) and
 `clinic-health-monitor/README.md`.
 
