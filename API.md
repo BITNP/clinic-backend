@@ -541,6 +541,142 @@ curl -X DELETE "$BASE/api/admin/service-dates/1" \
   -b cookies.txt -H "X-CSRF-Token: $CSRF"
 ```
 
+## Admin: campuses
+
+Campus object:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | integer | Campus id. |
+| `name` | string | Unique campus name, max 64 characters. |
+
+Mutations bump the `room` counter.
+
+### `GET /api/admin/campuses`
+
+**Description:** Lists campuses. Staff and admin.
+
+**Query parameters**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | string | no | Case-sensitive substring match. |
+| `page` | integer | no | Default `1`. |
+| `pageSize` | integer | no | Default `20`. |
+
+**Response `200 OK`** — paginated campus objects, ordered by id ascending.
+
+**Error responses:** `401`, `500`.
+
+**curl**
+
+```bash
+curl "$BASE/api/admin/campuses" -b cookies.txt
+```
+
+### `GET /api/admin/campuses/{id}`
+
+**Description:** Returns one campus. Staff and admin.
+
+**Response `200 OK`** — campus object.
+
+**Error responses:** `400`, `401`, `404`.
+
+**curl**
+
+```bash
+curl "$BASE/api/admin/campuses/1" -b cookies.txt
+```
+
+### `POST /api/admin/campuses`
+
+**Description:** Creates a campus. Admin only. Bumps the `room` counter.
+
+**Request body**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | string | yes | Max 64, unique. |
+
+**Response `201 Created`** — campus object.
+
+**Error responses:** `400`, `401`, `403`, `409` (name taken).
+
+**curl**
+
+```bash
+curl -X POST "$BASE/api/admin/campuses" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"默认校区"}'
+```
+
+### `PUT /api/admin/campuses/{id}`
+
+**Description:** Updates a campus. Admin only. Bumps the `room` counter.
+
+**Request body**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | string | no | Max 64, unique. |
+
+**Response `200 OK`** — updated campus object.
+
+**Error responses:** `400`, `401`, `403`, `404`, `409` (name taken).
+
+**curl**
+
+```bash
+curl -X PUT "$BASE/api/admin/campuses/1" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"主校区"}'
+```
+
+### `DELETE /api/admin/campuses/{id}`
+
+**Description:** Deletes a campus. Admin only. Refused while any room belongs to
+the campus. Bumps the `room` counter.
+
+**Response `204 No Content`**
+
+**Error responses:** `400`, `401`, `403`, `404`, `409` (campus still has rooms).
+
+**curl**
+
+```bash
+curl -X DELETE "$BASE/api/admin/campuses/1" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF"
+```
+
+### `GET /api/admin/campuses/{id}/rooms`
+
+**Description:** Lists the rooms belonging to one campus. Staff and admin.
+
+**Query parameters**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | string | no | Case-sensitive substring match. |
+| `enabled` | string | no | `true` returns only enabled rooms. |
+| `type` | string | no | `normal`, `dynamic`, or `auto_select`. |
+| `page` | integer | no | Default `1`. |
+| `pageSize` | integer | no | Default `20`. |
+
+**Response `200 OK`** — paginated room objects, ordered by id ascending. Each
+room includes its nested `campus` object.
+
+**Error responses:** `400` (invalid id or type), `401`, `404` (campus not
+found), `500`.
+
+**curl**
+
+```bash
+curl "$BASE/api/admin/campuses/1/rooms?enabled=true&type=normal" \
+  -b cookies.txt
+```
+
 ## Admin: rooms
 
 Room object:
@@ -548,9 +684,12 @@ Room object:
 | Field | Type | Description |
 | --- | --- | --- |
 | `id` | integer | Room id. |
-| `name` | string | Unique room/campus name, max 64 characters. |
+| `name` | string | Unique room name, max 64 characters. |
 | `address` | string | Address text, max 256 characters. |
 | `enabled` | boolean | Disabled rooms are not bookable. |
+| `campus_id` | integer | Id of the campus the room belongs to. |
+| `campus` | object | Nested campus `{id, name}`; included in room list responses. |
+| `type` | string | `normal`, `dynamic`, or `auto_select`. Defaults to `normal`. |
 
 Mutations bump the `room` counter.
 

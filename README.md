@@ -376,7 +376,7 @@ The backend keeps one change counter per data group in Redis
 | Group | Key | Changed by |
 | --- | --- | --- |
 | record | `clinic:sync:record` | admin record actions, customer tickets/wechat, nightly cleanup, record tagger |
-| room | `clinic:sync:room` | room create/update/delete |
+| room | `clinic:sync:room` | room and campus create/update/delete |
 | work_schedule | `clinic:sync:work_schedule` | work schedule create/update/delete and staff/weekday edits |
 | service_date | `clinic:sync:service_date` | service date create/update/delete |
 | staff | `clinic:sync:staff` | staff create/update/delete, CAS/Keycloak login upserts |
