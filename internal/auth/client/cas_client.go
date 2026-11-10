@@ -15,6 +15,7 @@ import (
 type CASAttributes struct {
 	User     string
 	Realname string
+	QQNumber string
 	Groups   []string
 	Raw      map[string][]string
 }
@@ -160,6 +161,10 @@ func parseAttributes(attrs *casAttributes) CASAttributes {
 		case "name", "realname", "display_name", "displayName":
 			if result.Realname == "" {
 				result.Realname = value
+			}
+		case "qq-number", "qq_number":
+			if result.QQNumber == "" {
+				result.QQNumber = value
 			}
 		case "groups", "group", "memberOf", "member":
 			for _, g := range strings.Split(value, ",") {

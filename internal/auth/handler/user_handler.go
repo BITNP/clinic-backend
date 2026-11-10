@@ -13,6 +13,7 @@ type UserResponse struct {
 	AccountID string `json:"account_id"`
 	Realname  string `json:"realname"`
 	Email     string `json:"email"`
+	QQNumber  string `json:"qq_number"`
 	Role      string `json:"role"`
 }
 
@@ -48,6 +49,7 @@ func toUserResponse(staff staffmodel.ClinicStaff, role StaffRole) UserResponse {
 		AccountID: staff.AccountID,
 		Realname:  staff.Realname,
 		Email:     staff.Email,
+		QQNumber:  staff.QQNumber,
 		Role:      string(role),
 	}
 }

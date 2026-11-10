@@ -22,11 +22,13 @@ type createStaffRequest struct {
 	AccountID string `json:"account_id" binding:"required"`
 	Realname  string `json:"realname"`
 	Email     string `json:"email"`
+	QQNumber  string `json:"qq_number"`
 }
 
 type updateStaffRequest struct {
 	Realname *string `json:"realname"`
 	Email    *string `json:"email"`
+	QQNumber *string `json:"qq_number"`
 }
 
 func (h *StaffHandler) List(c *gin.Context) {
@@ -62,7 +64,7 @@ func (h *StaffHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	s, err := h.svc.GetOrCreateByAccountID(req.AccountID, req.Realname, req.Email, "")
+	s, err := h.svc.GetOrCreateByAccountID(req.AccountID, req.Realname, req.Email, req.QQNumber)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -91,6 +93,7 @@ func (h *StaffHandler) Update(c *gin.Context) {
 	s, err := h.svc.Update(id, staffservice.UpdateStaffInput{
 		Realname: req.Realname,
 		Email:    req.Email,
+		QQNumber: req.QQNumber,
 	})
 	if err != nil {
 		if errors.Is(err, staffservice.ErrStaffNotFound) {

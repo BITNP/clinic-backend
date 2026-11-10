@@ -71,6 +71,7 @@ func TestCASClient_ValidateTicket_Success(t *testing.T) {
     <cas:attributes>
       <cas:preferred_username>student42</cas:preferred_username>
       <cas:name>Alice Smith</cas:name>
+      <cas:qq-number>123456789</cas:qq-number>
       <cas:groups>/management</cas:groups>
       <cas:groups>/clinic</cas:groups>
     </cas:attributes>
@@ -89,6 +90,9 @@ func TestCASClient_ValidateTicket_Success(t *testing.T) {
 	}
 	if attrs.Realname != "Alice Smith" {
 		t.Errorf("realname: got %q", attrs.Realname)
+	}
+	if attrs.QQNumber != "123456789" {
+		t.Errorf("qq number: got %q", attrs.QQNumber)
 	}
 	if len(attrs.Groups) != 2 {
 		t.Errorf("groups: got %+v", attrs.Groups)

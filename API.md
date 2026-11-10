@@ -216,6 +216,7 @@ session cookie or a Keycloak bearer token.
 | `account_id` | string | CAS/Keycloak account id. |
 | `realname` | string | Display name. |
 | `email` | string | Email address. |
+| `qq_number` | string | QQ number from the `qq-number` login claim (`""` if unset). |
 | `role` | string | `staff` or `admin` (`""` if unknown). |
 
 ```json
@@ -224,6 +225,7 @@ session cookie or a Keycloak bearer token.
   "account_id": "20230001",
   "realname": "张三",
   "email": "zhangsan@example.com",
+  "qq_number": "123456789",
   "role": "staff"
 }
 ```
@@ -245,7 +247,7 @@ endpoint always returns `200`. Anonymous callers receive a zero-valued user
 **Response `200 OK`** — same shape as `/api/user`; anonymous:
 
 ```json
-{ "id": 0, "account_id": "", "realname": "", "email": "", "role": "" }
+{ "id": 0, "account_id": "", "realname": "", "email": "", "qq_number": "", "role": "" }
 ```
 
 **Error responses:** none expected (`500` only on unexpected errors).
@@ -1136,6 +1138,7 @@ Staff object:
 | `account_id` | string | CAS/Keycloak account id, unique. |
 | `realname` | string | Display name. |
 | `email` | string | Email address. |
+| `qq_number` | string | QQ number, synced from the `qq-number` login claim. A missing claim does not clear it. |
 | `role` | string | `staff`, `admin`, or `""`. |
 | `version` | integer | Login version; compared with `STAFF_VERSION`. |
 
@@ -1162,6 +1165,7 @@ All staff endpoints are **admin only**. Mutations bump the `staff` counter.
       "account_id": "20230001",
       "realname": "张三",
       "email": "zhangsan@example.com",
+      "qq_number": "123456789",
       "role": "staff",
       "handled_count": 12,
       "work_years": [2026, 2025]
@@ -1195,7 +1199,7 @@ curl "$BASE/api/admin/staff/1" -b cookies.txt
 ### `POST /api/admin/staff`
 
 **Description:** Creates a staff row, or returns the existing one for
-`account_id` (updating real name/email when supplied).
+`account_id` (updating real name, email, and QQ number when supplied).
 
 **Request body**
 
@@ -1204,6 +1208,7 @@ curl "$BASE/api/admin/staff/1" -b cookies.txt
 | `account_id` | string | yes | Account id. |
 | `realname` | string | no | Display name. |
 | `email` | string | no | Email address; when non-empty it is written. |
+| `qq_number` | string | no | QQ number; when non-empty it is written. |
 
 **Response `201 Created`** — staff object.
 
@@ -1215,14 +1220,14 @@ curl "$BASE/api/admin/staff/1" -b cookies.txt
 curl -X POST "$BASE/api/admin/staff" \
   -b cookies.txt -H "X-CSRF-Token: $CSRF" \
   -H 'Content-Type: application/json' \
-  -d '{"account_id":"20230002","realname":"李四","email":"lisi@example.com"}'
+  -d '{"account_id":"20230002","realname":"李四","email":"lisi@example.com","qq_number":"123456789"}'
 ```
 
 ### `PUT /api/admin/staff/{id}`
 
-**Description:** Updates real name/email.
+**Description:** Updates real name, email, and QQ number.
 
-**Request body** — `realname` and `email`, both optional.
+**Request body** — `realname`, `email`, and `qq_number`, all optional.
 
 **Response `200 OK`** — staff object.
 
@@ -1234,7 +1239,7 @@ curl -X POST "$BASE/api/admin/staff" \
 curl -X PUT "$BASE/api/admin/staff/1" \
   -b cookies.txt -H "X-CSRF-Token: $CSRF" \
   -H 'Content-Type: application/json' \
-  -d '{"realname":"张三（新）"}'
+  -d '{"realname":"张三（新）","qq_number":"123456789"}'
 ```
 
 ### `DELETE /api/admin/staff/{id}`

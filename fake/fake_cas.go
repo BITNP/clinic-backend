@@ -21,6 +21,7 @@ func main() {
     <cas:user>manualuser</cas:user>
     <cas:attributes>
       <cas:name>Manual Tester</cas:name>
+      <cas:qq-number>123456789</cas:qq-number>
       <cas:groups>/clinic</cas:groups>
       <cas:groups>/management</cas:groups>
     </cas:attributes>

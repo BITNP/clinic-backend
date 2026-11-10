@@ -174,6 +174,41 @@ func TestCASAuthHandler_LoginCallback(t *testing.T) {
 	}
 }
 
+func TestCASAuthHandler_LoginCallback_RecordsQQNumber(t *testing.T) {
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = fmt.Fprint(w, `
+<cas:serviceResponse xmlns:cas='http://www.yale.edu/tp/cas'>
+  <cas:authenticationSuccess>
+    <cas:user>student42</cas:user>
+    <cas:attributes>
+      <cas:name>Alice Smith</cas:name>
+      <cas:qq-number>123456789</cas:qq-number>
+      <cas:groups>/clinic</cas:groups>
+    </cas:attributes>
+  </cas:authenticationSuccess>
+</cas:serviceResponse>`)
+	}))
+	defer fake.Close()
+
+	r, _, db := setupCASAuthRouter(t, fake)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/login?ticket=ST-123", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var staff staffmodel.ClinicStaff
+	if err := db.Where("account_id = ?", "student42").First(&staff).Error; err != nil {
+		t.Fatalf("load staff: %v", err)
+	}
+	if staff.QQNumber != "123456789" {
+		t.Errorf("qq number: got %q, want %q", staff.QQNumber, "123456789")
+	}
+}
+
 func TestCASAuthHandler_LoginCallback_RecordsWorkYear(t *testing.T) {
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/xml")

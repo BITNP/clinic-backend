@@ -70,7 +70,11 @@ func jwksHandler(key *rsa.PrivateKey, kid string) http.HandlerFunc {
 }
 
 func signTestJWT(key *rsa.PrivateKey, kid, issuer, audience, username, name string, groups []string) (string, error) {
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+	return signTestJWTExtra(key, kid, issuer, audience, username, name, groups, nil)
+}
+
+func signTestJWTExtra(key *rsa.PrivateKey, kid, issuer, audience, username, name string, groups []string, extra map[string]any) (string, error) {
+	claims := jwt.MapClaims{
 		"iss":                issuer,
 		"aud":                audience,
 		"sub":                username + "-sub",
@@ -80,7 +84,11 @@ func signTestJWT(key *rsa.PrivateKey, kid, issuer, audience, username, name stri
 		"groups":             groups,
 		"iat":                time.Now().Unix(),
 		"exp":                time.Now().Add(time.Hour).Unix(),
-	})
+	}
+	for k, v := range extra {
+		claims[k] = v
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	token.Header["kid"] = kid
 	return token.SignedString(key)
 }
@@ -131,6 +139,52 @@ func TestKeycloakAuthenticator_Authenticate(t *testing.T) {
 	}
 	if wyCount != 1 {
 		t.Errorf("expected work year 2025 to be recorded")
+	}
+}
+
+func TestKeycloakAuthenticator_AuthenticateStoresQQNumber(t *testing.T) {
+	key, kid, staffSvc, db := setupKeycloakTest(t)
+	fake := httptest.NewServer(jwksHandler(key, kid))
+	defer fake.Close()
+
+	a := authhandler.NewKeycloakAuthenticator(fake.URL+"/realms/fake", "clinic-backend", staffSvc)
+
+	cases := []struct {
+		name  string
+		claim any
+		want  string
+	}{
+		{name: "string", claim: "123456789", want: "123456789"},
+		{name: "number", claim: float64(987654321), want: "987654321"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			username := "staff-" + tc.name
+			token, err := signTestJWTExtra(
+				key, kid, fake.URL+"/realms/fake/", "clinic-backend",
+				username, "Staff One", []string{"/clinic"},
+				map[string]any{"qq-number": tc.claim},
+			)
+			if err != nil {
+				t.Fatalf("sign jwt: %v", err)
+			}
+
+			staff, _, err := a.Authenticate(token)
+			if err != nil {
+				t.Fatalf("authenticate: %v", err)
+			}
+			if staff.QQNumber != tc.want {
+				t.Errorf("qq number in response: got %q, want %q", staff.QQNumber, tc.want)
+			}
+
+			var stored staffmodel.ClinicStaff
+			if err := db.Where("account_id = ?", username).First(&stored).Error; err != nil {
+				t.Fatalf("load staff: %v", err)
+			}
+			if stored.QQNumber != tc.want {
+				t.Errorf("stored qq number: got %q, want %q", stored.QQNumber, tc.want)
+			}
+		})
 	}
 }
 

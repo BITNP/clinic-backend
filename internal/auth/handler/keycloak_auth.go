@@ -10,6 +10,7 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -85,7 +86,8 @@ func (a *KeycloakAuthenticator) Authenticate(tokenStr string) (staffmodel.Clinic
 
 	realname := extractRealname(claims)
 	email := extractEmail(claims)
-	staff, err := a.staffSvc.GetOrCreateByAccountID(accountID, realname, email)
+	qqNumber := extractQQNumber(claims)
+	staff, err := a.staffSvc.GetOrCreateByAccountID(accountID, realname, email, qqNumber)
 	if err != nil {
 		return staffmodel.ClinicStaff{}, "", fmt.Errorf("resolve staff: %w", err)
 	}
@@ -156,6 +158,18 @@ func extractRealname(claims jwt.MapClaims) string {
 func extractEmail(claims jwt.MapClaims) string {
 	if v, ok := claims["email"].(string); ok && v != "" {
 		return v
+	}
+	return ""
+}
+
+// extractQQNumber reads the Keycloak "qq-number" claim. Keycloak usually
+// releases user attributes as strings, but numeric claims are accepted too.
+func extractQQNumber(claims jwt.MapClaims) string {
+	switch v := claims["qq-number"].(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
 	}
 	return ""
 }

@@ -41,7 +41,7 @@ func setupUserHandlerRouter(t *testing.T, staff *staffmodel.ClinicStaff, role au
 }
 
 func TestUserHandler_Current_Authenticated(t *testing.T) {
-	staff := staffmodel.ClinicStaff{ID: 3, AccountID: "alice", Realname: "张三", Email: "alice@example.com"}
+	staff := staffmodel.ClinicStaff{ID: 3, AccountID: "alice", Realname: "张三", Email: "alice@example.com", QQNumber: "123456789"}
 	r := setupUserHandlerRouter(t, &staff, authhandler.RoleStaff)
 
 	w := testutil.DoRequest(t, r, http.MethodGet, "/api/user/", nil)
@@ -55,6 +55,9 @@ func TestUserHandler_Current_Authenticated(t *testing.T) {
 	}
 	if got.ID != 3 || got.AccountID != "alice" || got.Role != "staff" {
 		t.Errorf("unexpected user response: %+v", got)
+	}
+	if got.QQNumber != "123456789" {
+		t.Errorf("qq number: got %q", got.QQNumber)
 	}
 }
 

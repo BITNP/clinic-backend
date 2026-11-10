@@ -85,7 +85,7 @@ func (h *CASAuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	staff, err := h.cfg.StaffService.GetOrCreateByAccountID(attrs.User, attrs.Realname, "")
+	staff, err := h.cfg.StaffService.GetOrCreateByAccountID(attrs.User, attrs.Realname, "", attrs.QQNumber)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve staff"})
 		return
