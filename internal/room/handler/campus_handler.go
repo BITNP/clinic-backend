@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"clinic-backend/internal/httpx"
-	roommodel "clinic-backend/internal/room/model"
 	roomservice "clinic-backend/internal/room/service"
 
 	"github.com/gin-gonic/gin"
@@ -113,14 +112,11 @@ func (h *CampusHandler) ListRooms(c *gin.Context) {
 		EnabledOnly: c.Query("enabled") == "true",
 		CampusID:    &id,
 	}
-	if v := c.Query("type"); v != "" {
-		roomType := roommodel.RoomType(v)
-		if !roomType.Valid() {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid type"})
-			return
-		}
-		f.Type = &roomType
+	roomType, ok := parseRoomTypeQuery(c)
+	if !ok {
+		return
 	}
+	f.Type = roomType
 	f.Page, f.PageSize = httpx.ParsePagination(c)
 
 	items, total, err := h.roomSvc.List(f)

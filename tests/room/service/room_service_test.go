@@ -28,11 +28,29 @@ func boolPtr(v bool) *bool { return &v }
 
 func strPtr(v string) *string { return &v }
 
+func testCampusID(t *testing.T, db *gorm.DB) uint {
+	t.Helper()
+	var campus roommodel.ClinicCampus
+	if err := db.Where("name = ?", "Test Campus").
+		FirstOrCreate(&campus, roommodel.ClinicCampus{Name: "Test Campus"}).Error; err != nil {
+		t.Fatalf("seed campus: %v", err)
+	}
+	return campus.ID
+}
+
+func createRoom(t *testing.T, db *gorm.DB, roomSvc *roomservice.RoomService, in roomservice.CreateRoomInput) (roommodel.ClinicRoom, error) {
+	t.Helper()
+	if in.CampusID == 0 {
+		in.CampusID = testCampusID(t, db)
+	}
+	return roomSvc.Create(in)
+}
+
 func TestRoomService_Create_Defaults(t *testing.T) {
 	db := setupRoomServiceDB(t)
 	svc := roomservice.NewRoomService(db)
 
-	r, err := svc.Create(roomservice.CreateRoomInput{
+	r, err := createRoom(t, db, svc, roomservice.CreateRoomInput{
 		Name:    "Main Campus Clinic",
 		Address: "123 University Ave",
 	})
@@ -45,13 +63,72 @@ func TestRoomService_Create_Defaults(t *testing.T) {
 	if !r.Enabled {
 		t.Errorf("expected Enabled to default to true, got %v", r.Enabled)
 	}
+	if r.Type != roommodel.RoomTypeNormal {
+		t.Errorf("expected Type to default to normal, got %q", r.Type)
+	}
+	if r.CampusID == nil || r.Campus == nil {
+		t.Fatalf("expected campus to be set, got campus_id=%v campus=%+v", r.CampusID, r.Campus)
+	}
+}
+
+func TestRoomService_Create_RequiresCampus(t *testing.T) {
+	db := setupRoomServiceDB(t)
+	svc := roomservice.NewRoomService(db)
+
+	_, err := svc.Create(roomservice.CreateRoomInput{Name: "No Campus", Address: "x"})
+	if !errors.Is(err, roomservice.ErrRoomCampusRequired) {
+		t.Fatalf("expected ErrRoomCampusRequired, got %v", err)
+	}
+}
+
+func TestRoomService_Create_CampusNotFound(t *testing.T) {
+	db := setupRoomServiceDB(t)
+	svc := roomservice.NewRoomService(db)
+
+	_, err := svc.Create(roomservice.CreateRoomInput{Name: "Bad Campus", Address: "x", CampusID: 999})
+	if !errors.Is(err, roomservice.ErrRoomCampusNotFound) {
+		t.Fatalf("expected ErrRoomCampusNotFound, got %v", err)
+	}
+}
+
+func TestRoomService_Create_InvalidType(t *testing.T) {
+	db := setupRoomServiceDB(t)
+	svc := roomservice.NewRoomService(db)
+
+	_, err := svc.Create(roomservice.CreateRoomInput{
+		Name:     "Bad Type",
+		Address:  "x",
+		CampusID: testCampusID(t, db),
+		Type:     "invalid",
+	})
+	if !errors.Is(err, roomservice.ErrRoomInvalidType) {
+		t.Fatalf("expected ErrRoomInvalidType, got %v", err)
+	}
+}
+
+func TestRoomService_Create_ExplicitType(t *testing.T) {
+	db := setupRoomServiceDB(t)
+	svc := roomservice.NewRoomService(db)
+
+	r, err := svc.Create(roomservice.CreateRoomInput{
+		Name:     "Dynamic Room",
+		Address:  "x",
+		CampusID: testCampusID(t, db),
+		Type:     roommodel.RoomTypeDynamic,
+	})
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+	if r.Type != roommodel.RoomTypeDynamic {
+		t.Errorf("type = %q, want dynamic", r.Type)
+	}
 }
 
 func TestRoomService_Create_ExplicitDisabled(t *testing.T) {
 	db := setupRoomServiceDB(t)
 	svc := roomservice.NewRoomService(db)
 
-	r, err := svc.Create(roomservice.CreateRoomInput{
+	r, err := createRoom(t, db, svc, roomservice.CreateRoomInput{
 		Name:    "Quiet Room",
 		Address: "Building B",
 		Enabled: boolPtr(false),
@@ -68,10 +145,10 @@ func TestRoomService_Create_DuplicateName(t *testing.T) {
 	db := setupRoomServiceDB(t)
 	svc := roomservice.NewRoomService(db)
 
-	if _, err := svc.Create(roomservice.CreateRoomInput{Name: "A", Address: "x"}); err != nil {
+	if _, err := createRoom(t, db, svc, roomservice.CreateRoomInput{Name: "A", Address: "x"}); err != nil {
 		t.Fatalf("first create failed: %v", err)
 	}
-	_, err := svc.Create(roomservice.CreateRoomInput{Name: "A", Address: "y"})
+	_, err := createRoom(t, db, svc, roomservice.CreateRoomInput{Name: "A", Address: "y"})
 	if !errors.Is(err, roomservice.ErrRoomNameTaken) {
 		t.Fatalf("expected ErrRoomNameTaken, got %v", err)
 	}
@@ -99,7 +176,7 @@ func TestRoomService_List_FilterAndPaging(t *testing.T) {
 		{Name: "Delta", Address: "d1", Enabled: boolPtr(true)},
 	}
 	for _, in := range seed {
-		if _, err := svc.Create(in); err != nil {
+		if _, err := createRoom(t, db, svc, in); err != nil {
 			t.Fatalf("seed create failed: %v", err)
 		}
 	}
@@ -168,7 +245,7 @@ func TestRoomService_Update_Partial(t *testing.T) {
 	db := setupRoomServiceDB(t)
 	svc := roomservice.NewRoomService(db)
 
-	r, err := svc.Create(roomservice.CreateRoomInput{Name: "Old", Address: "Old Addr"})
+	r, err := createRoom(t, db, svc, roomservice.CreateRoomInput{Name: "Old", Address: "Old Addr"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
@@ -188,11 +265,79 @@ func TestRoomService_Update_Partial(t *testing.T) {
 	}
 }
 
+func TestRoomService_Update_CampusAndType(t *testing.T) {
+	db := setupRoomServiceDB(t)
+	svc := roomservice.NewRoomService(db)
+
+	oldCampus := testCampusID(t, db)
+	newCampus := roommodel.ClinicCampus{Name: "New Campus"}
+	if err := db.Create(&newCampus).Error; err != nil {
+		t.Fatalf("seed campus: %v", err)
+	}
+
+	r, err := svc.Create(roomservice.CreateRoomInput{
+		Name:     "Room",
+		Address:  "addr",
+		CampusID: oldCampus,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	roomType := roommodel.RoomTypeDynamic
+	updated, err := svc.Update(r.ID, roomservice.UpdateRoomInput{
+		CampusID: &newCampus.ID,
+		Type:     &roomType,
+	})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if updated.CampusID == nil || *updated.CampusID != newCampus.ID {
+		t.Errorf("campus_id = %v, want %d", updated.CampusID, newCampus.ID)
+	}
+	if updated.Campus == nil || updated.Campus.ID != newCampus.ID {
+		t.Errorf("campus = %+v, want campus %d", updated.Campus, newCampus.ID)
+	}
+	if updated.Type != roommodel.RoomTypeDynamic {
+		t.Errorf("type = %q, want dynamic", updated.Type)
+	}
+}
+
+func TestRoomService_Update_InvalidCampus(t *testing.T) {
+	db := setupRoomServiceDB(t)
+	svc := roomservice.NewRoomService(db)
+
+	r, err := createRoom(t, db, svc, roomservice.CreateRoomInput{Name: "Room", Address: "addr"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	badCampus := uint(999)
+	_, err = svc.Update(r.ID, roomservice.UpdateRoomInput{CampusID: &badCampus})
+	if !errors.Is(err, roomservice.ErrRoomCampusNotFound) {
+		t.Fatalf("expected ErrRoomCampusNotFound, got %v", err)
+	}
+}
+
+func TestRoomService_Update_InvalidType(t *testing.T) {
+	db := setupRoomServiceDB(t)
+	svc := roomservice.NewRoomService(db)
+
+	r, err := createRoom(t, db, svc, roomservice.CreateRoomInput{Name: "Room", Address: "addr"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	badType := roommodel.RoomType("invalid")
+	_, err = svc.Update(r.ID, roomservice.UpdateRoomInput{Type: &badType})
+	if !errors.Is(err, roomservice.ErrRoomInvalidType) {
+		t.Fatalf("expected ErrRoomInvalidType, got %v", err)
+	}
+}
+
 func TestRoomService_Update_ToggleEnabled(t *testing.T) {
 	db := setupRoomServiceDB(t)
 	svc := roomservice.NewRoomService(db)
 
-	r, err := svc.Create(roomservice.CreateRoomInput{Name: "X", Address: "y"})
+	r, err := createRoom(t, db, svc, roomservice.CreateRoomInput{Name: "X", Address: "y"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
@@ -210,7 +355,7 @@ func TestRoomService_Update_Disable_UnfinishedRecordRejected(t *testing.T) {
 	db := setupRoomServiceDB(t)
 	svc := roomservice.NewRoomService(db)
 
-	r, err := svc.Create(roomservice.CreateRoomInput{Name: "X", Address: "y"})
+	r, err := createRoom(t, db, svc, roomservice.CreateRoomInput{Name: "X", Address: "y"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
@@ -228,7 +373,7 @@ func TestRoomService_Update_Disable_FinishedRecordAllowed(t *testing.T) {
 	db := setupRoomServiceDB(t)
 	svc := roomservice.NewRoomService(db)
 
-	r, err := svc.Create(roomservice.CreateRoomInput{Name: "X", Address: "y"})
+	r, err := createRoom(t, db, svc, roomservice.CreateRoomInput{Name: "X", Address: "y"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
@@ -249,7 +394,7 @@ func TestRoomService_Update_Enable_UnfinishedRecordAllowed(t *testing.T) {
 	db := setupRoomServiceDB(t)
 	svc := roomservice.NewRoomService(db)
 
-	r, err := svc.Create(roomservice.CreateRoomInput{Name: "X", Address: "y", Enabled: boolPtr(false)})
+	r, err := createRoom(t, db, svc, roomservice.CreateRoomInput{Name: "X", Address: "y", Enabled: boolPtr(false)})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
@@ -270,10 +415,10 @@ func TestRoomService_Update_DuplicateName(t *testing.T) {
 	db := setupRoomServiceDB(t)
 	svc := roomservice.NewRoomService(db)
 
-	if _, err := svc.Create(roomservice.CreateRoomInput{Name: "A", Address: "x"}); err != nil {
+	if _, err := createRoom(t, db, svc, roomservice.CreateRoomInput{Name: "A", Address: "x"}); err != nil {
 		t.Fatalf("first create failed: %v", err)
 	}
-	r2, err := svc.Create(roomservice.CreateRoomInput{Name: "B", Address: "y"})
+	r2, err := createRoom(t, db, svc, roomservice.CreateRoomInput{Name: "B", Address: "y"})
 	if err != nil {
 		t.Fatalf("second create failed: %v", err)
 	}
@@ -297,7 +442,7 @@ func TestRoomService_Delete_Success(t *testing.T) {
 	db := setupRoomServiceDB(t)
 	svc := roomservice.NewRoomService(db)
 
-	r, err := svc.Create(roomservice.CreateRoomInput{Name: "X", Address: "y"})
+	r, err := createRoom(t, db, svc, roomservice.CreateRoomInput{Name: "X", Address: "y"})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
@@ -328,7 +473,7 @@ func TestRoomService_Delete_InUse_ServiceDate(t *testing.T) {
 	}
 	svc := roomservice.NewRoomService(db)
 
-	room, err := svc.Create(roomservice.CreateRoomInput{Name: "R", Address: "a"})
+	room, err := createRoom(t, db, svc, roomservice.CreateRoomInput{Name: "R", Address: "a"})
 	if err != nil {
 		t.Fatalf("create room: %v", err)
 	}
@@ -352,7 +497,7 @@ func TestRoomService_Delete_InUse_Record(t *testing.T) {
 	}
 	svc := roomservice.NewRoomService(db)
 
-	room, err := svc.Create(roomservice.CreateRoomInput{Name: "R", Address: "a"})
+	room, err := createRoom(t, db, svc, roomservice.CreateRoomInput{Name: "R", Address: "a"})
 	if err != nil {
 		t.Fatalf("create room: %v", err)
 	}
@@ -423,7 +568,7 @@ func TestRoomService_Delete_UnfinishedRecord(t *testing.T) {
 	db := setupRoomServiceDB(t)
 	svc := roomservice.NewRoomService(db)
 
-	room, err := svc.Create(roomservice.CreateRoomInput{Name: "R", Address: "a"})
+	room, err := createRoom(t, db, svc, roomservice.CreateRoomInput{Name: "R", Address: "a"})
 	if err != nil {
 		t.Fatalf("create room: %v", err)
 	}
