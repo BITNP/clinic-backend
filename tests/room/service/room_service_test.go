@@ -367,6 +367,58 @@ func TestRoomService_Delete_InUse_Record(t *testing.T) {
 	}
 }
 
+func TestRoomService_List_CampusAndTypeFilters(t *testing.T) {
+	db := setupRoomServiceDB(t)
+	svc := roomservice.NewRoomService(db)
+
+	mainCampus := roommodel.ClinicCampus{Name: "Main"}
+	if err := db.Create(&mainCampus).Error; err != nil {
+		t.Fatalf("seed campus: %v", err)
+	}
+	otherCampus := roommodel.ClinicCampus{Name: "Other"}
+	if err := db.Create(&otherCampus).Error; err != nil {
+		t.Fatalf("seed campus: %v", err)
+	}
+
+	rooms := []roommodel.ClinicRoom{
+		{Name: "Main Normal", Address: "a", Enabled: true, CampusID: &mainCampus.ID, Type: roommodel.RoomTypeNormal},
+		{Name: "Main Dynamic", Address: "b", Enabled: true, CampusID: &mainCampus.ID, Type: roommodel.RoomTypeDynamic},
+		{Name: "Other Normal", Address: "c", Enabled: true, CampusID: &otherCampus.ID, Type: roommodel.RoomTypeNormal},
+	}
+	for i := range rooms {
+		if err := db.Create(&rooms[i]).Error; err != nil {
+			t.Fatalf("seed room: %v", err)
+		}
+	}
+
+	items, total, err := svc.List(roomservice.ListRoomFilter{CampusID: &mainCampus.ID})
+	if err != nil {
+		t.Fatalf("list by campus: %v", err)
+	}
+	if total != 2 || len(items) != 2 {
+		t.Fatalf("campus filter: expected 2 rooms, got %d (total %d)", len(items), total)
+	}
+	for _, item := range items {
+		if item.Campus == nil || item.Campus.ID != mainCampus.ID {
+			t.Errorf("room %q campus = %+v, want campus %d", item.Name, item.Campus, mainCampus.ID)
+		}
+	}
+
+	roomType := roommodel.RoomTypeNormal
+	items, total, err = svc.List(roomservice.ListRoomFilter{Type: &roomType})
+	if err != nil {
+		t.Fatalf("list by type: %v", err)
+	}
+	if total != 2 || len(items) != 2 {
+		t.Fatalf("type filter: expected 2 rooms, got %d (total %d)", len(items), total)
+	}
+	for _, item := range items {
+		if item.Type != roommodel.RoomTypeNormal {
+			t.Errorf("room %q type = %q, want normal", item.Name, item.Type)
+		}
+	}
+}
+
 func TestRoomService_Delete_UnfinishedRecord(t *testing.T) {
 	db := setupRoomServiceDB(t)
 	svc := roomservice.NewRoomService(db)

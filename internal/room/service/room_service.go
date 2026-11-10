@@ -54,6 +54,8 @@ type UpdateRoomInput struct {
 type ListRoomFilter struct {
 	Name        string // substring match (ILIKE/LIKE)
 	EnabledOnly bool   // true: only enabled rooms (used by client routes)
+	CampusID    *uint
+	Type        *roommodel.RoomType
 	Page        int
 	PageSize    int
 }
@@ -107,6 +109,12 @@ func (s *RoomService) List(f ListRoomFilter) ([]roommodel.ClinicRoom, int64, err
 	if f.EnabledOnly {
 		q = q.Where("enabled = ?", true)
 	}
+	if f.CampusID != nil {
+		q = q.Where("campus_id = ?", *f.CampusID)
+	}
+	if f.Type != nil {
+		q = q.Where("type = ?", *f.Type)
+	}
 
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
@@ -123,6 +131,7 @@ func (s *RoomService) List(f ListRoomFilter) ([]roommodel.ClinicRoom, int64, err
 
 	var items []roommodel.ClinicRoom
 	if err := q.
+		Preload("Campus").
 		Order("id ASC").
 		Offset(offset).
 		Limit(f.PageSize).
