@@ -54,16 +54,13 @@ func openDatabase() *gorm.DB {
 	if err != nil {
 		log.Fatalf("failed to open database: %v", err)
 	}
-	// clinic_staff.phone_num was replaced by email. AutoMigrate only adds
-	// missing columns, so rename an existing phone_num column explicitly.
-	if db.Migrator().HasColumn(&staffmodel.ClinicStaff{}, "phone_num") {
-		if err := db.Migrator().RenameColumn(&staffmodel.ClinicStaff{}, "phone_num", "email"); err != nil {
-			log.Fatalf("failed to rename clinic_staff.phone_num to email: %v", err)
-		}
+	if err := MigrateBeforeAutoMigrate(db); err != nil {
+		log.Fatalf("failed to run pre-migration: %v", err)
 	}
 	if err := db.AutoMigrate(
 		&announcement.ClinicAnnouncement{},
 		&schedulingmodel.ClinicServiceDate{},
+		&roommodel.ClinicCampus{},
 		&roommodel.ClinicRoom{},
 		&staffmodel.ClinicStaff{},
 		&staffmodel.ClinicStaffWorkyear{},
@@ -81,6 +78,9 @@ func openDatabase() *gorm.DB {
 		&schedulingmodel.ClinicWorkScheduleStaff{},
 	); err != nil {
 		log.Fatalf("failed to migrate: %v", err)
+	}
+	if err := MigrateAfterAutoMigrate(db); err != nil {
+		log.Fatalf("failed to run post-migration: %v", err)
 	}
 	if err := db.Exec(`
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_tos

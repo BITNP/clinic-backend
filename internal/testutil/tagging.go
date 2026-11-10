@@ -28,6 +28,7 @@ func SetupTagTestDB(t *testing.T) *gorm.DB {
 	sqlDB.SetMaxOpenConns(1)
 	sqlDB.SetMaxIdleConns(1)
 	if err := db.AutoMigrate(
+		&roommodel.ClinicCampus{},
 		&roommodel.ClinicRoom{},
 		&schedulingmodel.ClinicServiceDate{},
 		&recordmodel.ClinicRecord{},

@@ -25,6 +25,7 @@ func setupWorkScheduleServiceDB(t *testing.T) *gorm.DB {
 		&schedulingmodel.ClinicWorkSchedule{},
 		&schedulingmodel.ClinicWorkScheduleWeekday{},
 		&schedulingmodel.ClinicWorkScheduleStaff{},
+		&roommodel.ClinicCampus{},
 		&roommodel.ClinicRoom{},
 		&staffmodel.ClinicStaff{},
 		&staffmodel.ClinicStaffWorkyear{},

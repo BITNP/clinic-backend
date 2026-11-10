@@ -23,7 +23,7 @@ func setupRoomHandlerRouter(t *testing.T) (*gin.Engine, *roomservice.RoomService
 	if err != nil {
 		t.Fatalf("failed to open fake database: %v", err)
 	}
-	if err := db.AutoMigrate(&roommodel.ClinicRoom{}, &schedulingmodel.ClinicServiceDate{}, &recordmodel.ClinicRecord{}); err != nil {
+	if err := db.AutoMigrate(&roommodel.ClinicCampus{}, &roommodel.ClinicRoom{}, &schedulingmodel.ClinicServiceDate{}, &recordmodel.ClinicRecord{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
 	svc := roomservice.NewRoomService(db)

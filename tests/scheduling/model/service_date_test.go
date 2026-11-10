@@ -17,7 +17,7 @@ func setupServiceDateTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("failed to open fake database: %v", err)
 	}
 
-	if err := db.AutoMigrate(&roommodel.ClinicRoom{}, &schedulingmodel.ClinicServiceDate{}); err != nil {
+	if err := db.AutoMigrate(&roommodel.ClinicCampus{}, &roommodel.ClinicRoom{}, &schedulingmodel.ClinicServiceDate{}); err != nil {
 		t.Fatalf("failed to migrate service date models: %v", err)
 	}
 

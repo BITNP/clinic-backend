@@ -18,7 +18,7 @@ func setupRoomServiceDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("failed to open fake database: %v", err)
 	}
-	if err := db.AutoMigrate(&roommodel.ClinicRoom{}, &schedulingmodel.ClinicServiceDate{}, &recordmodel.ClinicRecord{}); err != nil {
+	if err := db.AutoMigrate(&roommodel.ClinicCampus{}, &roommodel.ClinicRoom{}, &schedulingmodel.ClinicServiceDate{}, &recordmodel.ClinicRecord{}); err != nil {
 		t.Fatalf("failed to migrate models: %v", err)
 	}
 	return db
@@ -323,7 +323,7 @@ func TestRoomService_Delete_InUse_ServiceDate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if err := db.AutoMigrate(&roommodel.ClinicRoom{}, &schedulingmodel.ClinicServiceDate{}, &recordmodel.ClinicRecord{}); err != nil {
+	if err := db.AutoMigrate(&roommodel.ClinicCampus{}, &roommodel.ClinicRoom{}, &schedulingmodel.ClinicServiceDate{}, &recordmodel.ClinicRecord{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	svc := roomservice.NewRoomService(db)
@@ -347,7 +347,7 @@ func TestRoomService_Delete_InUse_Record(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if err := db.AutoMigrate(&roommodel.ClinicRoom{}, &schedulingmodel.ClinicServiceDate{}, &recordmodel.ClinicRecord{}); err != nil {
+	if err := db.AutoMigrate(&roommodel.ClinicCampus{}, &roommodel.ClinicRoom{}, &schedulingmodel.ClinicServiceDate{}, &recordmodel.ClinicRecord{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	svc := roomservice.NewRoomService(db)

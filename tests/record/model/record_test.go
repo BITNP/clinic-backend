@@ -19,6 +19,7 @@ func setupRecordTestDB(t *testing.T) *gorm.DB {
 	}
 
 	if err := db.AutoMigrate(
+		&roommodel.ClinicCampus{},
 		&roommodel.ClinicRoom{},
 		&staffmodel.ClinicStaff{},
 		&recordmodel.ClinicRecord{},
