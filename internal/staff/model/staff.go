@@ -6,6 +6,7 @@ type ClinicStaff struct {
 	AccountID string `gorm:"type:text;not null;unique;column:account_id" json:"account_id"`
 	Realname  string `gorm:"size:50;column:realname" json:"realname"`
 	Email     string `gorm:"size:255;column:email" json:"email"`
+	QQNumber  string `gorm:"size:16;not null;default:'';column:qq_number" json:"qq_number"`
 	Role      string `gorm:"size:16;not null;default:'';column:role" json:"role"`
 	Version   int    `gorm:"not null;default:0;column:version" json:"version"`
 }

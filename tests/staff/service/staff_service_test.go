@@ -53,6 +53,60 @@ func TestStaffService_EnsureWorkYears(t *testing.T) {
 	}
 }
 
+func TestStaffService_GetOrCreateByAccountID(t *testing.T) {
+	db := setupStaffTestDB(t)
+	svc := staffservice.NewStaffService(db)
+
+	staff, err := svc.GetOrCreateByAccountID("cas:staff10", "张三", "zhangsan@example.com", "123456789")
+	if err != nil {
+		t.Fatalf("create staff: %v", err)
+	}
+	if staff.QQNumber != "123456789" {
+		t.Errorf("qq number after create: got %q, want %q", staff.QQNumber, "123456789")
+	}
+
+	// A later login may omit realname and email while changing the QQ number.
+	staff, err = svc.GetOrCreateByAccountID("cas:staff10", "", "", "987654321")
+	if err != nil {
+		t.Fatalf("update staff: %v", err)
+	}
+	if staff.QQNumber != "987654321" {
+		t.Errorf("qq number after update: got %q, want %q", staff.QQNumber, "987654321")
+	}
+
+	var stored staffmodel.ClinicStaff
+	if err := db.Where("account_id = ?", "cas:staff10").First(&stored).Error; err != nil {
+		t.Fatalf("load staff: %v", err)
+	}
+	if stored.Realname != "张三" {
+		t.Errorf("realname should be preserved: got %q", stored.Realname)
+	}
+	if stored.Email != "zhangsan@example.com" {
+		t.Errorf("email should be preserved: got %q", stored.Email)
+	}
+	if stored.QQNumber != "987654321" {
+		t.Errorf("stored qq number: got %q, want %q", stored.QQNumber, "987654321")
+	}
+
+	// A missing claim must not clear the stored value.
+	staff, err = svc.GetOrCreateByAccountID("cas:staff10", "", "", "")
+	if err != nil {
+		t.Fatalf("login without qq number: %v", err)
+	}
+	if staff.QQNumber != "987654321" {
+		t.Errorf("empty qq number should not clear: got %q", staff.QQNumber)
+	}
+
+	manual := "555555"
+	updated, err := svc.Update(staff.ID, staffservice.UpdateStaffInput{QQNumber: &manual})
+	if err != nil {
+		t.Fatalf("update qq number: %v", err)
+	}
+	if updated.QQNumber != manual {
+		t.Errorf("qq number after manual update: got %q, want %q", updated.QQNumber, manual)
+	}
+}
+
 func setupStaffTestDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open(":memory:?_fk=1"), &gorm.Config{})
 	if err != nil {

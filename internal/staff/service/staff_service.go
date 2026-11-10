@@ -33,6 +33,7 @@ type CreateStaffInput struct {
 type UpdateStaffInput struct {
 	Realname *string
 	Email    *string
+	QQNumber *string
 }
 
 type StaffListItem struct {
@@ -40,12 +41,16 @@ type StaffListItem struct {
 	AccountID    string `json:"account_id"`
 	Realname     string `json:"realname"`
 	Email        string `json:"email"`
+	QQNumber     string `json:"qq_number"`
 	Role         string `json:"role"`
 	HandledCount int    `json:"handled_count"`
 	WorkYears    []int  `json:"work_years"`
 }
 
-func (s *StaffService) GetOrCreateByAccountID(accountID, realname, email string) (staffmodel.ClinicStaff, error) {
+// GetOrCreateByAccountID resolves a staff member by account ID and applies
+// identity fields supplied by the identity provider. Empty values are ignored
+// so a missing claim never clears stored data.
+func (s *StaffService) GetOrCreateByAccountID(accountID, realname, email, qqNumber string) (staffmodel.ClinicStaff, error) {
 	var staff staffmodel.ClinicStaff
 	err := s.db.Where("account_id = ?", accountID).First(&staff).Error
 	if err == nil {
@@ -56,9 +61,21 @@ func (s *StaffService) GetOrCreateByAccountID(accountID, realname, email string)
 		if email != "" && staff.Email != email {
 			updates["email"] = email
 		}
+		if qqNumber != "" && staff.QQNumber != qqNumber {
+			updates["qq_number"] = qqNumber
+		}
 		if len(updates) > 0 {
 			if err := s.db.Model(&staff).Updates(updates).Error; err != nil {
 				return staffmodel.ClinicStaff{}, fmt.Errorf("update staff %s: %w", accountID, err)
+			}
+			if v, ok := updates["realname"].(string); ok {
+				staff.Realname = v
+			}
+			if v, ok := updates["email"].(string); ok {
+				staff.Email = v
+			}
+			if v, ok := updates["qq_number"].(string); ok {
+				staff.QQNumber = v
 			}
 		}
 		return staff, nil
@@ -71,6 +88,7 @@ func (s *StaffService) GetOrCreateByAccountID(accountID, realname, email string)
 		AccountID: accountID,
 		Realname:  realname,
 		Email:     email,
+		QQNumber:  qqNumber,
 	}
 	if err := s.db.Create(&staff).Error; err != nil {
 		return staffmodel.ClinicStaff{}, fmt.Errorf("create staff %s: %w", accountID, err)
@@ -121,6 +139,7 @@ func (s *StaffService) List() ([]StaffListItem, error) {
 			AccountID:    st.AccountID,
 			Realname:     st.Realname,
 			Email:        st.Email,
+			QQNumber:     st.QQNumber,
 			Role:         st.Role,
 			HandledCount: countMap[st.ID],
 			WorkYears:    yearMap[st.ID],
@@ -207,6 +226,7 @@ func (s *StaffService) ListValidForYear(year int) ([]StaffListItem, error) {
 			AccountID:    st.AccountID,
 			Realname:     st.Realname,
 			Email:        st.Email,
+			QQNumber:     st.QQNumber,
 			Role:         st.Role,
 			HandledCount: countMap[st.ID],
 			WorkYears:    yearMap[st.ID],
@@ -271,6 +291,9 @@ func (s *StaffService) Update(id int, in UpdateStaffInput) (staffmodel.ClinicSta
 	}
 	if in.Email != nil {
 		updates["email"] = *in.Email
+	}
+	if in.QQNumber != nil {
+		updates["qq_number"] = *in.QQNumber
 	}
 	if len(updates) > 0 {
 		if err := s.db.Model(&staff).Updates(updates).Error; err != nil {

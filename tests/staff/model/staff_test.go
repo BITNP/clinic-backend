@@ -30,6 +30,7 @@ func TestClinicStaff_CreateAndRetrieve(t *testing.T) {
 		AccountID: "cas:student42",
 		Realname:  "Alice Smith",
 		Email:     "alice@example.com",
+		QQNumber:  "123456789",
 	}
 
 	if err := db.Create(&staff).Error; err != nil {
@@ -49,6 +50,9 @@ func TestClinicStaff_CreateAndRetrieve(t *testing.T) {
 	}
 	if retrieved.Email != staff.Email {
 		t.Errorf("expected email %q, got %q", staff.Email, retrieved.Email)
+	}
+	if retrieved.QQNumber != staff.QQNumber {
+		t.Errorf("expected qq_number %q, got %q", staff.QQNumber, retrieved.QQNumber)
 	}
 	if retrieved.Version != 0 {
 		t.Errorf("expected default version 0, got %d", retrieved.Version)

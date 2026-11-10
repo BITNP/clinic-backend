@@ -62,7 +62,7 @@ func (h *StaffHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	s, err := h.svc.GetOrCreateByAccountID(req.AccountID, req.Realname, req.Email)
+	s, err := h.svc.GetOrCreateByAccountID(req.AccountID, req.Realname, req.Email, "")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
