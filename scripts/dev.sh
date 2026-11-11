@@ -352,13 +352,6 @@ start_message_gateway() {
 	fi
 
 	export MESSAGE_GATEWAY_URL=${MESSAGE_GATEWAY_URL:-http://127.0.0.1:8081}
-	if [[ -z "${MESSAGE_GATEWAY_API_KEY:-}" ]]; then
-		MESSAGE_GATEWAY_API_KEY=$(sed -n 's/^MESSAGE_GATEWAY_API_KEY=//p' "$MESSAGE_GATEWAY_DIR/.env" | head -n 1)
-		if [[ -z "$MESSAGE_GATEWAY_API_KEY" ]]; then
-			die "MESSAGE_GATEWAY_API_KEY is not set in $MESSAGE_GATEWAY_DIR/.env"
-		fi
-		export MESSAGE_GATEWAY_API_KEY
-	fi
 
 	if ! wait_for_port 127.0.0.1 8081 "message-gateway" 60; then
 		warn "message-gateway is still starting; follow it with: (cd $MESSAGE_GATEWAY_DIR && docker compose logs -f message-gateway)"

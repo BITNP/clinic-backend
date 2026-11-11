@@ -98,18 +98,22 @@ docker compose up -d
 ```
 
 `clinic-backend/scripts/dev.sh` starts the gateway automatically and exports the
-gateway URL and API key to the backend. NapCat is external to the gateway stack;
+gateway URL to the backend. Account tokens live in
+`../message-gateway/accounts.json`. NapCat is external to the gateway stack;
 start the sample stack separately if you need it.
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `MESSAGE_GATEWAY_URL` | `http://127.0.0.1:8081` for host dev | Gateway HTTP endpoint. Compose uses `http://message-gateway:8081`. |
-| `MESSAGE_GATEWAY_API_KEY` | required when messaging is enabled | Bearer token for the gateway. |
 | `MESSAGE_GATEWAY_TIMEOUT` | `5s` | Per-request client timeout. |
 
-The backend has no business caller wired to the gateway yet. The first consumer
-is `clinic-health-monitor`, which uses the same URL and API key in the
-production stack.
+There is no global gateway access key. Each gateway account has its own
+`client_token` in `message-gateway/accounts.json`; that token is used as the
+bearer token for the account's URL. The account's `access_token` is the private
+NapCat token and must not be given to clients. The backend has no business
+caller wired to the gateway yet. The first consumer is
+`clinic-health-monitor`, which uses its own client token in the production
+stack.
 
 The legacy `NAPCAT_*` and `MESSAGE_*` variables belong to the frozen
 `internal/message` copy and must not be set in new deployments. In particular,
@@ -131,6 +135,8 @@ port.
 | --- | --- | --- |
 | `HEALTH_MONITOR_IMAGE_TAG` | `latest` | Monitor image tag to deploy. |
 | `MAINTAINER_QQ_IDS` | — (required) | Comma-separated QQ user ids that receive alerts. |
+| `MESSAGE_GATEWAY_ACCOUNT` | `qq` | Gateway account used for alerts. |
+| `MESSAGE_GATEWAY_ACCOUNT_TOKEN` | — (required) | That account's `client_token` from `message-gateway/accounts.json`. |
 | `MONITOR_TARGET_URL` | `http://backend:8080/healthz` | Backend health endpoint polled by the monitor. |
 | `MONITOR_TARGET_NAME` | `clinic-backend` | Backend target name used in alert text. |
 | `MONITOR_FRONTEND_URL` | `http://admin-frontend:80/` in Compose | Optional admin frontend endpoint. Empty disables frontend monitoring. |
@@ -144,9 +150,10 @@ port.
 | `MONITOR_NOTIFY_RECOVERY` | `true` | Send a recovery message after an outage. |
 
 Inside Compose the monitor always calls `http://message-gateway:8081`; it
-reuses `MESSAGE_GATEWAY_API_KEY` and `MESSAGE_GATEWAY_TIMEOUT`.
-`MAINTAINER_QQ_IDS` and a non-empty `MESSAGE_GATEWAY_API_KEY` are required for
-the production stack to start.
+uses `MESSAGE_GATEWAY_ACCOUNT`, `MESSAGE_GATEWAY_ACCOUNT_TOKEN`, and
+`MESSAGE_GATEWAY_TIMEOUT`. `MAINTAINER_QQ_IDS`, `MESSAGE_GATEWAY_ACCOUNT`, and
+a non-empty `MESSAGE_GATEWAY_ACCOUNT_TOKEN` are required for the production
+stack to start.
 
 `/healthz` currently pings Redis only; it does not check Postgres or S3. The
 frontend `/` probe verifies Caddy serves `index.html`; it does not execute
@@ -283,7 +290,8 @@ external to that stack, with an optional sample in
 `../message-gateway/docker-compose.napcat.yml`. The backend and health monitor
 join the `message-gateway` external network. It refuses to start if
 `CLINIC_API_KEY`, the required S3 settings, the RustFS provisioning
-credentials, `MAINTAINER_QQ_IDS`, or `MESSAGE_GATEWAY_API_KEY` are missing.
+credentials, `MAINTAINER_QQ_IDS`, or `MESSAGE_GATEWAY_ACCOUNT_TOKEN` are
+missing.
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -374,8 +382,8 @@ starting the backend. Use `--no-storage` when storage is already managed
 elsewhere or points at an external S3 endpoint. On the first sample-NapCat
 start, open `http://127.0.0.1:6099/webui` and scan the QR code (the WebUI token
 is in `../message-gateway/napcat/config/webui.json`); later starts reuse the
-saved session. `scripts/dev.sh` reads the gateway API key from
-`../message-gateway/.env` and exports it as `MESSAGE_GATEWAY_API_KEY`. Use
+saved session. `scripts/dev.sh` starts the gateway but does not export a
+gateway key; account tokens live in `../message-gateway/accounts.json`. Use
 `--no-message-gateway` when a gateway is already running; `--no-napcat` is a
 deprecated alias. Use `--fake-napcat` to start the dev fake OneBot stack instead
 of a real NapCat. Other flags: `--no-cas` and `--no-redis` when those services
@@ -421,10 +429,9 @@ docker compose up -d rustfs rustfs-init
 #     there once. The sample data lives in ../message-gateway/napcat.
 (cd ../message-gateway && docker compose up -d)
 (cd ../message-gateway && docker compose -f docker-compose.napcat.yml up -d)  # optional
-# Export these if running the backend outside scripts/dev.sh. The API key is in
-# ../message-gateway/.env.
+# Export this if running the backend outside scripts/dev.sh. Account tokens live
+# in ../message-gateway/accounts.json.
 export MESSAGE_GATEWAY_URL=http://127.0.0.1:8081
-export MESSAGE_GATEWAY_API_KEY=<gateway-api-key>
 
 # 3. Start the backend. scripts/dev.sh loads .env, including S3_*.
 export CLINIC_API_KEY=local-dev-key

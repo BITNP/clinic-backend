@@ -88,8 +88,8 @@ source checkout. It runs the backend, the admin frontend, the health monitor, a
 bundled Redis service and RustFS object storage, and connects to the Postgres
 already running on the server via `host.containers.internal` (no bundled
 database), like the other clinic services. It refuses to start if
-`CLINIC_API_KEY`, `MAINTAINER_QQ_IDS`, `MESSAGE_GATEWAY_API_KEY`, the required
-S3 settings, or the RustFS provisioning credentials are missing.
+`CLINIC_API_KEY`, `MAINTAINER_QQ_IDS`, `MESSAGE_GATEWAY_ACCOUNT_TOKEN`, the
+required S3 settings, or the RustFS provisioning credentials are missing.
 
 The server cannot pull images from Docker Hub or GHCR, so package the images on
 a machine that can and copy the tarball over:
@@ -144,14 +144,15 @@ cd message-gateway && docker compose up -d --no-build
 cd .. && docker compose -f docker-compose.prod.yml up -d
 ```
 
-Before starting, update `message-gateway/.env` for the server: set
-`MESSAGE_GATEWAY_API_KEY` and `NAPCAT_BASE_URL`. If you use the sample NapCat
+Before starting, create `message-gateway/accounts.json` with each account's
+`access_token` (NapCat) and `client_token` (gateway); there is no global
+gateway key. If you use the sample NapCat
 stack, also set `NAPCAT_QUICK_ACCOUNT` and the NapCat data paths (relative
 `./napcat/config` and `./napcat/QQ` under the copied `message-gateway`
-directory work best). The backend `.env` must contain the same
-`MESSAGE_GATEWAY_API_KEY` and `MESSAGE_GATEWAY_URL=http://message-gateway:8081`.
-Also set `MAINTAINER_QQ_IDS` there; the health monitor uses those ids for
-private QQ alerts and requires a non-empty gateway key.
+directory work best). Set `MESSAGE_GATEWAY_URL=http://message-gateway:8081`,
+`MESSAGE_GATEWAY_ACCOUNT`, and `MESSAGE_GATEWAY_ACCOUNT_TOKEN` in the backend
+`.env` for the health monitor. Also set `MAINTAINER_QQ_IDS` there; the health
+monitor uses those ids for private QQ alerts.
 
 Do not use `--pull always` or `docker compose pull` for this stack: those bypass
 `pull_policy` and would try to fetch images from registries the server cannot
@@ -184,10 +185,10 @@ gateway `.env` to auto-login without scanning again. If you use an external
 NapCat instead of the sample stack, set `NAPCAT_BASE_URL` to its OneBot
 endpoint.
 
-The backend calls the gateway over HTTP. Set `MESSAGE_GATEWAY_URL` and
-`MESSAGE_GATEWAY_API_KEY` in the backend `.env` (the default URL is
-`http://message-gateway:8081` inside Compose). Do not set `NAPCAT_BASE_URL`;
-the legacy in-process manager must remain disabled.
+The backend calls the gateway over HTTP. Set `MESSAGE_GATEWAY_URL` and use the
+account's `client_token` from `accounts.json` as the bearer token (the default
+URL is `http://message-gateway:8081` inside Compose). Do not set
+`NAPCAT_BASE_URL`; the legacy in-process manager must remain disabled.
 
 The image tags in the commands above come from `.env`; see
 [CONFIGURATION.md](CONFIGURATION.md#production-stack-docker-composeprodyml) for

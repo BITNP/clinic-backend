@@ -21,7 +21,7 @@ version: "3"
 #   cp .env.example .env            # then set real secrets:
 #                                   #   CLINIC_API_KEY, APP_BASE_URL,
 #                                   #   CAS_SERVER_URL, CLINIC_DB_DSN,
-#                                   #   MAINTAINER_QQ_IDS, MESSAGE_GATEWAY_API_KEY,
+#                                   #   MAINTAINER_QQ_IDS, MESSAGE_GATEWAY_ACCOUNT_TOKEN,
 #                                   #   RUSTFS_*, S3_*, ...
 #   docker compose -f docker-compose.prod.yml up -d
 #
@@ -158,7 +158,6 @@ services:
       TAGGER_CONTEXT_TOKENS: ${TAGGER_CONTEXT_TOKENS:-32000}
       TAGGER_TIMEOUT: ${TAGGER_TIMEOUT:-30s}
       MESSAGE_GATEWAY_URL: ${MESSAGE_GATEWAY_URL:-http://message-gateway:8081}
-      MESSAGE_GATEWAY_API_KEY: ${MESSAGE_GATEWAY_API_KEY:-}
       MESSAGE_GATEWAY_TIMEOUT: ${MESSAGE_GATEWAY_TIMEOUT:-5s}
       RECORD_ACTION_WINDOW: ${RECORD_ACTION_WINDOW:-5m}
       RECORD_PHOTO_MAX_COUNT: ${RECORD_PHOTO_MAX_COUNT:-9}
@@ -200,7 +199,8 @@ services:
       MONITOR_INSTANCE_NAME: ${MONITOR_INSTANCE_NAME:-clinic-prod}
       MAINTAINER_QQ_IDS: ${MAINTAINER_QQ_IDS:?set MAINTAINER_QQ_IDS in .env}
       MESSAGE_GATEWAY_URL: http://message-gateway:8081
-      MESSAGE_GATEWAY_API_KEY: ${MESSAGE_GATEWAY_API_KEY:?set MESSAGE_GATEWAY_API_KEY in .env}
+      MESSAGE_GATEWAY_ACCOUNT: ${MESSAGE_GATEWAY_ACCOUNT:-qq}
+      MESSAGE_GATEWAY_ACCOUNT_TOKEN: ${MESSAGE_GATEWAY_ACCOUNT_TOKEN:?set MESSAGE_GATEWAY_ACCOUNT_TOKEN in .env}
       MESSAGE_GATEWAY_TIMEOUT: ${MESSAGE_GATEWAY_TIMEOUT:-5s}
       TZ: ${TZ:-Asia/Shanghai}
     networks:
