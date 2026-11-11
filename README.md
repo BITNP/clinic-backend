@@ -149,8 +149,8 @@ Before starting, create `message-gateway/accounts.json` with each account's
 gateway key. If you use the sample NapCat
 stack, also set `NAPCAT_QUICK_ACCOUNT` and the NapCat data paths (relative
 `./napcat/config` and `./napcat/QQ` under the copied `message-gateway`
-directory work best). Set `MESSAGE_GATEWAY_URL=http://message-gateway:8081`,
-`MESSAGE_GATEWAY_ACCOUNT`, and `MESSAGE_GATEWAY_ACCOUNT_TOKEN` in the backend
+directory work best). Set `MONITOR_MESSAGE_GATEWAY_URL` to the account-scoped
+OneBot base URL and `MESSAGE_GATEWAY_ACCOUNT_TOKEN` in the backend
 `.env` for the health monitor. Also set `MAINTAINER_QQ_IDS` there; the health
 monitor uses those ids for private QQ alerts.
 
@@ -387,4 +387,3 @@ Clients read the current values from `GET /api/admin/sync` (admin/staff session)
 or `GET /api/sync` (API-key client), keep the values they last saw, and refetch
 their data when a value differs. Counters are best-effort: a Redis failure is
 logged and never fails the underlying write.
-

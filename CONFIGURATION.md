@@ -135,7 +135,7 @@ port.
 | --- | --- | --- |
 | `HEALTH_MONITOR_IMAGE_TAG` | `latest` | Monitor image tag to deploy. |
 | `MAINTAINER_QQ_IDS` | — (required) | Comma-separated QQ user ids that receive alerts. |
-| `MESSAGE_GATEWAY_ACCOUNT` | `qq` | Gateway account used for alerts. |
+| `MONITOR_MESSAGE_GATEWAY_URL` | `http://message-gateway:8081/api/v1/accounts/qq` | Account-scoped OneBot base URL used by the monitor. |
 | `MESSAGE_GATEWAY_ACCOUNT_TOKEN` | — (required) | That account's `client_token` from `message-gateway/accounts.json`. |
 | `MONITOR_TARGET_URL` | `http://backend:8080/healthz` | Backend health endpoint polled by the monitor. |
 | `MONITOR_TARGET_NAME` | `clinic-backend` | Backend target name used in alert text. |
@@ -149,11 +149,10 @@ port.
 | `MONITOR_ALERT_REPEAT_INTERVAL` | `0s` | Repeat interval while down; `0s` disables repeats. |
 | `MONITOR_NOTIFY_RECOVERY` | `true` | Send a recovery message after an outage. |
 
-Inside Compose the monitor always calls `http://message-gateway:8081`; it
-uses `MESSAGE_GATEWAY_ACCOUNT`, `MESSAGE_GATEWAY_ACCOUNT_TOKEN`, and
-`MESSAGE_GATEWAY_TIMEOUT`. `MAINTAINER_QQ_IDS`, `MESSAGE_GATEWAY_ACCOUNT`, and
-a non-empty `MESSAGE_GATEWAY_ACCOUNT_TOKEN` are required for the production
-stack to start.
+Inside Compose, `MONITOR_MESSAGE_GATEWAY_URL` sets the monitor's
+`MESSAGE_GATEWAY_URL`; it also uses `MESSAGE_GATEWAY_ACCOUNT_TOKEN` and
+`MESSAGE_GATEWAY_TIMEOUT`. `MAINTAINER_QQ_IDS` and a non-empty
+`MESSAGE_GATEWAY_ACCOUNT_TOKEN` are required for the production stack to start.
 
 `/healthz` currently pings Redis only; it does not check Postgres or S3. The
 frontend `/` probe verifies Caddy serves `index.html`; it does not execute
