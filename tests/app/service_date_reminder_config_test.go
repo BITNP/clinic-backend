@@ -31,12 +31,6 @@ func TestLoadServiceDateReminderConfigDefaults(t *testing.T) {
 	if len(cfg.LeadTimes) != 2 || cfg.LeadTimes[0] != 5*time.Hour || cfg.LeadTimes[1] != 3*time.Hour {
 		t.Fatalf("LeadTimes = %v, want [5h 3h]", cfg.LeadTimes)
 	}
-	if cfg.Horizon != 6*time.Hour {
-		t.Errorf("Horizon = %v, want 6h", cfg.Horizon)
-	}
-	if cfg.CatchupWindow != time.Hour {
-		t.Errorf("CatchupWindow = %v, want 1h", cfg.CatchupWindow)
-	}
 	if cfg.Gateway.Account != "qq" {
 		t.Errorf("Gateway.Account = %q, want qq", cfg.Gateway.Account)
 	}
@@ -81,9 +75,6 @@ func TestLoadServiceDateReminderConfigCustom(t *testing.T) {
 	}
 	if len(cfg.LeadTimes) != 2 || cfg.LeadTimes[0] != 7*time.Hour || cfg.LeadTimes[1] != 3*time.Hour {
 		t.Fatalf("LeadTimes = %v, want [7h 3h]", cfg.LeadTimes)
-	}
-	if cfg.Horizon != 8*time.Hour {
-		t.Errorf("Horizon = %v, want 8h", cfg.Horizon)
 	}
 	if cfg.Gateway.BaseURL != "https://gateway.example/api" {
 		t.Errorf("Gateway.BaseURL = %q", cfg.Gateway.BaseURL)
@@ -138,18 +129,6 @@ func TestLoadServiceDateReminderConfigInvalidValues(t *testing.T) {
 			want:  "invalid SERVICE_DATE_REMINDER_ENABLED",
 		},
 		{
-			name:  "one lead time",
-			key:   "SERVICE_DATE_REMINDER_LEAD_TIMES",
-			value: "5h",
-			want:  "exactly two",
-		},
-		{
-			name:  "three lead times",
-			key:   "SERVICE_DATE_REMINDER_LEAD_TIMES",
-			value: "5h,3h,1h",
-			want:  "exactly two",
-		},
-		{
 			name:  "invalid lead time",
 			key:   "SERVICE_DATE_REMINDER_LEAD_TIMES",
 			value: "5h,later",
@@ -162,10 +141,10 @@ func TestLoadServiceDateReminderConfigInvalidValues(t *testing.T) {
 			want:  "duplicate lead time",
 		},
 		{
-			name:  "lead time inside catch-up window",
+			name:  "nonpositive lead time",
 			key:   "SERVICE_DATE_REMINDER_LEAD_TIMES",
-			value: "5h,1h",
-			want:  "greater than",
+			value: "5h,0h",
+			want:  "positive",
 		},
 		{
 			name:  "template syntax",
@@ -228,5 +207,17 @@ func TestLoadServiceDateReminderConfigInvalidValues(t *testing.T) {
 				t.Fatalf("error = %q, want %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestReminderLeadTimesAllowOneOrMany(t *testing.T) {
+	for _, input := range []string{"1h", "5h,3h,30m"} {
+		cfg, err := app.LoadServiceDateReminderConfig(envMap(map[string]string{"SERVICE_DATE_REMINDER_LEAD_TIMES": input}))
+		if err != nil {
+			t.Fatalf("%s: %v", input, err)
+		}
+		if len(cfg.LeadTimes) != len(strings.Split(input, ",")) {
+			t.Fatalf("%s: %v", input, cfg.LeadTimes)
+		}
 	}
 }

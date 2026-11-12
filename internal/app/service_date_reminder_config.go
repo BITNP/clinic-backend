@@ -14,16 +14,12 @@ const (
 	defaultServiceDateReminderAccount   = "qq"
 	defaultServiceDateReminderTimeout   = 5 * time.Second
 	defaultServiceDateReminderTemplate  = `【校医院工单提醒】服务将在 {{.LeadTime}} 后开始（{{.Date}} {{.StartTime}}，{{.Room}}），当前还有 {{.PendingCount}} 个待审核工单，请及时处理。`
-
-	serviceDateReminderCatchup = time.Hour
 )
 
 // ServiceDateReminderConfig controls the pending-ticket reminder worker.
 type ServiceDateReminderConfig struct {
 	Enabled         bool
 	LeadTimes       []time.Duration
-	Horizon         time.Duration
-	CatchupWindow   time.Duration
 	MessageTemplate *template.Template
 	Gateway         ServiceDateReminderGatewayConfig
 }
@@ -87,8 +83,6 @@ func LoadServiceDateReminderConfig(getenv func(string) string) (ServiceDateRemin
 	return ServiceDateReminderConfig{
 		Enabled:         enabled,
 		LeadTimes:       leadTimes,
-		Horizon:         leadTimes[0] + serviceDateReminderCatchup,
-		CatchupWindow:   serviceDateReminderCatchup,
 		MessageTemplate: messageTemplate,
 		Gateway: ServiceDateReminderGatewayConfig{
 			BaseURL:      baseURL,
@@ -106,10 +100,6 @@ func parseServiceDateReminderLeadTimes(raw string) ([]time.Duration, error) {
 	}
 
 	parts := strings.Split(raw, ",")
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("must contain exactly two comma-separated durations")
-	}
-
 	leadTimes := make([]time.Duration, 0, len(parts))
 	seen := make(map[time.Duration]struct{}, len(parts))
 	for _, part := range parts {
@@ -117,8 +107,8 @@ func parseServiceDateReminderLeadTimes(raw string) ([]time.Duration, error) {
 		if err != nil {
 			return nil, err
 		}
-		if leadTime <= serviceDateReminderCatchup {
-			return nil, fmt.Errorf("%s must be greater than the %s catch-up window", leadTime, serviceDateReminderCatchup)
+		if leadTime <= 0 || leadTime%time.Second != 0 {
+			return nil, fmt.Errorf("%s must be positive and use whole seconds", leadTime)
 		}
 		if _, ok := seen[leadTime]; ok {
 			return nil, fmt.Errorf("duplicate lead time %s", leadTime)
