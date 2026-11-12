@@ -7,6 +7,7 @@ import (
 	schedulingservice "clinic-backend/internal/scheduling/service"
 	staffmodel "clinic-backend/internal/staff/model"
 	"context"
+	"fmt"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"io"
@@ -82,8 +83,33 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 	if next, err := delivery.Claim(context.Background(), now.Add(time.Minute)); err != nil || next != nil {
 		t.Fatalf("second claim=%+v err=%v", next, err)
 	}
+	retryJob := schedulingmodel.ServiceDateReminder{ServiceDateID: date.ID, ServiceStartAt: date.StartTime, LeadTimeSeconds: 1800, StaffID: admin.ID, Status: "pending", NextAttemptAt: now}
+	if err = db.Create(&retryJob).Error; err != nil {
+		t.Fatal(err)
+	}
+	delivery.Client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, fmt.Errorf("offline") })}
+	retryClaim, err := delivery.Claim(context.Background(), now)
+	if err != nil || retryClaim == nil {
+		t.Fatalf("retry claim %v %v", retryClaim, err)
+	}
+	if err = delivery.Deliver(context.Background(), retryClaim, now); err == nil {
+		t.Fatal("expected failed submission")
+	}
+	if err = db.First(&retryJob, retryJob.ID).Error; err != nil || retryJob.Status != "pending" || retryJob.Attempts != 1 || !retryJob.NextAttemptAt.After(now) {
+		t.Fatalf("retry job=%+v err=%v", retryJob, err)
+	}
 	if err = db.Model(&record).Update("status", recordmodel.RecordStatusConfirmed).Error; err != nil {
 		t.Fatal(err)
+	}
+	retryClaim, err = delivery.Claim(context.Background(), retryJob.NextAttemptAt)
+	if err != nil || retryClaim == nil {
+		t.Fatalf("claim retry %v %v", retryClaim, err)
+	}
+	if err = delivery.Deliver(context.Background(), retryClaim, retryJob.NextAttemptAt); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.First(&retryJob, retryJob.ID).Error; err != nil || retryJob.Status != "cancelled" {
+		t.Fatalf("cancelled job=%+v err=%v", retryJob, err)
 	}
 	_, count, err := d.Eligible(context.Background(), date)
 	if err != nil || count != 0 {

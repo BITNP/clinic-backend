@@ -52,6 +52,11 @@ func Run() {
 		log.Fatalf("photo configuration: %v", err)
 	}
 
+	reminderCfg, err := LoadServiceDateReminderConfig(os.Getenv)
+	if err != nil {
+		log.Fatalf("reminder configuration: %v", err)
+	}
+
 	msgCfg, err := LoadMessageConfig(os.Getenv)
 	if err != nil {
 		log.Fatalf("message configuration: %v", err)
@@ -306,6 +311,16 @@ func Run() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	var reminderDone <-chan struct{}
+	if reminderCfg.Enabled {
+		discovery := &schedulingservice.ReminderDiscovery{DB: db, Location: serviceDateLoc, LeadTimes: reminderCfg.LeadTimes}
+		delivery := &schedulingservice.ReminderDelivery{DB: db, Discovery: discovery, Client: &http.Client{Timeout: reminderCfg.Gateway.Timeout}, BaseURL: reminderCfg.Gateway.BaseURL, Account: reminderCfg.Gateway.Account, Token: reminderCfg.Gateway.AccountToken, Template: reminderCfg.MessageTemplate, Lease: reminderCfg.Gateway.Timeout + 45*time.Second}
+		worker := &schedulingservice.ReminderWorker{Discovery: discovery, Delivery: delivery}
+		done := make(chan struct{})
+		reminderDone = done
+		go func() { defer close(done); worker.Run(ctx) }()
+	}
+
 	if napcatClient != nil {
 		go napcatClient.Run(ctx)
 		log.Printf("legacy in-process message manager enabled at %s (sender %s); prefer message-gateway", msgCfg.NapCat.BaseURL, msgCfg.SenderKey)
@@ -377,6 +392,13 @@ func Run() {
 	case <-msgDone:
 	case <-time.After(5 * time.Second):
 		log.Println("message manager shutdown timed out")
+	}
+	if reminderDone != nil {
+		select {
+		case <-reminderDone:
+		case <-time.After(5 * time.Second):
+			log.Println("reminder worker shutdown timed out")
+		}
 	}
 	if err := redisClient.Close(); err != nil {
 		log.Printf("redis close error: %v", err)

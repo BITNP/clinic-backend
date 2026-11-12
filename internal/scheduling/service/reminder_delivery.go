@@ -157,7 +157,7 @@ func (d *ReminderDelivery) retry(ctx context.Context, job *schedulingmodel.Servi
 		delay = 15 * time.Minute
 	}
 	status := "pending"
-	if !now.Add(delay).Before(job.ServiceStartAt) {
+	if job.Attempts >= 8 || !now.Add(delay).Before(job.ServiceStartAt) {
 		status = "cancelled"
 	}
 	if err := d.finish(ctx, job, map[string]any{"status": status, "next_attempt_at": now.Add(delay), "last_error": cause.Error()}); err != nil {
