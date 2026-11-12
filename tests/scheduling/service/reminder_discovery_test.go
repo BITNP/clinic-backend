@@ -41,6 +41,13 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	staff := staffmodel.ClinicStaff{ID: 2, AccountID: "staff", Role: "staff", QQNumber: "456"}
+	noQQ := staffmodel.ClinicStaff{ID: 3, AccountID: "no-qq", Role: "admin"}
+	for _, value := range []any{&staff, &noQQ, &schedulingmodel.ClinicWorkScheduleStaff{WeekdayID: 1, ScheduleID: 1, StaffID: 2}, &schedulingmodel.ClinicWorkScheduleStaff{WeekdayID: 1, ScheduleID: 1, StaffID: 3}, &schedulingmodel.ClinicWorkScheduleStaff{WeekdayID: 1, ScheduleID: 1, StaffID: 1}, &recordmodel.ClinicRecord{RoomID: 2, AppointmentTime: day, Status: recordmodel.RecordStatusPending}, &recordmodel.ClinicRecord{RoomID: room, AppointmentTime: day, Status: recordmodel.RecordStatusConfirmed}} {
+		if err = db.Create(value).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
 	d := schedulingservice.ReminderDiscovery{DB: db, Location: loc, LeadTimes: []time.Duration{time.Hour}}
 	now := start.Add(-time.Hour).Add(time.Second)
 	for range 2 {
@@ -82,6 +89,26 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 	}
 	if next, err := delivery.Claim(context.Background(), now.Add(time.Minute)); err != nil || next != nil {
 		t.Fatalf("second claim=%+v err=%v", next, err)
+	}
+	rescheduled := schedulingmodel.ServiceDateReminder{ServiceDateID: date.ID, ServiceStartAt: date.StartTime, LeadTimeSeconds: 2700, StaffID: admin.ID, Status: "pending", NextAttemptAt: now}
+	if err = db.Create(&rescheduled).Error; err != nil {
+		t.Fatal(err)
+	}
+	rescheduledClaim, err := delivery.Claim(context.Background(), now)
+	if err != nil || rescheduledClaim == nil {
+		t.Fatalf("rescheduled claim %v %v", rescheduledClaim, err)
+	}
+	if err = db.Model(&schedulingmodel.ClinicServiceDate{}).Where("id = ?", date.ID).Update("start_time", date.StartTime.Add(time.Hour)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = delivery.Deliver(context.Background(), rescheduledClaim, now); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.First(&rescheduled, rescheduled.ID).Error; err != nil || rescheduled.Status != "cancelled" {
+		t.Fatalf("rescheduled job=%+v err=%v", rescheduled, err)
+	}
+	if err = db.Model(&schedulingmodel.ClinicServiceDate{}).Where("id = ?", date.ID).Update("start_time", date.StartTime).Error; err != nil {
+		t.Fatal(err)
 	}
 	retryJob := schedulingmodel.ServiceDateReminder{ServiceDateID: date.ID, ServiceStartAt: date.StartTime, LeadTimeSeconds: 1800, StaffID: admin.ID, Status: "pending", NextAttemptAt: now}
 	if err = db.Create(&retryJob).Error; err != nil {
