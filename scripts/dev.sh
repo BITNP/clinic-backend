@@ -6,18 +6,18 @@
 #   1. fake CAS server        -> http://127.0.0.1:9999
 #   2. Redis                  -> 127.0.0.1:6379 (docker, falls back to redis-server)
 #   3. RustFS + provisioning  -> http://127.0.0.1:9000, when S3 storage is local
-#   4. message-gateway        -> http://127.0.0.1:8081 (NapCat external)
+#   4. message-gateway        -> http://127.0.0.1:8081 (with fake NapCat)
 #   5. backend (this repo)    -> http://127.0.0.1:8080
 #
 # The backend runs in the foreground with its stdout/stderr untouched, so
 # everything main.go logs (Gin routes, request logs, startup messages) stays
 # in your terminal. Only the helpers (fake CAS, Redis, RustFS, message-gateway,
-# and optionally fake NapCat) are backgrounded. Ctrl-C stops the backend and
+# and fake NapCat) are backgrounded. Ctrl-C stops the backend and
 # the helpers this script started.
 # RustFS and message-gateway are left running if they were already running before
 # this script started.
 #
-# Usage: scripts/dev.sh [--no-cas] [--no-redis] [--no-storage] [--no-message-gateway] [--fake-napcat]
+# Usage: scripts/dev.sh [--no-cas] [--no-redis] [--no-storage] [--no-message-gateway] [--no-fake-napcat]
 
 set -Eeuo pipefail
 
@@ -51,7 +51,7 @@ START_CAS=1
 START_REDIS=1
 START_STORAGE=1
 START_MESSAGE_GATEWAY=1
-START_FAKE_NAPCAT=0
+START_FAKE_NAPCAT=1
 STORAGE_STARTED=0
 MESSAGE_GATEWAY_STARTED=0
 FAKE_NAPCAT_STARTED=0
@@ -70,8 +70,8 @@ Options:
                   storage is already running, or use an external S3 endpoint)
   --no-message-gateway
                   Do not start message-gateway (assume one is running)
-  --fake-napcat   Start the dev fake NapCat stack for local testing. It uses
-                  the gateway network and does not connect to QQ.
+  --no-fake-napcat  Do not start the dev fake NapCat stack
+  --fake-napcat   Start fake NapCat (the default); it does not connect to QQ
   --no-napcat     Deprecated alias for --no-message-gateway
   -h, --help      Show this help
 EOF
@@ -84,6 +84,7 @@ while (($# > 0)); do
 	--no-storage | --no-rustfs) START_STORAGE=0 ;;
 	--no-message-gateway | --no-napcat) START_MESSAGE_GATEWAY=0 ;;
 	--fake-napcat) START_FAKE_NAPCAT=1 ;;
+	--no-fake-napcat) START_FAKE_NAPCAT=0 ;;
 	-h | --help)
 		usage
 		exit 0
