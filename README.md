@@ -387,3 +387,29 @@ or `GET /api/sync` (API-key client), keep the values they last saw, and refetch
 their data when a value differs. Counters are best-effort: a Redis failure is
 logged and never fails the underlying write.
 
+
+### Pending ticket reminders
+
+The backend can remind admins assigned to a service window when tickets remain
+pending. It scans every minute and on startup, finds pending tickets by date and
+room, and sends a QQ private message through the account-scoped message gateway.
+Set the following backend environment variables to enable it:
+
+- `SERVICE_DATE_REMINDER_ENABLED=true` (default `false`).
+- `SERVICE_DATE_REMINDER_LEAD_TIMES=5h,3h` (default shown): unique, positive
+  Go durations in whole seconds. Each is relative to the service start time.
+- `MESSAGE_GATEWAY_URL`: gateway base URL.
+- `MESSAGE_GATEWAY_ACCOUNT=qq`: gateway account name (default `qq`).
+- `MESSAGE_GATEWAY_ACCOUNT_TOKEN`: the account's gateway `client_token`.
+- `MESSAGE_GATEWAY_TIMEOUT=5s` (default shown): request timeout.
+- `SERVICE_DATE_REMINDER_TEMPLATE`: optional Go text template with `Date`,
+  `StartTime`, `Room`, `PendingCount`, and `LeadTime` fields.
+
+Dates and message times use `CLINIC_TIMEZONE` (default UTC+8). Only admins
+assigned to an enabled matching work schedule are notified. Admins need a QQ
+number. A short overlapping scan window tolerates timer drift; long downtime
+is not caught up. Jobs are stored in the backend database and failed submissions
+are retried with backoff up to eight attempts, stopping before the service starts.
+A sent job means that the gateway accepted it into its in-memory queue, not that
+the recipient received it. An uncertain gateway response or a crash before the
+job is marked sent can cause a duplicate, since the gateway has no idempotency key.
