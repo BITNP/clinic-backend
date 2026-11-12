@@ -339,27 +339,22 @@ start_message_gateway() {
 	[[ -f "$MESSAGE_GATEWAY_DIR/.env" ]] ||
 		die "message-gateway .env not found at $MESSAGE_GATEWAY_DIR"
 
+	local was_running=0
 	if (cd "$MESSAGE_GATEWAY_DIR" && docker compose ps -q message-gateway 2>/dev/null | grep -q .); then
-		log "message-gateway already running - reusing it"
-	else
-		: >"$MESSAGE_GATEWAY_LOG"
-		log "starting message-gateway (log: $MESSAGE_GATEWAY_LOG)"
-		if ! (cd "$MESSAGE_GATEWAY_DIR" && docker compose up -d) >>"$MESSAGE_GATEWAY_LOG" 2>&1; then
-			tail -n 30 "$MESSAGE_GATEWAY_LOG" >&2 || true
-			die "message-gateway failed to start; see $MESSAGE_GATEWAY_LOG"
-		fi
+		was_running=1
+	fi
+
+	: >"$MESSAGE_GATEWAY_LOG"
+	log "building and starting message-gateway (log: $MESSAGE_GATEWAY_LOG)"
+	if ! (cd "$MESSAGE_GATEWAY_DIR" && docker compose up -d --build message-gateway) >>"$MESSAGE_GATEWAY_LOG" 2>&1; then
+		tail -n 30 "$MESSAGE_GATEWAY_LOG" >&2 || true
+		die "message-gateway failed to start; see $MESSAGE_GATEWAY_LOG"
+	fi
+	if ((!was_running)); then
 		MESSAGE_GATEWAY_STARTED=1
 	fi
 
 	export MESSAGE_GATEWAY_URL=${MESSAGE_GATEWAY_URL:-http://127.0.0.1:8081}
-	if [[ -z "${MESSAGE_GATEWAY_API_KEY:-}" ]]; then
-		MESSAGE_GATEWAY_API_KEY=$(sed -n 's/^MESSAGE_GATEWAY_API_KEY=//p' "$MESSAGE_GATEWAY_DIR/.env" | head -n 1)
-		if [[ -z "$MESSAGE_GATEWAY_API_KEY" ]]; then
-			die "MESSAGE_GATEWAY_API_KEY is not set in $MESSAGE_GATEWAY_DIR/.env"
-		fi
-		export MESSAGE_GATEWAY_API_KEY
-	fi
-
 	if ! wait_for_port 127.0.0.1 8081 "message-gateway" 60; then
 		warn "message-gateway is still starting; follow it with: (cd $MESSAGE_GATEWAY_DIR && docker compose logs -f message-gateway)"
 		return
