@@ -42,6 +42,7 @@ func (w *ReminderWorker) deliverLoop(ctx context.Context, wake <-chan struct{}) 
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
+		processed := 0
 		for i := 0; i < 10 && ctx.Err() == nil; i++ {
 			claimCtx, stop := context.WithTimeout(ctx, 10*time.Second)
 			job, err := w.Delivery.Claim(claimCtx, time.Now())
@@ -55,12 +56,16 @@ func (w *ReminderWorker) deliverLoop(ctx context.Context, wake <-chan struct{}) 
 			if job == nil {
 				break
 			}
+			processed++
 			deliveryCtx, stop := context.WithTimeout(ctx, w.Delivery.Client.Timeout+10*time.Second)
 			err = w.Delivery.Deliver(deliveryCtx, job, time.Now())
 			stop()
 			if err != nil && ctx.Err() == nil {
 				log.Printf("reminder %d delivery: %v", job.ID, err)
 			}
+		}
+		if processed == 10 && ctx.Err() == nil {
+			continue
 		}
 		select {
 		case <-ctx.Done():
