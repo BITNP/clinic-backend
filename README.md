@@ -405,7 +405,10 @@ Set the following backend environment variables to enable it:
 - `SERVICE_DATE_REMINDER_TEMPLATE`: optional Go text template with `Date`,
   `StartTime`, `Room`, `PendingCount`, and `LeadTime` fields.
 
-Dates and message times use `CLINIC_TIMEZONE` (default UTC+8). Only admins
+Dates and message times use `CLINIC_TIMEZONE` (default UTC+8). Service start
+timestamps are interpreted as UTC instants, as sent by the admin frontend.
+PostgreSQL stores these values without a timezone; existing timestamps written
+with another offset cannot be distinguished automatically. Only admins
 assigned to an enabled matching work schedule are notified. Admins need a QQ
 number. A short overlapping scan window tolerates timer drift; long downtime
 is not caught up. Jobs are stored in the backend database and failed submissions
