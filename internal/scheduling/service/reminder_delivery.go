@@ -29,6 +29,7 @@ type ReminderDelivery struct {
 	BaseURL, Account, Token string
 	Template                *template.Template
 	Lease                   time.Duration
+	Now                     func() time.Time
 }
 
 func (d *ReminderDelivery) Claim(ctx context.Context, now time.Time) (*schedulingmodel.ServiceDateReminder, error) {
@@ -43,6 +44,11 @@ func (d *ReminderDelivery) Claim(ctx context.Context, now time.Time) (*schedulin
 		if err != nil {
 			return err
 		}
+		if job.Attempts >= 8 {
+			err := tx.Model(&job).Updates(map[string]any{"status": "cancelled", "lease_until": nil, "claim_token": "", "last_error": "retry limit reached"}).Error
+			job.ID = 0
+			return err
+		}
 		lease := now.Add(d.Lease)
 		return tx.Model(&job).Updates(map[string]any{"status": "sending", "lease_until": lease, "claim_token": token, "attempts": gorm.Expr("attempts + 1")}).Error
 	})
@@ -51,6 +57,9 @@ func (d *ReminderDelivery) Claim(ctx context.Context, now time.Time) (*schedulin
 	}
 	if err != nil {
 		return nil, fmt.Errorf("claim reminder: %w", err)
+	}
+	if job.ID == 0 {
+		return nil, nil
 	}
 	job.ClaimToken = token
 	job.Attempts++
@@ -79,14 +88,14 @@ func (d *ReminderDelivery) Deliver(ctx context.Context, job *schedulingmodel.Ser
 		return cancelJob()
 	}
 	if err != nil {
-		return fmt.Errorf("load service date: %w", err)
+		return d.retry(ctx, job, now, fmt.Errorf("load service date: %w", err))
 	}
 	if !date.StartTime.Equal(job.ServiceStartAt) || !now.Before(date.StartTime) {
 		return cancelJob()
 	}
 	admins, count, err := d.Discovery.Eligible(ctx, date)
 	if err != nil {
-		return err
+		return d.retry(ctx, job, now, err)
 	}
 	var qq string
 	for _, admin := range admins {
@@ -104,7 +113,7 @@ func (d *ReminderDelivery) Deliver(ctx context.Context, job *schedulingmodel.Ser
 	}
 	var room roommodel.ClinicRoom
 	if err = d.DB.WithContext(ctx).First(&room, *date.RoomID).Error; err != nil {
-		return fmt.Errorf("load room: %w", err)
+		return d.retry(ctx, job, now, fmt.Errorf("load room: %w", err))
 	}
 	loc := d.Discovery.Location
 	if loc == nil {
@@ -115,6 +124,13 @@ func (d *ReminderDelivery) Deliver(ctx context.Context, job *schedulingmodel.Ser
 	err = d.Template.Execute(&message, map[string]string{"Date": date.Date.Format("2006-01-02"), "StartTime": start.Format("15:04"), "Room": room.Name, "PendingCount": strconv.FormatInt(count, 10), "LeadTime": (time.Duration(job.LeadTimeSeconds) * time.Second).String()})
 	if err != nil {
 		return d.retry(ctx, job, now, fmt.Errorf("render reminder: %w", err))
+	}
+	clock := d.Now
+	if clock == nil {
+		clock = time.Now
+	}
+	if !clock().Before(date.StartTime) {
+		return cancelJob()
 	}
 	body, err := json.Marshal(map[string]any{"user_id": userID, "message": message.String()})
 	if err != nil {

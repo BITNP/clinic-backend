@@ -30,7 +30,7 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 	start := time.Date(2026, 11, 12, 18, 30, 0, 0, loc)
 	day := time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC)
 	room := uint(1)
-	date := schedulingmodel.ClinicServiceDate{ID: 1, RoomID: &room, Date: day, StartTime: start, EndTime: start.Add(time.Hour)}
+	date := schedulingmodel.ClinicServiceDate{ID: 1, RoomID: &room, Date: day, StartTime: start.UTC(), EndTime: start.Add(time.Hour).UTC()}
 	admin := staffmodel.ClinicStaff{ID: 1, AccountID: "a", Role: "admin", QQNumber: "123"}
 	schedule := schedulingmodel.ClinicWorkSchedule{ID: 1, Name: "schedule", StartDate: day, EndDate: day, Enabled: true}
 	slot := schedulingmodel.ClinicWorkScheduleWeekday{ID: 1, WorkScheduleID: 1, Weekday: int(day.Weekday()), RoomID: room, StartTime: time.Date(1970, 1, 1, 18, 0, 0, 0, time.UTC), EndTime: time.Date(1970, 1, 1, 20, 0, 0, 0, time.UTC)}
@@ -66,7 +66,7 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 		}
 		return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(`{"status":"async","retcode":1,"data":{"delivery_id":"qq-1"}}`)), Header: make(http.Header)}, nil
 	})}
-	delivery := schedulingservice.ReminderDelivery{DB: db, Discovery: &d, Client: client, BaseURL: "http://gateway", Account: "qq", Token: "secret", Template: template.Must(template.New("message").Parse("{{.PendingCount}}")), Lease: time.Minute}
+	delivery := schedulingservice.ReminderDelivery{DB: db, Discovery: &d, Client: client, BaseURL: "http://gateway", Account: "qq", Token: "secret", Template: template.Must(template.New("message").Parse("{{.PendingCount}}")), Lease: time.Minute, Now: func() time.Time { return now }}
 	job, err := delivery.Claim(context.Background(), now)
 	if err != nil || job == nil {
 		t.Fatalf("claim %v %v", job, err)
@@ -98,6 +98,22 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 	if err = db.First(&retryJob, retryJob.ID).Error; err != nil || retryJob.Status != "pending" || retryJob.Attempts != 1 || !retryJob.NextAttemptAt.After(now) {
 		t.Fatalf("retry job=%+v err=%v", retryJob, err)
 	}
+	lateJob := schedulingmodel.ServiceDateReminder{ServiceDateID: date.ID, ServiceStartAt: date.StartTime, LeadTimeSeconds: 1200, StaffID: admin.ID, Status: "pending", NextAttemptAt: now}
+	if err = db.Create(&lateJob).Error; err != nil {
+		t.Fatal(err)
+	}
+	lateClaim, err := delivery.Claim(context.Background(), now)
+	if err != nil || lateClaim == nil {
+		t.Fatalf("late claim %v %v", lateClaim, err)
+	}
+	delivery.Now = func() time.Time { return start }
+	if err = delivery.Deliver(context.Background(), lateClaim, now); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.First(&lateJob, lateJob.ID).Error; err != nil || lateJob.Status != "cancelled" {
+		t.Fatalf("late job=%+v err=%v", lateJob, err)
+	}
+	delivery.Now = func() time.Time { return now }
 	if err = db.Model(&record).Update("status", recordmodel.RecordStatusConfirmed).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -110,6 +126,23 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 	}
 	if err = db.First(&retryJob, retryJob.ID).Error; err != nil || retryJob.Status != "cancelled" {
 		t.Fatalf("cancelled job=%+v err=%v", retryJob, err)
+	}
+	if err = db.Model(&retryJob).Updates(map[string]any{"status": "pending", "next_attempt_at": now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	oldClaim, err := delivery.Claim(context.Background(), now)
+	if err != nil || oldClaim == nil {
+		t.Fatalf("old claim %v %v", oldClaim, err)
+	}
+	newClaim, err := delivery.Claim(context.Background(), now.Add(2*time.Minute))
+	if err != nil || newClaim == nil {
+		t.Fatalf("expired claim %v %v", newClaim, err)
+	}
+	if err = delivery.Deliver(context.Background(), oldClaim, now); err == nil {
+		t.Fatal("stale claim unexpectedly updated job")
+	}
+	if err = delivery.Deliver(context.Background(), newClaim, now.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
 	}
 	_, count, err := d.Eligible(context.Background(), date)
 	if err != nil || count != 0 {

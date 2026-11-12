@@ -24,7 +24,7 @@ type ReminderDiscovery struct {
 func (d *ReminderDiscovery) Discover(ctx context.Context, now time.Time) error {
 	db := d.DB.WithContext(ctx)
 	for _, lead := range d.LeadTimes {
-		from, until := ReminderStartWindow(now, lead)
+		from, until := ReminderStartWindow(now.UTC(), lead)
 		var dates []schedulingmodel.ClinicServiceDate
 		if err := db.Where("start_time >= ? AND start_time < ?", from, until).Find(&dates).Error; err != nil {
 			return fmt.Errorf("find service dates: %w", err)
