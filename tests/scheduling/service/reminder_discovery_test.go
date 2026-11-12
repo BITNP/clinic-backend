@@ -2,13 +2,18 @@ package service_test
 
 import (
 	recordmodel "clinic-backend/internal/record/model"
+	roommodel "clinic-backend/internal/room/model"
 	schedulingmodel "clinic-backend/internal/scheduling/model"
 	schedulingservice "clinic-backend/internal/scheduling/service"
 	staffmodel "clinic-backend/internal/staff/model"
 	"context"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
+	"text/template"
 	"time"
 )
 
@@ -49,6 +54,34 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 	if len(jobs) != 1 || jobs[0].StaffID != 1 {
 		t.Fatalf("jobs = %+v", jobs)
 	}
+	if err = db.Create(&roommodel.ClinicRoom{ID: room, Name: "clinic", Address: "A"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		if r.Header.Get("Authorization") != "Bearer secret" {
+			t.Error("missing gateway token")
+		}
+		return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(`{"status":"async","retcode":1,"data":{"delivery_id":"qq-1"}}`)), Header: make(http.Header)}, nil
+	})}
+	delivery := schedulingservice.ReminderDelivery{DB: db, Discovery: &d, Client: client, BaseURL: "http://gateway", Account: "qq", Token: "secret", Template: template.Must(template.New("message").Parse("{{.PendingCount}}")), Lease: time.Minute}
+	job, err := delivery.Claim(context.Background(), now)
+	if err != nil || job == nil {
+		t.Fatalf("claim %v %v", job, err)
+	}
+	if err = delivery.Deliver(context.Background(), job, now); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests=%d", requests)
+	}
+	if err = db.First(&jobs[0], job.ID).Error; err != nil || jobs[0].Status != "sent" {
+		t.Fatalf("job=%+v err=%v", jobs[0], err)
+	}
+	if next, err := delivery.Claim(context.Background(), now.Add(time.Minute)); err != nil || next != nil {
+		t.Fatalf("second claim=%+v err=%v", next, err)
+	}
 	if err = db.Model(&record).Update("status", recordmodel.RecordStatusConfirmed).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -57,3 +90,7 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 		t.Fatalf("count=%d err=%v", count, err)
 	}
 }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
