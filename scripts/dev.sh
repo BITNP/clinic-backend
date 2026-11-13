@@ -53,8 +53,8 @@ START_STORAGE=1
 START_MESSAGE_GATEWAY=1
 START_FAKE_NAPCAT=1
 STORAGE_STARTED=0
-MESSAGE_GATEWAY_STARTED=0
 FAKE_NAPCAT_STARTED=0
+MESSAGE_GATEWAY_NETWORK_CREATED=0
 
 usage() {
 	cat <<'EOF'
@@ -125,6 +125,7 @@ wait_for_port() {
 CAS_PGID=""
 REDIS_CONTAINER_STARTED=0
 REDIS_PGID=""
+MESSAGE_GATEWAY_PGID=""
 
 # Kill a whole process group (go run / redis-server spawn children).
 kill_group() {
@@ -158,15 +159,19 @@ cleanup() {
 			docker compose -f docker-compose.fake-napcat.yml down) >/dev/null 2>&1 || true
 	fi
 
-	if ((MESSAGE_GATEWAY_STARTED)); then
-		log "stopping message-gateway stack"
-		(cd "$MESSAGE_GATEWAY_DIR" && docker compose stop) >/dev/null 2>&1 || true
+	if [[ -n "$MESSAGE_GATEWAY_PGID" ]]; then
+		log "stopping message-gateway"
+		kill_group "$MESSAGE_GATEWAY_PGID"
 	fi
 
 	if [[ -n "$CAS_PGID" ]]; then
 		log "stopping fake CAS server"
 		kill_group "$CAS_PGID"
 		kill_group "$CAS_PGID" KILL
+	fi
+
+	if ((MESSAGE_GATEWAY_NETWORK_CREATED)); then
+		docker network rm message-gateway >/dev/null 2>&1 || true
 	fi
 
 	exit "$status"
@@ -326,39 +331,36 @@ start_message_gateway() {
 		return
 	fi
 
-	if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-		warn "Docker is unavailable - not starting message-gateway"
-		return
-	fi
-	if ! docker compose version >/dev/null 2>&1; then
-		warn "docker compose is unavailable - not starting message-gateway"
+	export MESSAGE_GATEWAY_URL=${MESSAGE_GATEWAY_URL:-http://127.0.0.1:8081}
+	if port_open 127.0.0.1 8081; then
+		log "port 8081 already in use - reusing existing message-gateway"
 		return
 	fi
 
-	[[ -f "$MESSAGE_GATEWAY_DIR/docker-compose.yml" ]] ||
-		die "message-gateway compose file not found at $MESSAGE_GATEWAY_DIR"
+	command -v go >/dev/null 2>&1 || die "go is not installed"
+	[[ -f "$MESSAGE_GATEWAY_DIR/go.mod" ]] ||
+		die "message-gateway Go module not found at $MESSAGE_GATEWAY_DIR"
 	[[ -f "$MESSAGE_GATEWAY_DIR/.env" ]] ||
 		die "message-gateway .env not found at $MESSAGE_GATEWAY_DIR"
-
-	local was_running=0
-	if (cd "$MESSAGE_GATEWAY_DIR" && docker compose ps -q message-gateway 2>/dev/null | grep -q .); then
-		was_running=1
-	fi
+	[[ -f "$MESSAGE_GATEWAY_DIR/accounts.json" ]] ||
+		die "message-gateway accounts.json not found at $MESSAGE_GATEWAY_DIR"
 
 	: >"$MESSAGE_GATEWAY_LOG"
-	log "building and starting message-gateway (log: $MESSAGE_GATEWAY_LOG)"
-	if ! (cd "$MESSAGE_GATEWAY_DIR" && docker compose up -d --build message-gateway) >>"$MESSAGE_GATEWAY_LOG" 2>&1; then
+	log "starting message-gateway with go run (log: $MESSAGE_GATEWAY_LOG)"
+	spawn bash -c '
+		cd "$1" || exit 1
+		set -a
+		source .env
+		set +a
+		export HTTP_ADDR=${HTTP_ADDR:-:8081}
+		export MESSAGE_ACCOUNTS_FILE=./accounts.json
+		exec go run ./cmd/message-gateway
+	' bash "$MESSAGE_GATEWAY_DIR" >>"$MESSAGE_GATEWAY_LOG" 2>&1
+	MESSAGE_GATEWAY_PGID=$SPAWNED_PGID
+
+	if ! wait_for_port 127.0.0.1 8081 "message-gateway" 60; then
 		tail -n 30 "$MESSAGE_GATEWAY_LOG" >&2 || true
 		die "message-gateway failed to start; see $MESSAGE_GATEWAY_LOG"
-	fi
-	if ((!was_running)); then
-		MESSAGE_GATEWAY_STARTED=1
-	fi
-
-	export MESSAGE_GATEWAY_URL=${MESSAGE_GATEWAY_URL:-http://127.0.0.1:8081}
-	if ! wait_for_port 127.0.0.1 8081 "message-gateway" 60; then
-		warn "message-gateway is still starting; follow it with: (cd $MESSAGE_GATEWAY_DIR && docker compose logs -f message-gateway)"
-		return
 	fi
 	log "message-gateway ready: http://127.0.0.1:8081"
 	if ((!START_FAKE_NAPCAT)); then
@@ -390,6 +392,15 @@ start_fake_napcat() {
 	fi
 
 	: >"$FAKE_NAPCAT_LOG"
+	if ! docker network inspect message-gateway >/dev/null 2>&1; then
+		log "creating Docker network message-gateway for fake NapCat"
+		if ! docker network create message-gateway >>"$FAKE_NAPCAT_LOG" 2>&1; then
+			tail -n 30 "$FAKE_NAPCAT_LOG" >&2 || true
+			die "failed to create the message-gateway Docker network; see $FAKE_NAPCAT_LOG"
+		fi
+		MESSAGE_GATEWAY_NETWORK_CREATED=1
+	fi
+
 	log "starting fake NapCat (log: $FAKE_NAPCAT_LOG)"
 	if ! (cd "$MESSAGE_GATEWAY_DIR" && docker compose -f docker-compose.fake-napcat.yml up -d --build) >>"$FAKE_NAPCAT_LOG" 2>&1; then
 		tail -n 30 "$FAKE_NAPCAT_LOG" >&2 || true
