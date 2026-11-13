@@ -64,6 +64,7 @@ func openDatabase() *gorm.DB {
 	if err := db.AutoMigrate(
 		&announcement.ClinicAnnouncement{},
 		&schedulingmodel.ClinicServiceDate{},
+		&schedulingmodel.ServiceDateReminder{},
 		&roommodel.ClinicRoom{},
 		&staffmodel.ClinicStaff{},
 		&staffmodel.ClinicStaffWorkyear{},

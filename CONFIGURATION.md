@@ -372,9 +372,8 @@ after the gateway network exists:
 ```
 
 To test without a real QQ account, use `scripts/dev.sh --fake-napcat`. It starts
-the dev fake OneBot stack from
-`../message-gateway/docker-compose.fake-napcat.yml` after the gateway network
-exists and stops it on exit.
+the dev fake OneBot server with `go run ./cmd/fake-napcat` from
+`../message-gateway` and stops it on exit.
 
 For a local `S3_ENDPOINT`, it starts RustFS and runs `rustfs-init` before
 starting the backend. Use `--no-storage` when storage is already managed
@@ -384,7 +383,7 @@ is in `../message-gateway/napcat/config/webui.json`); later starts reuse the
 saved session. `scripts/dev.sh` starts the gateway but does not export a
 gateway key; account tokens live in `../message-gateway/accounts.json`. Use
 `--no-message-gateway` when a gateway is already running; `--no-napcat` is a
-deprecated alias. Use `--fake-napcat` to start the dev fake OneBot stack instead
+deprecated alias. Use `--fake-napcat` to start the dev fake OneBot server instead
 of a real NapCat. Other flags: `--no-cas` and `--no-redis` when those services
 are already running.
 

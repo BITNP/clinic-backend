@@ -6,18 +6,18 @@
 #   1. fake CAS server        -> http://127.0.0.1:9999
 #   2. Redis                  -> 127.0.0.1:6379 (docker, falls back to redis-server)
 #   3. RustFS + provisioning  -> http://127.0.0.1:9000, when S3 storage is local
-#   4. message-gateway        -> http://127.0.0.1:8081 (NapCat external)
+#   4. message-gateway        -> http://127.0.0.1:8081 (with fake NapCat)
 #   5. backend (this repo)    -> http://127.0.0.1:8080
 #
 # The backend runs in the foreground with its stdout/stderr untouched, so
 # everything main.go logs (Gin routes, request logs, startup messages) stays
 # in your terminal. Only the helpers (fake CAS, Redis, RustFS, message-gateway,
-# and optionally fake NapCat) are backgrounded. Ctrl-C stops the backend and
+# and fake NapCat) are backgrounded. Ctrl-C stops the backend and
 # the helpers this script started.
 # RustFS and message-gateway are left running if they were already running before
 # this script started.
 #
-# Usage: scripts/dev.sh [--no-cas] [--no-redis] [--no-storage] [--no-message-gateway] [--fake-napcat]
+# Usage: scripts/dev.sh [--no-cas] [--no-redis] [--no-storage] [--no-message-gateway] [--no-fake-napcat]
 
 set -Eeuo pipefail
 
@@ -51,10 +51,8 @@ START_CAS=1
 START_REDIS=1
 START_STORAGE=1
 START_MESSAGE_GATEWAY=1
-START_FAKE_NAPCAT=0
+START_FAKE_NAPCAT=1
 STORAGE_STARTED=0
-MESSAGE_GATEWAY_STARTED=0
-FAKE_NAPCAT_STARTED=0
 
 usage() {
 	cat <<'EOF'
@@ -70,8 +68,8 @@ Options:
                   storage is already running, or use an external S3 endpoint)
   --no-message-gateway
                   Do not start message-gateway (assume one is running)
-  --fake-napcat   Start the dev fake NapCat stack for local testing. It uses
-                  the gateway network and does not connect to QQ.
+  --no-fake-napcat  Do not start the dev fake NapCat server
+  --fake-napcat   Start fake NapCat (the default); it does not connect to QQ
   --no-napcat     Deprecated alias for --no-message-gateway
   -h, --help      Show this help
 EOF
@@ -84,6 +82,7 @@ while (($# > 0)); do
 	--no-storage | --no-rustfs) START_STORAGE=0 ;;
 	--no-message-gateway | --no-napcat) START_MESSAGE_GATEWAY=0 ;;
 	--fake-napcat) START_FAKE_NAPCAT=1 ;;
+	--no-fake-napcat) START_FAKE_NAPCAT=0 ;;
 	-h | --help)
 		usage
 		exit 0
@@ -124,6 +123,8 @@ wait_for_port() {
 CAS_PGID=""
 REDIS_CONTAINER_STARTED=0
 REDIS_PGID=""
+MESSAGE_GATEWAY_PGID=""
+FAKE_NAPCAT_PGID=""
 
 # Kill a whole process group (go run / redis-server spawn children).
 kill_group() {
@@ -151,15 +152,14 @@ cleanup() {
 		docker compose stop rustfs >/dev/null 2>&1 || true
 	fi
 
-	if ((FAKE_NAPCAT_STARTED)); then
-		log "stopping fake NapCat stack"
-		(cd "$MESSAGE_GATEWAY_DIR" &&
-			docker compose -f docker-compose.fake-napcat.yml down) >/dev/null 2>&1 || true
+	if [[ -n "$FAKE_NAPCAT_PGID" ]]; then
+		log "stopping fake NapCat"
+		kill_group "$FAKE_NAPCAT_PGID"
 	fi
 
-	if ((MESSAGE_GATEWAY_STARTED)); then
-		log "stopping message-gateway stack"
-		(cd "$MESSAGE_GATEWAY_DIR" && docker compose stop) >/dev/null 2>&1 || true
+	if [[ -n "$MESSAGE_GATEWAY_PGID" ]]; then
+		log "stopping message-gateway"
+		kill_group "$MESSAGE_GATEWAY_PGID"
 	fi
 
 	if [[ -n "$CAS_PGID" ]]; then
@@ -325,37 +325,36 @@ start_message_gateway() {
 		return
 	fi
 
-	if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-		warn "Docker is unavailable - not starting message-gateway"
-		return
-	fi
-	if ! docker compose version >/dev/null 2>&1; then
-		warn "docker compose is unavailable - not starting message-gateway"
+	export MESSAGE_GATEWAY_URL=${MESSAGE_GATEWAY_URL:-http://127.0.0.1:8081}
+	if port_open 127.0.0.1 8081; then
+		log "port 8081 already in use - reusing existing message-gateway"
 		return
 	fi
 
-	[[ -f "$MESSAGE_GATEWAY_DIR/docker-compose.yml" ]] ||
-		die "message-gateway compose file not found at $MESSAGE_GATEWAY_DIR"
+	command -v go >/dev/null 2>&1 || die "go is not installed"
+	[[ -f "$MESSAGE_GATEWAY_DIR/go.mod" ]] ||
+		die "message-gateway Go module not found at $MESSAGE_GATEWAY_DIR"
 	[[ -f "$MESSAGE_GATEWAY_DIR/.env" ]] ||
 		die "message-gateway .env not found at $MESSAGE_GATEWAY_DIR"
+	[[ -f "$MESSAGE_GATEWAY_DIR/accounts.json" ]] ||
+		die "message-gateway accounts.json not found at $MESSAGE_GATEWAY_DIR"
 
-	if (cd "$MESSAGE_GATEWAY_DIR" && docker compose ps -q message-gateway 2>/dev/null | grep -q .); then
-		log "message-gateway already running - reusing it"
-	else
-		: >"$MESSAGE_GATEWAY_LOG"
-		log "starting message-gateway (log: $MESSAGE_GATEWAY_LOG)"
-		if ! (cd "$MESSAGE_GATEWAY_DIR" && docker compose up -d) >>"$MESSAGE_GATEWAY_LOG" 2>&1; then
-			tail -n 30 "$MESSAGE_GATEWAY_LOG" >&2 || true
-			die "message-gateway failed to start; see $MESSAGE_GATEWAY_LOG"
-		fi
-		MESSAGE_GATEWAY_STARTED=1
-	fi
-
-	export MESSAGE_GATEWAY_URL=${MESSAGE_GATEWAY_URL:-http://127.0.0.1:8081}
+	: >"$MESSAGE_GATEWAY_LOG"
+	log "starting message-gateway with go run (log: $MESSAGE_GATEWAY_LOG)"
+	spawn bash -c '
+		cd "$1" || exit 1
+		set -a
+		source .env
+		set +a
+		export HTTP_ADDR=${HTTP_ADDR:-:8081}
+		export MESSAGE_ACCOUNTS_FILE=./accounts.json
+		exec go run ./cmd/message-gateway
+	' bash "$MESSAGE_GATEWAY_DIR" >>"$MESSAGE_GATEWAY_LOG" 2>&1
+	MESSAGE_GATEWAY_PGID=$SPAWNED_PGID
 
 	if ! wait_for_port 127.0.0.1 8081 "message-gateway" 60; then
-		warn "message-gateway is still starting; follow it with: (cd $MESSAGE_GATEWAY_DIR && docker compose logs -f message-gateway)"
-		return
+		tail -n 30 "$MESSAGE_GATEWAY_LOG" >&2 || true
+		die "message-gateway failed to start; see $MESSAGE_GATEWAY_LOG"
 	fi
 	log "message-gateway ready: http://127.0.0.1:8081"
 	if ((!START_FAKE_NAPCAT)); then
@@ -369,39 +368,39 @@ start_fake_napcat() {
 		return
 	fi
 
-	if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-		warn "Docker is unavailable - not starting fake NapCat"
-		return
-	fi
-	if ! docker compose version >/dev/null 2>&1; then
-		warn "docker compose is unavailable - not starting fake NapCat"
-		return
-	fi
+	local fake_napcat_port
+	fake_napcat_port=$(sed -n 's/^NAPCAT_ONEBOT_PORT=//p' "$MESSAGE_GATEWAY_DIR/.env" 2>/dev/null | head -n 1)
+	fake_napcat_port=${fake_napcat_port:-3001}
 
-	[[ -f "$MESSAGE_GATEWAY_DIR/docker-compose.fake-napcat.yml" ]] ||
-		die "fake NapCat compose file not found at $MESSAGE_GATEWAY_DIR"
-
-	if (cd "$MESSAGE_GATEWAY_DIR" && docker compose -f docker-compose.fake-napcat.yml ps -q napcat 2>/dev/null | grep -q .); then
+	if port_open 127.0.0.1 "$fake_napcat_port"; then
 		log "fake NapCat already running - reusing it"
 		return
 	fi
 
+	command -v go >/dev/null 2>&1 || die "go is not installed"
+	[[ -f "$MESSAGE_GATEWAY_DIR/cmd/fake-napcat/main.go" ]] ||
+		die "fake NapCat command not found at $MESSAGE_GATEWAY_DIR/cmd/fake-napcat"
+
 	: >"$FAKE_NAPCAT_LOG"
-	log "starting fake NapCat (log: $FAKE_NAPCAT_LOG)"
-	if ! (cd "$MESSAGE_GATEWAY_DIR" && docker compose -f docker-compose.fake-napcat.yml up -d --build) >>"$FAKE_NAPCAT_LOG" 2>&1; then
+	log "starting fake NapCat with go run (log: $FAKE_NAPCAT_LOG)"
+	spawn bash -c '
+		cd "$1" || exit 1
+		if [[ -f .env ]]; then
+			set -a
+			source .env
+			set +a
+		fi
+		export FAKE_NAPCAT_ADDR=${FAKE_NAPCAT_ADDR:-:${NAPCAT_ONEBOT_PORT:-3001}}
+		exec go run ./cmd/fake-napcat
+	' bash "$MESSAGE_GATEWAY_DIR" >>"$FAKE_NAPCAT_LOG" 2>&1
+	FAKE_NAPCAT_PGID=$SPAWNED_PGID
+
+	if ! wait_for_port 127.0.0.1 "$fake_napcat_port" "fake NapCat" 60; then
 		tail -n 30 "$FAKE_NAPCAT_LOG" >&2 || true
 		die "fake NapCat failed to start; see $FAKE_NAPCAT_LOG"
 	fi
-	FAKE_NAPCAT_STARTED=1
-
-	NAPCAT_ONEBOT_PORT=$(sed -n 's/^NAPCAT_ONEBOT_PORT=//p' "$MESSAGE_GATEWAY_DIR/.env" | head -n 1)
-	NAPCAT_ONEBOT_PORT=${NAPCAT_ONEBOT_PORT:-3001}
-	if ! wait_for_port 127.0.0.1 "$NAPCAT_ONEBOT_PORT" "fake NapCat" 30; then
-		warn "fake NapCat is still starting; follow it with: (cd $MESSAGE_GATEWAY_DIR && docker compose -f docker-compose.fake-napcat.yml logs -f napcat)"
-		return
-	fi
-	log "fake NapCat ready: http://127.0.0.1:$NAPCAT_ONEBOT_PORT"
-	log "fake NapCat messages: curl http://127.0.0.1:$NAPCAT_ONEBOT_PORT/_messages"
+	log "fake NapCat ready: http://127.0.0.1:$fake_napcat_port"
+	log "fake NapCat messages: curl http://127.0.0.1:$fake_napcat_port/_messages"
 }
 
 # --- 5. backend --------------------------------------------------------------

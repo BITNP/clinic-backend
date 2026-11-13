@@ -357,8 +357,8 @@ scripts/dev.sh
 Use `--no-cas`, `--no-redis`, `--no-storage`, or `--no-message-gateway` when a
 service is already running or storage is managed elsewhere. `--no-napcat` is a
 deprecated alias for `--no-message-gateway`. For testing without a QQ login, add
-`--fake-napcat`; it starts the dev fake OneBot stack from
-`../message-gateway/docker-compose.fake-napcat.yml`. The complete
+`--fake-napcat`; it starts the dev fake OneBot server directly from
+`../message-gateway`. The complete
 local-development settings, defaults, and manual steps are in
 [CONFIGURATION.md](CONFIGURATION.md#local-development).
 
@@ -387,3 +387,37 @@ Clients read the current values from `GET /api/admin/sync` (admin/staff session)
 or `GET /api/sync` (API-key client), keep the values they last saw, and refetch
 their data when a value differs. Counters are best-effort: a Redis failure is
 logged and never fails the underlying write.
+
+
+### Pending ticket reminders
+
+The backend can remind admins assigned to a service window when tickets remain
+pending. It scans every minute and on startup, finds pending tickets by date and
+room, and sends a QQ private message through the account-scoped message gateway.
+Set the following backend environment variables to enable it:
+
+- `SERVICE_DATE_REMINDER_ENABLED=true` (default `false`).
+- `SERVICE_DATE_REMINDER_LEAD_TIMES=5h,3h` (default shown): unique, positive
+  Go durations in whole seconds. Each is relative to the service start time.
+- `MESSAGE_GATEWAY_URL`: gateway base URL.
+- `MESSAGE_GATEWAY_ACCOUNT=qq`: gateway account name (default `qq`).
+- `MESSAGE_GATEWAY_ACCOUNT_TOKEN`: the account's gateway `client_token`.
+- `MESSAGE_GATEWAY_TIMEOUT=5s` (default shown): request timeout.
+- `SERVICE_DATE_REMINDER_TEMPLATE`: optional Go text template with `Date`,
+  `StartTime`, `Room`, `PendingCount`, and `LeadTime` fields. The default is
+  `[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待审核工单，请及时处理。`
+
+`LeadTime` is the actual time remaining when the message is sent, rounded down
+to the minute.
+
+Dates and message times use `CLINIC_TIMEZONE` (default UTC+8). Service start
+timestamps are interpreted as UTC instants, as sent by the admin frontend.
+PostgreSQL stores these values without a timezone; existing timestamps written
+with another offset cannot be distinguished automatically. Only admins
+assigned to an enabled matching work schedule are notified. Admins need a QQ
+number. A short overlapping scan window tolerates timer drift; long downtime
+is not caught up. Jobs are stored in the backend database and failed submissions
+are retried with backoff up to eight attempts, stopping before the service starts.
+A sent job means that the gateway accepted it into its in-memory queue, not that
+the recipient received it. An uncertain gateway response or a crash before the
+job is marked sent can cause a duplicate, since the gateway has no idempotency key.
