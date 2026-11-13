@@ -356,8 +356,8 @@ scripts/dev.sh
 Use `--no-cas`, `--no-redis`, `--no-storage`, or `--no-message-gateway` when a
 service is already running or storage is managed elsewhere. `--no-napcat` is a
 deprecated alias for `--no-message-gateway`. For testing without a QQ login, add
-`--fake-napcat`; it starts the dev fake OneBot stack from
-`../message-gateway/docker-compose.fake-napcat.yml`. The complete
+`--fake-napcat`; it starts the dev fake OneBot server directly from
+`../message-gateway`. The complete
 local-development settings, defaults, and manual steps are in
 [CONFIGURATION.md](CONFIGURATION.md#local-development).
 
