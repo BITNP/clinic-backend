@@ -66,20 +66,29 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 		t.Fatal(err)
 	}
 	requests := 0
+	sentMessage := ""
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		requests++
 		if r.Header.Get("Authorization") != "Bearer secret" {
 			t.Error("missing gateway token")
 		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		sentMessage = string(body)
 		return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(`{"status":"async","retcode":1,"data":{"delivery_id":"qq-1"}}`)), Header: make(http.Header)}, nil
 	})}
-	delivery := schedulingservice.ReminderDelivery{DB: db, Discovery: &d, Client: client, BaseURL: "http://gateway", Account: "qq", Token: "secret", Template: template.Must(template.New("message").Parse("{{.PendingCount}}")), Lease: time.Minute, Now: func() time.Time { return now }}
+	delivery := schedulingservice.ReminderDelivery{DB: db, Discovery: &d, Client: client, BaseURL: "http://gateway", Account: "qq", Token: "secret", Template: template.Must(template.New("message").Parse("{{.PendingCount}} {{.LeadTime}}")), Lease: time.Minute, Now: func() time.Time { return now }}
 	job, err := delivery.Claim(context.Background(), now)
 	if err != nil || job == nil {
 		t.Fatalf("claim %v %v", job, err)
 	}
 	if err = delivery.Deliver(context.Background(), job, now); err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(sentMessage, `"message":"1 59m0s"`) {
+		t.Fatalf("message = %s", sentMessage)
 	}
 	if requests != 1 {
 		t.Fatalf("requests=%d", requests)

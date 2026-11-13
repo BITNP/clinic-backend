@@ -120,17 +120,19 @@ func (d *ReminderDelivery) Deliver(ctx context.Context, job *schedulingmodel.Ser
 		loc = time.FixedZone("UTC+8", 8*3600)
 	}
 	start := date.StartTime.In(loc)
-	var message bytes.Buffer
-	err = d.Template.Execute(&message, map[string]string{"Date": date.Date.Format("2006-01-02"), "StartTime": start.Format("15:04"), "Room": room.Name, "PendingCount": strconv.FormatInt(count, 10), "LeadTime": (time.Duration(job.LeadTimeSeconds) * time.Second).String()})
-	if err != nil {
-		return d.retry(ctx, job, now, fmt.Errorf("render reminder: %w", err))
-	}
 	clock := d.Now
 	if clock == nil {
 		clock = time.Now
 	}
-	if !clock().Before(date.StartTime) {
+	deliveryTime := clock()
+	if !deliveryTime.Before(date.StartTime) {
 		return cancelJob()
+	}
+	remaining := date.StartTime.Sub(deliveryTime).Truncate(time.Minute)
+	var message bytes.Buffer
+	err = d.Template.Execute(&message, map[string]string{"Date": date.Date.Format("2006-01-02"), "StartTime": start.Format("15:04"), "Room": room.Name, "PendingCount": strconv.FormatInt(count, 10), "LeadTime": remaining.String()})
+	if err != nil {
+		return d.retry(ctx, job, now, fmt.Errorf("render reminder: %w", err))
 	}
 	body, err := json.Marshal(map[string]any{"user_id": userID, "message": message.String()})
 	if err != nil {

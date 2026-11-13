@@ -405,6 +405,9 @@ Set the following backend environment variables to enable it:
 - `SERVICE_DATE_REMINDER_TEMPLATE`: optional Go text template with `Date`,
   `StartTime`, `Room`, `PendingCount`, and `LeadTime` fields.
 
+`LeadTime` is the actual time remaining when the message is sent, rounded down
+to the minute.
+
 Dates and message times use `CLINIC_TIMEZONE` (default UTC+8). Service start
 timestamps are interpreted as UTC instants, as sent by the admin frontend.
 PostgreSQL stores these values without a timezone; existing timestamps written
