@@ -13,7 +13,7 @@ const (
 	defaultServiceDateReminderLeadTimes = "5h,3h"
 	defaultServiceDateReminderAccount   = "qq"
 	defaultServiceDateReminderTimeout   = 5 * time.Second
-	defaultServiceDateReminderTemplate  = `【校医院工单提醒】服务将在 {{.LeadTime}} 后开始（{{.Date}} {{.StartTime}}，{{.Room}}），当前还有 {{.PendingCount}} 个待审核工单，请及时处理。`
+	defaultServiceDateReminderTemplate  = `[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待审核工单，请及时处理。`
 )
 
 // ServiceDateReminderConfig controls the pending-ticket reminder worker.

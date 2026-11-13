@@ -51,8 +51,9 @@ func TestLoadServiceDateReminderConfigDefaults(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("render default template: %v", err)
 	}
-	if !strings.Contains(rendered.String(), "3 个待审核工单") {
-		t.Errorf("rendered template = %q", rendered.String())
+	want := "[电脑诊所]2026-11-12 18:30 北区医务室 的值班还有3个待审核工单，请及时处理。"
+	if rendered.String() != want {
+		t.Errorf("rendered template = %q, want %q", rendered.String(), want)
 	}
 }
 

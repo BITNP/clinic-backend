@@ -403,7 +403,8 @@ Set the following backend environment variables to enable it:
 - `MESSAGE_GATEWAY_ACCOUNT_TOKEN`: the account's gateway `client_token`.
 - `MESSAGE_GATEWAY_TIMEOUT=5s` (default shown): request timeout.
 - `SERVICE_DATE_REMINDER_TEMPLATE`: optional Go text template with `Date`,
-  `StartTime`, `Room`, `PendingCount`, and `LeadTime` fields.
+  `StartTime`, `Room`, `PendingCount`, and `LeadTime` fields. The default is
+  `[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待审核工单，请及时处理。`
 
 `LeadTime` is the actual time remaining when the message is sent, rounded down
 to the minute.
