@@ -1,6 +1,7 @@
 package announcement_test
 
 import (
+	"database/sql"
 	"errors"
 	"testing"
 	"time"
@@ -12,7 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func setupAnnouncementServiceDB(t *testing.T) *gorm.DB {
+func setupAnnouncementServiceDB(t *testing.T) *sql.DB {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to open fake database: %v", err)
@@ -20,7 +21,12 @@ func setupAnnouncementServiceDB(t *testing.T) *gorm.DB {
 	if err := db.AutoMigrate(&announcement.ClinicAnnouncement{}); err != nil {
 		t.Fatalf("failed to migrate ClinicAnnouncement model: %v", err)
 	}
-	return db
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get SQL database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	return sqlDB
 }
 
 func boolPtr(v bool) *bool { return &v }
@@ -460,5 +466,34 @@ func TestAnnouncementService_Update_DuplicateTOS(t *testing.T) {
 	}
 	if updated.Tag != announcement.AnnouncementTagTOS {
 		t.Errorf("expected tag to remain tos, got %q", updated.Tag)
+	}
+}
+
+func TestAnnouncementService_SQLValuesAndDatabaseErrors(t *testing.T) {
+	db := setupAnnouncementServiceDB(t)
+	svc := announcement.NewAnnouncementService(db)
+	title := "a'); DROP TABLE clinic_announcement; --"
+	a, err := svc.Create(announcement.CreateAnnouncementInput{
+		Title: title, Content: "content", ExpireDate: testutil.FutureDate(1),
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	got, err := svc.GetByID(a.ID)
+	if err != nil || got.Title != title {
+		t.Fatalf("get literal value: %+v, %v", got, err)
+	}
+	items, total, err := svc.List(announcement.ListAnnouncementFilter{Tag: announcement.AnnouncementTag("normal' OR '1'='1")})
+	if err != nil || total != 0 || len(items) != 0 {
+		t.Fatalf("filter literal value: %+v, %d, %v", items, total, err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close database: %v", err)
+	}
+	if _, err := svc.GetByID(a.ID); err == nil || errors.Is(err, announcement.ErrAnnouncementNotFound) {
+		t.Fatalf("expected database error, got %v", err)
+	}
+	if err := svc.Delete(a.ID); err == nil {
+		t.Fatal("expected database error on delete")
 	}
 }

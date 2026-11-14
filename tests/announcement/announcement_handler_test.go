@@ -23,7 +23,12 @@ func setupAnnouncementHandlerRouter(t *testing.T) (*gin.Engine, *announcement.An
 	if err := db.AutoMigrate(&announcement.ClinicAnnouncement{}); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	svc := announcement.NewAnnouncementService(db)
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get SQL database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	svc := announcement.NewAnnouncementService(sqlDB)
 	h := announcement.NewAnnouncementHandler(svc)
 
 	r := gin.New()
@@ -133,6 +138,23 @@ func TestAnnouncementHandler_List(t *testing.T) {
 	}
 	if resp.Total != 3 || len(resp.Items) != 2 {
 		t.Errorf("expected total 3 / 2 items, got total %d / %d items", resp.Total, len(resp.Items))
+	}
+}
+
+func TestAnnouncementHandler_List_EmptyArray(t *testing.T) {
+	r, _ := setupAnnouncementHandlerRouter(t)
+	w := testutil.DoRequest(t, r, http.MethodGet, "/api/admin/announcements", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Items json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if string(resp.Items) != "[]" {
+		t.Fatalf("expected empty array, got %s", resp.Items)
 	}
 }
 

@@ -195,7 +195,11 @@ func Run() {
 		log.Println("tagger disabled: set TAGGER_LLM_API_KEY to enable")
 	}
 
-	announcementSvc := announcement.NewAnnouncementService(db)
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatalf("get SQL database: %v", err)
+	}
+	announcementSvc := announcement.NewAnnouncementService(sqlDB)
 	announcementH := announcement.NewAnnouncementHandler(announcementSvc)
 
 	serviceDateLoc := envLocation("CLINIC_TIMEZONE", time.FixedZone("UTC+8", 8*60*60))
