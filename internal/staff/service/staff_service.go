@@ -52,7 +52,10 @@ const staffColumns = "id, account_id, realname, email, qq_number, role, version"
 
 func scanStaff(row interface{ Scan(...any) error }) (staffmodel.ClinicStaff, error) {
 	var staff staffmodel.ClinicStaff
-	err := row.Scan(&staff.ID, &staff.AccountID, &staff.Realname, &staff.Email, &staff.QQNumber, &staff.Role, &staff.Version)
+	var realname, email sql.NullString
+	err := row.Scan(&staff.ID, &staff.AccountID, &realname, &email, &staff.QQNumber, &staff.Role, &staff.Version)
+	staff.Realname = realname.String
+	staff.Email = email.String
 	return staff, err
 }
 

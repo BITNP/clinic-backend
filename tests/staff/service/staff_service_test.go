@@ -108,6 +108,26 @@ func TestStaffService_GetOrCreateByAccountID(t *testing.T) {
 	}
 }
 
+func TestStaffService_GetByID_NullableIdentityFields(t *testing.T) {
+	db := setupStaffTestDB(t)
+	svc := staffservice.NewStaffService(testutil.RawDB(t, db))
+	if err := db.Exec(
+		`INSERT INTO clinic_staff (id, account_id, realname, email, qq_number, role, version)
+		 VALUES (?, ?, NULL, NULL, '', '', 0)`,
+		41, "cas:nullable",
+	).Error; err != nil {
+		t.Fatalf("seed staff with nullable fields: %v", err)
+	}
+
+	staff, err := svc.GetByID(41)
+	if err != nil {
+		t.Fatalf("get staff: %v", err)
+	}
+	if staff.Realname != "" || staff.Email != "" {
+		t.Errorf("nullable fields = %q, %q; want empty strings", staff.Realname, staff.Email)
+	}
+}
+
 func setupStaffTestDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open(":memory:?_fk=1"), &gorm.Config{})
 	if err != nil {
