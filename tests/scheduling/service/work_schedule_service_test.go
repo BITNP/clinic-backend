@@ -25,6 +25,7 @@ func setupWorkScheduleServiceDB(t *testing.T) *gorm.DB {
 		&schedulingmodel.ClinicWorkSchedule{},
 		&schedulingmodel.ClinicWorkScheduleWeekday{},
 		&schedulingmodel.ClinicWorkScheduleStaff{},
+		&roommodel.ClinicCampus{},
 		&roommodel.ClinicRoom{},
 		&staffmodel.ClinicStaff{},
 		&staffmodel.ClinicStaffWorkyear{},
@@ -62,6 +63,49 @@ func TestWorkScheduleService_Create_Success(t *testing.T) {
 	}
 	if sch.Enabled {
 		t.Errorf("expected enabled false by default")
+	}
+}
+
+func TestWorkScheduleService_GetByID_PreloadsRoomCampus(t *testing.T) {
+	db := setupWorkScheduleServiceDB(t)
+	svc := schedulingservice.NewWorkScheduleService(db)
+
+	campus := roommodel.ClinicCampus{Name: "Campus"}
+	if err := db.Create(&campus).Error; err != nil {
+		t.Fatalf("seed campus: %v", err)
+	}
+	room := roommodel.ClinicRoom{
+		Name:     "Room A",
+		Address:  "addr",
+		Enabled:  true,
+		CampusID: &campus.ID,
+		Type:     roommodel.RoomTypeNormal,
+	}
+	if err := db.Create(&room).Error; err != nil {
+		t.Fatalf("seed room: %v", err)
+	}
+
+	created, err := svc.Create(schedulingservice.CreateWorkScheduleInput{
+		Name:      "Fall 2026",
+		StartDate: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+		EndDate:   time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC),
+		Weekdays: []schedulingservice.WeekdayInput{
+			{Weekday: 1, StartTime: "09:00:00", EndTime: "12:00:00", RoomID: room.ID},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	got, err := svc.GetByID(created.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Weekdays) != 1 {
+		t.Fatalf("expected 1 weekday, got %d", len(got.Weekdays))
+	}
+	if got.Weekdays[0].Room.Campus == nil || got.Weekdays[0].Room.Campus.ID != campus.ID {
+		t.Errorf("room campus = %+v, want campus %d", got.Weekdays[0].Room.Campus, campus.ID)
 	}
 }
 

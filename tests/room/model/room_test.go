@@ -15,7 +15,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("failed to open fake database: %v", err)
 	}
 
-	if err := db.AutoMigrate(&roommodel.ClinicRoom{}); err != nil {
+	if err := db.AutoMigrate(&roommodel.ClinicCampus{}, &roommodel.ClinicRoom{}); err != nil {
 		t.Fatalf("failed to migrate ClinicRoom model: %v", err)
 	}
 
@@ -92,6 +92,23 @@ func TestClinicRoom_Delete(t *testing.T) {
 	db.Model(&roommodel.ClinicRoom{}).Where("id = ?", room.ID).Count(&count)
 	if count != 0 {
 		t.Errorf("expected clinic room to be deleted, found %d record(s)", count)
+	}
+}
+
+func TestClinicRoom_TypeDefaultsToNormal(t *testing.T) {
+	db := setupTestDB(t)
+
+	room := roommodel.ClinicRoom{Name: "Room With Default Type", Address: "addr"}
+	if err := db.Create(&room).Error; err != nil {
+		t.Fatalf("failed to create clinic room: %v", err)
+	}
+
+	var retrieved roommodel.ClinicRoom
+	if err := db.First(&retrieved, room.ID).Error; err != nil {
+		t.Fatalf("failed to retrieve clinic room: %v", err)
+	}
+	if retrieved.Type != roommodel.RoomTypeNormal {
+		t.Errorf("expected type %q, got %q", roommodel.RoomTypeNormal, retrieved.Type)
 	}
 }
 

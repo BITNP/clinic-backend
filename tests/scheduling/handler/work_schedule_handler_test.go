@@ -32,6 +32,7 @@ func setupWorkScheduleHandlerRouter(t *testing.T) (*gin.Engine, *schedulingservi
 		&schedulingmodel.ClinicWorkSchedule{},
 		&schedulingmodel.ClinicWorkScheduleWeekday{},
 		&schedulingmodel.ClinicWorkScheduleStaff{},
+		&roommodel.ClinicCampus{},
 		&roommodel.ClinicRoom{},
 		&staffmodel.ClinicStaff{},
 		&staffmodel.ClinicStaffWorkyear{},

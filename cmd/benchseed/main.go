@@ -76,6 +76,7 @@ func main() {
 	if err := db.AutoMigrate(
 		&announcement.ClinicAnnouncement{},
 		&schedulingmodel.ClinicServiceDate{},
+		&roommodel.ClinicCampus{},
 		&roommodel.ClinicRoom{},
 		&staffmodel.ClinicStaff{},
 		&recordmodel.ClinicRecord{},
@@ -87,11 +88,23 @@ func main() {
 	now := time.Now().UTC()
 	today := now.Truncate(24 * time.Hour)
 
+	// Campus
+	campus := roommodel.ClinicCampus{Name: "默认校区"}
+	if err := db.Create(&campus).Error; err != nil {
+		log.Fatalf("create campus: %v", err)
+	}
+
 	// Rooms
 	rooms := make([]roommodel.ClinicRoom, 0, roomCount)
 	roomByName := make(map[string]uint)
 	for _, name := range roomNames {
-		r := roommodel.ClinicRoom{Name: name, Address: roomAddrs[name], Enabled: true}
+		r := roommodel.ClinicRoom{
+			Name:     name,
+			Address:  roomAddrs[name],
+			Enabled:  true,
+			CampusID: &campus.ID,
+			Type:     roommodel.RoomTypeNormal,
+		}
 		if err := db.Create(&r).Error; err != nil {
 			log.Fatalf("create room %s: %v", name, err)
 		}

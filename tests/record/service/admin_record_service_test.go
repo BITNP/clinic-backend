@@ -24,6 +24,7 @@ func setupAdminRecordTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("open db: %v", err)
 	}
 	if err := db.AutoMigrate(
+		&roommodel.ClinicCampus{},
 		&roommodel.ClinicRoom{},
 		&recordmodel.ClinicRecord{},
 		&recordmodel.ClinicRecordDevice{},

@@ -32,6 +32,7 @@ func setupLegacyHandlerRouter(t *testing.T) (*gin.Engine, *gorm.DB, *recordservi
 		t.Fatalf("open db: %v", err)
 	}
 	if err := db.AutoMigrate(
+		&roommodel.ClinicCampus{},
 		&roommodel.ClinicRoom{},
 		&schedulingmodel.ClinicServiceDate{},
 		&recordmodel.ClinicRecord{},
@@ -516,6 +517,7 @@ func TestLegacy_Dates_AlwaysShiftsToUTC8(t *testing.T) {
 		t.Fatalf("open db: %v", err)
 	}
 	if err := db.AutoMigrate(
+		&roommodel.ClinicCampus{},
 		&roommodel.ClinicRoom{},
 		&schedulingmodel.ClinicServiceDate{},
 		&recordmodel.ClinicRecord{},

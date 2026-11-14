@@ -26,6 +26,7 @@ func main() {
 	if err := db.AutoMigrate(
 		&announcement.ClinicAnnouncement{},
 		&schedulingmodel.ClinicServiceDate{},
+		&roommodel.ClinicCampus{},
 		&roommodel.ClinicRoom{},
 		&staffmodel.ClinicStaff{},
 		&staffmodel.ClinicStaffWorkyear{},
@@ -45,6 +46,13 @@ func main() {
 	now := time.Now().UTC()
 	today := now.Truncate(24 * time.Hour)
 
+	// ── Campus ─────────────────────────────────────────────────────────────
+	campus := roommodel.ClinicCampus{Name: "默认校区"}
+	if err := db.Where("name = ?", campus.Name).FirstOrCreate(&campus).Error; err != nil {
+		log.Fatalf("seed campus %s: %v", campus.Name, err)
+	}
+	fmt.Printf("campus: %s (id=%d)\n", campus.Name, campus.ID)
+
 	// ── Rooms ──────────────────────────────────────────────────────────────
 	roomDefs := []struct {
 		Name    string
@@ -59,7 +67,12 @@ func main() {
 	var roomIDs []uint
 	for _, rd := range roomDefs {
 		r := roommodel.ClinicRoom{Name: rd.Name, Address: rd.Address, Enabled: true}
-		if err := db.Where("name = ?", r.Name).FirstOrCreate(&r).Error; err != nil {
+		if err := db.Where("name = ?", r.Name).
+			Assign(map[string]any{
+				"campus_id": campus.ID,
+				"type":      roommodel.RoomTypeNormal,
+			}).
+			FirstOrCreate(&r).Error; err != nil {
 			log.Fatalf("seed room %s: %v", r.Name, err)
 		}
 		roomIDs = append(roomIDs, r.ID)

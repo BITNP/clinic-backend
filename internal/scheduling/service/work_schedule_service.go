@@ -237,7 +237,7 @@ func (s *WorkScheduleService) GetByID(id uint) (schedulingmodel.ClinicWorkSchedu
 		Preload("Weekdays", func(db *gorm.DB) *gorm.DB {
 			return db.Order("weekday ASC")
 		}).
-		Preload("Weekdays.Room").
+		Preload("Weekdays.Room.Campus").
 		Preload("Weekdays.Staff").
 		Preload("Weekdays.Staff.Staff").
 		First(&sch, id).Error; err != nil {
@@ -370,7 +370,7 @@ func (s *WorkScheduleService) Update(id uint, in UpdateWorkScheduleInput) (sched
 		Preload("Weekdays", func(db *gorm.DB) *gorm.DB {
 			return db.Order("weekday ASC")
 		}).
-		Preload("Weekdays.Room").
+		Preload("Weekdays.Room.Campus").
 		Preload("Weekdays.Staff").
 		Preload("Weekdays.Staff.Staff").
 		First(&sch, id).Error; err != nil {

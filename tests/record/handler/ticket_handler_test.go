@@ -28,6 +28,7 @@ func setupTicketHandlerRouter(t *testing.T) (*gin.Engine, *gorm.DB, *recordservi
 		t.Fatalf("open db: %v", err)
 	}
 	if err := db.AutoMigrate(
+		&roommodel.ClinicCampus{},
 		&roommodel.ClinicRoom{},
 		&schedulingmodel.ClinicServiceDate{},
 		&recordmodel.ClinicRecord{},

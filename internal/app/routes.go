@@ -17,6 +17,7 @@ import (
 type routeHandlers struct {
 	announcementH *announcement.AnnouncementHandler
 	serviceDateH  *schedulinghandler.ServiceDateHandler
+	campusH       *roomhandler.CampusHandler
 	roomH         *roomhandler.RoomHandler
 	staffH        *staffhandler.StaffHandler
 	workScheduleH *schedulinghandler.WorkScheduleHandler
@@ -75,6 +76,22 @@ func (h routeHandlers) router() *gin.Engine {
 		sdWrite.POST("", h.serviceDateH.Create)
 		sdWrite.PUT("/:id", h.serviceDateH.Update)
 		sdWrite.DELETE("/:id", h.serviceDateH.Delete)
+	}
+
+	// ── Admin: Campuses ───────────────────────────────────────────────────
+	campusRead := r.Group("/api/admin/campuses")
+	campusRead.Use(h.adminAuth, authhandler.RequireStaff)
+	{
+		campusRead.GET("", h.campusH.List)
+		campusRead.GET("/:id/rooms", h.campusH.ListRooms)
+		campusRead.GET("/:id", h.campusH.Get)
+	}
+	campusWrite := r.Group("/api/admin/campuses")
+	campusWrite.Use(h.adminAuth, authhandler.RequireAdmin, changes.SyncBumpMiddleware(h.syncSvc, changes.SyncGroupRoom))
+	{
+		campusWrite.POST("", h.campusH.Create)
+		campusWrite.PUT("/:id", h.campusH.Update)
+		campusWrite.DELETE("/:id", h.campusH.Delete)
 	}
 
 	// ── Admin: Rooms ──────────────────────────────────────────────────────

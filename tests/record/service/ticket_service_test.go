@@ -25,6 +25,7 @@ func setupTicketTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("open db: %v", err)
 	}
 	if err := db.AutoMigrate(
+		&roommodel.ClinicCampus{},
 		&roommodel.ClinicRoom{},
 		&schedulingmodel.ClinicServiceDate{},
 		&recordmodel.ClinicRecord{},

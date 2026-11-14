@@ -204,6 +204,8 @@ func Run() {
 
 	roomSvc := roomservice.NewRoomService(db)
 	roomH := roomhandler.NewRoomHandler(roomSvc)
+	campusSvc := roomservice.NewCampusService(db)
+	campusH := roomhandler.NewCampusHandler(campusSvc, roomSvc)
 
 	ticketSvc := recordservice.NewTicketService(db, serviceDateLoc)
 	ticketSvc.SetDefaultTagID(recordTagSvc.DefaultID())
@@ -291,6 +293,7 @@ func Run() {
 	r := (routeHandlers{
 		announcementH: announcementH,
 		serviceDateH:  serviceDateH,
+		campusH:       campusH,
 		roomH:         roomH,
 		staffH:        staffH,
 		workScheduleH: workScheduleH,
