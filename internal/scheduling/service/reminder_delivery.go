@@ -54,9 +54,9 @@ func (d *ReminderDelivery) Claim(ctx context.Context, now time.Time) (*schedulin
 		if job.Attempts >= 8 {
 			if _, err := tx.Exec(
 				`UPDATE clinic_service_date_reminder
-				 SET status = 'cancelled', lease_until = NULL, claim_token = '', last_error = 'retry limit reached'
-				 WHERE id = $1`,
-				job.ID,
+				 SET status = 'cancelled', lease_until = NULL, claim_token = '', last_error = 'retry limit reached', updated_at = $1
+				 WHERE id = $2`,
+				time.Now().UTC(), job.ID,
 			); err != nil {
 				return err
 			}
@@ -66,9 +66,9 @@ func (d *ReminderDelivery) Claim(ctx context.Context, now time.Time) (*schedulin
 		lease := now.Add(d.Lease)
 		if _, err := tx.Exec(
 			`UPDATE clinic_service_date_reminder
-			 SET status = 'sending', lease_until = $1, claim_token = $2, attempts = attempts + 1
-			 WHERE id = $3`,
-			lease, token, job.ID,
+			 SET status = 'sending', lease_until = $1, claim_token = $2, attempts = attempts + 1, updated_at = $3
+			 WHERE id = $4`,
+			lease, token, time.Now().UTC(), job.ID,
 		); err != nil {
 			return err
 		}
@@ -110,6 +110,7 @@ func (d *ReminderDelivery) finish(ctx context.Context, job *schedulingmodel.Serv
 	if value, ok := updates["last_error"]; ok {
 		add("last_error", value)
 	}
+	add("updated_at", time.Now().UTC())
 	sets = append(sets, "claim_token = ''", "lease_until = NULL")
 	args = append(args, job.ID, "sending", job.ClaimToken)
 	whereStart := len(args) - 2

@@ -8,6 +8,7 @@ import (
 	staffmodel "clinic-backend/internal/staff/model"
 	"clinic-backend/internal/testutil"
 	"context"
+	"database/sql"
 	"fmt"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -64,6 +65,9 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 	if len(jobs) != 1 || jobs[0].StaffID != 1 {
 		t.Fatalf("jobs = %+v", jobs)
 	}
+	if _, err := rawDB.Exec("UPDATE clinic_service_date_reminder SET created_at = NULL, updated_at = NULL"); err != nil {
+		t.Fatal(err)
+	}
 	if err = db.Create(&roommodel.ClinicRoom{ID: room, Name: "clinic", Address: "A"}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -85,6 +89,13 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 	job, err := delivery.Claim(context.Background(), now)
 	if err != nil || job == nil {
 		t.Fatalf("claim %v %v", job, err)
+	}
+	var updatedAt sql.NullTime
+	if err := rawDB.QueryRow("SELECT updated_at FROM clinic_service_date_reminder WHERE id = $1", job.ID).Scan(&updatedAt); err != nil {
+		t.Fatal(err)
+	}
+	if !updatedAt.Valid || updatedAt.Time.IsZero() {
+		t.Fatalf("claim did not set updated_at: %+v", updatedAt)
 	}
 	if err = delivery.Deliver(context.Background(), job, now); err != nil {
 		t.Fatal(err)

@@ -64,7 +64,10 @@ func scanWorkScheduleStaff(row rowScanner) (schedulingmodel.ClinicWorkScheduleSt
 
 func scanStaff(row rowScanner) (staffmodel.ClinicStaff, error) {
 	var staff staffmodel.ClinicStaff
-	err := row.Scan(&staff.ID, &staff.AccountID, &staff.Realname, &staff.Email, &staff.QQNumber, &staff.Role, &staff.Version)
+	var realname, email sql.NullString
+	err := row.Scan(&staff.ID, &staff.AccountID, &realname, &email, &staff.QQNumber, &staff.Role, &staff.Version)
+	staff.Realname = realname.String
+	staff.Email = email.String
 	return staff, err
 }
 
@@ -96,7 +99,7 @@ func scanRoom(row rowScanner) (roommodel.ClinicRoom, error) {
 
 func scanReminder(row rowScanner) (schedulingmodel.ServiceDateReminder, error) {
 	var reminder schedulingmodel.ServiceDateReminder
-	var leaseUntil, sentAt sql.NullTime
+	var leaseUntil, sentAt, createdAt, updatedAt sql.NullTime
 	err := row.Scan(
 		&reminder.ID,
 		&reminder.ServiceDateID,
@@ -110,14 +113,20 @@ func scanReminder(row rowScanner) (schedulingmodel.ServiceDateReminder, error) {
 		&reminder.ClaimToken,
 		&sentAt,
 		&reminder.LastError,
-		&reminder.CreatedAt,
-		&reminder.UpdatedAt,
+		&createdAt,
+		&updatedAt,
 	)
 	if leaseUntil.Valid {
 		reminder.LeaseUntil = &leaseUntil.Time
 	}
 	if sentAt.Valid {
 		reminder.SentAt = &sentAt.Time
+	}
+	if createdAt.Valid {
+		reminder.CreatedAt = createdAt.Time
+	}
+	if updatedAt.Valid {
+		reminder.UpdatedAt = updatedAt.Time
 	}
 	return reminder, err
 }

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"strings"
@@ -153,19 +154,22 @@ func (d *ReminderDiscovery) Eligible(ctx context.Context, date schedulingmodel.C
 	for rows.Next() {
 		var slotStart, slotEnd time.Time
 		var staff staffmodel.ClinicStaff
+		var realname, email sql.NullString
 		if err := rows.Scan(
 			&slotStart,
 			&slotEnd,
 			&staff.ID,
 			&staff.AccountID,
-			&staff.Realname,
-			&staff.Email,
+			&realname,
+			&email,
 			&staff.QQNumber,
 			&staff.Role,
 			&staff.Version,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan assigned admin: %w", err)
 		}
+		staff.Realname = realname.String
+		staff.Email = email.String
 		if seconds(slotStart) > seconds(start) || seconds(slotEnd) < seconds(end) {
 			continue
 		}
