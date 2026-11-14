@@ -224,7 +224,7 @@ func Run() {
 	staffH := staffhandler.NewStaffHandler(staffSvc)
 
 	sessionTTL := envDuration("SESSION_TTL", 336*time.Hour)
-	sessionSvc := authservice.NewSessionService(db, sessionTTL)
+	sessionSvc := authservice.NewSessionService(sqlDB, sessionTTL)
 
 	adminRecordSvc := recordservice.NewAdminRecordService(db)
 	adminRecordSvc.SetRecordTagService(recordTagSvc)

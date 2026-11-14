@@ -146,7 +146,7 @@ func setupUserTestEnv(t *testing.T) *userTestEnv {
 	}
 
 	staffSvc := staffservice.NewStaffService(db)
-	sessionSvc := authservice.NewSessionService(db, time.Hour)
+	sessionSvc := authservice.NewSessionService(sessionSQLDB(t, db), time.Hour)
 
 	staff, err := staffSvc.GetOrCreateByAccountID("integration_user", "测试", "", "")
 	if err != nil {

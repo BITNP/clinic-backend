@@ -259,7 +259,7 @@ func TestCombinedAuth_BearerToken(t *testing.T) {
 	fake := httptest.NewServer(jwksHandler(key, kid))
 	defer fake.Close()
 
-	sessionSvc := authservice.NewSessionService(mustOpenEmptyDB(t), time.Hour)
+	sessionSvc := authservice.NewSessionService(sessionSQLDB(t, mustOpenEmptyDB(t)), time.Hour)
 	kcAuth := authhandler.NewKeycloakAuthenticator(fake.URL+"/realms/fake", "clinic-backend", staffSvc)
 
 	r := gin.New()
@@ -297,7 +297,7 @@ func TestCombinedAuth_BearerNotConfigured(t *testing.T) {
 	fake := httptest.NewServer(jwksHandler(key, kid))
 	defer fake.Close()
 
-	sessionSvc := authservice.NewSessionService(mustOpenEmptyDB(t), time.Hour)
+	sessionSvc := authservice.NewSessionService(sessionSQLDB(t, mustOpenEmptyDB(t)), time.Hour)
 	kcAuth := authhandler.NewKeycloakAuthenticator("", "", staffSvc)
 
 	r := gin.New()
