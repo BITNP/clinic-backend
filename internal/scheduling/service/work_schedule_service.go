@@ -691,7 +691,7 @@ func (s *WorkScheduleService) AddStaff(scheduleID uint, in StaffAssignmentInput)
 	}
 
 	existing, err := scanWorkScheduleStaff(s.db.QueryRow(
-		"SELECT "+workScheduleStaffColumns+" FROM clinic_work_schedule_staff WHERE weekday_id = $1 AND staff_id = $2 AND schedule_id = $3",
+		"SELECT "+workScheduleStaffColumns+" FROM clinic_work_schedule_staff WHERE weekday_id = $1 AND staff_id = $2 AND schedule_id = $3 ORDER BY id LIMIT 1",
 		weekdayID, in.StaffID, scheduleID,
 	))
 	if err == nil {
