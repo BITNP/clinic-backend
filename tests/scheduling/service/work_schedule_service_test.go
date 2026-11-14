@@ -562,6 +562,15 @@ func TestWorkScheduleService_ListStaff(t *testing.T) {
 	}
 }
 
+func TestWorkScheduleService_ListStaff_NotFound(t *testing.T) {
+	db := setupWorkScheduleServiceDB(t)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
+
+	if _, err := svc.ListStaff(999); !errors.Is(err, schedulingservice.ErrWorkScheduleNotFound) {
+		t.Fatalf("expected ErrWorkScheduleNotFound, got %v", err)
+	}
+}
+
 func TestWorkScheduleService_StaffInMultipleSchedules(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
 	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))

@@ -204,6 +204,92 @@ func (s *ServiceDateService) bookedCount(roomID *uint, date time.Time, today tim
 	return count, nil
 }
 
+type serviceDateRoomKey struct {
+	roomID uint
+	date   time.Time
+}
+
+// bookedCounts loads booking counts for a page of service dates in one grouped
+// query. Records from rejected, referred, and no-show tickets are excluded
+// first; completed tickets are subtracted only for future dates.
+func (s *ServiceDateService) bookedCounts(dates []schedulingmodel.ClinicServiceDate, today time.Time) (map[serviceDateRoomKey]int64, error) {
+	wanted := make(map[serviceDateRoomKey]struct{}, len(dates))
+	roomIDs := make([]uint, 0, len(dates))
+	days := make([]time.Time, 0, len(dates))
+	seenRooms := make(map[uint]struct{}, len(dates))
+	seenDays := make(map[time.Time]struct{}, len(dates))
+	for _, date := range dates {
+		if date.RoomID == nil {
+			continue
+		}
+		day := calendar.DateInLocation(date.Date, s.loc)
+		key := serviceDateRoomKey{roomID: *date.RoomID, date: day}
+		wanted[key] = struct{}{}
+		if _, ok := seenRooms[key.roomID]; !ok {
+			seenRooms[key.roomID] = struct{}{}
+			roomIDs = append(roomIDs, key.roomID)
+		}
+		if _, ok := seenDays[key.date]; !ok {
+			seenDays[key.date] = struct{}{}
+			days = append(days, key.date)
+		}
+	}
+	counts := make(map[serviceDateRoomKey]int64, len(wanted))
+	if len(wanted) == 0 {
+		return counts, nil
+	}
+
+	args := []any{
+		recordmodel.RecordStatusCompleted,
+		recordmodel.RecordStatusRejected,
+		recordmodel.RecordStatusReferred,
+		recordmodel.RecordStatusNoShow,
+	}
+	roomStart := len(args) + 1
+	for _, roomID := range roomIDs {
+		args = append(args, roomID)
+	}
+	dayStart := len(args) + 1
+	for _, day := range days {
+		args = append(args, day)
+	}
+	query := fmt.Sprintf(
+		`SELECT room, appointment_time, COUNT(*), SUM(CASE WHEN status = $1 THEN 1 ELSE 0 END)
+		 FROM clinic_record
+		 WHERE status NOT IN ($2, $3, $4)
+		   AND room IN (%s)
+		   AND appointment_time IN (%s)
+		 GROUP BY room, appointment_time`,
+		database.Placeholders(roomStart, len(roomIDs)),
+		database.Placeholders(dayStart, len(days)),
+	)
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("count booked for service dates: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var roomID uint
+		var day time.Time
+		var total, completed int64
+		if err := rows.Scan(&roomID, &day, &total, &completed); err != nil {
+			return nil, fmt.Errorf("scan booked count: %w", err)
+		}
+		key := serviceDateRoomKey{roomID: roomID, date: calendar.DateInLocation(day, s.loc)}
+		if _, ok := wanted[key]; !ok {
+			continue
+		}
+		if key.date.After(today) {
+			total -= completed
+		}
+		counts[key] = total
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("count booked for service dates: %w", err)
+	}
+	return counts, nil
+}
+
 func (s *ServiceDateService) List(f ListServiceDateFilter) ([]schedulingmodel.ClinicServiceDate, int64, error) {
 	where := []string{"1 = 1"}
 	var args []any
@@ -271,11 +357,18 @@ func (s *ServiceDateService) List(f ListServiceDateFilter) ([]schedulingmodel.Cl
 	}
 
 	today := calendar.DateInLocation(time.Now(), loc)
+	counts, err := s.bookedCounts(items, today)
+	if err != nil {
+		return nil, 0, err
+	}
 	filtered := items[:0]
 	for _, date := range items {
-		booked, err := s.bookedCount(date.RoomID, date.Date, today)
-		if err != nil {
-			return nil, 0, fmt.Errorf("count booked for service date %d: %w", date.ID, err)
+		var booked int64
+		if date.RoomID != nil {
+			booked = counts[serviceDateRoomKey{
+				roomID: *date.RoomID,
+				date:   calendar.DateInLocation(date.Date, s.loc),
+			}]
 		}
 		date.Count = booked
 		if !f.HasCapacity || booked < int64(date.Capacity) {

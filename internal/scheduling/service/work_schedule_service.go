@@ -891,8 +891,12 @@ func (s *WorkScheduleService) ServiceAvailability(from, to time.Time, roomIDs []
 }
 
 func (s *WorkScheduleService) ListStaff(scheduleID uint) ([]schedulingmodel.ClinicWorkScheduleStaff, error) {
-	if _, err := s.GetByID(scheduleID); err != nil {
+	exists, err := s.scheduleExists(scheduleID)
+	if err != nil {
 		return nil, err
+	}
+	if !exists {
+		return nil, ErrWorkScheduleNotFound
 	}
 	rows, err := s.db.Query(
 		"SELECT "+workScheduleStaffColumns+" FROM clinic_work_schedule_staff WHERE schedule_id = $1 ORDER BY id ASC",
@@ -918,6 +922,17 @@ func (s *WorkScheduleService) ListStaff(scheduleID uint) ([]schedulingmodel.Clin
 		return nil, err
 	}
 	return assignments, nil
+}
+
+func (s *WorkScheduleService) scheduleExists(scheduleID uint) (bool, error) {
+	var exists bool
+	if err := s.db.QueryRow(
+		"SELECT EXISTS (SELECT 1 FROM clinic_work_schedule WHERE id = $1)",
+		scheduleID,
+	).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check work schedule %d: %w", scheduleID, err)
+	}
+	return exists, nil
 }
 
 func (s *WorkScheduleService) loadAssignmentRelations(assignments []schedulingmodel.ClinicWorkScheduleStaff) error {

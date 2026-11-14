@@ -291,6 +291,58 @@ func TestServiceDateService_TicketedCount_ByRecency(t *testing.T) {
 	}
 }
 
+func TestServiceDateService_List_BatchesBookingCounts(t *testing.T) {
+	db := setupServiceDateServiceDB(t)
+	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
+	testutil.MustCreateRoom(t, db, 1)
+
+	past := testutil.MustCreateServiceDate(t, db, svc, testutil.ValidServiceDateInput(1, -15, 20))
+	future := testutil.MustCreateServiceDate(t, db, svc, testutil.ValidServiceDateInput(1, 15, 20))
+	statuses := []recordmodel.RecordStatus{
+		recordmodel.RecordStatusPending,
+		recordmodel.RecordStatusConfirmed,
+		recordmodel.RecordStatusArrived,
+		recordmodel.RecordStatusInProgress,
+		recordmodel.RecordStatusCompleted,
+		recordmodel.RecordStatusRejected,
+		recordmodel.RecordStatusReferred,
+		recordmodel.RecordStatusNoShow,
+	}
+	for _, date := range []schedulingmodel.ClinicServiceDate{past, future} {
+		for i, status := range statuses {
+			if err := db.Create(&recordmodel.ClinicRecord{
+				User:            fmt.Sprintf("batch-%d-%d", date.ID, i),
+				Realname:        "x",
+				PhoneNum:        "000",
+				Status:          status,
+				AppointmentTime: date.Date,
+				QuestionDesc:    "x",
+				RoomID:          *date.RoomID,
+			}).Error; err != nil {
+				t.Fatalf("seed record for service date %d: %v", date.ID, err)
+			}
+		}
+	}
+
+	items, total, err := svc.List(schedulingservice.ListServiceDateFilter{})
+	if err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	if total != 2 || len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d (total %d)", len(items), total)
+	}
+	counts := make(map[uint]int64, len(items))
+	for _, item := range items {
+		counts[item.ID] = item.Count
+	}
+	if counts[past.ID] != 5 {
+		t.Errorf("past count = %d, want 5", counts[past.ID])
+	}
+	if counts[future.ID] != 4 {
+		t.Errorf("future count = %d, want 4", counts[future.ID])
+	}
+}
+
 func TestServiceDateService_List_HasCapacity(t *testing.T) {
 	db := setupServiceDateServiceDB(t)
 	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
