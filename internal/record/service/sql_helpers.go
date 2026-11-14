@@ -33,10 +33,12 @@ const roomColumns = "id, name, address, enabled, campus_id, type"
 
 func scanRecord(row rowScanner) (recordmodel.ClinicRecord, error) {
 	var record recordmodel.ClinicRecord
+	var user sql.NullString
 	var approverID sql.NullInt64
+	var tagID sql.NullInt64
 	err := row.Scan(
 		&record.ID,
-		&record.User,
+		&user,
 		&record.Realname,
 		&record.PhoneNum,
 		&record.Status,
@@ -44,13 +46,17 @@ func scanRecord(row rowScanner) (recordmodel.ClinicRecord, error) {
 		&record.QuestionDesc,
 		&record.RoomID,
 		&approverID,
-		&record.TagID,
+		&tagID,
 		&record.LiquidMetalStatusIndex,
 		&record.ActionSeq,
 	)
+	record.User = user.String
 	if approverID.Valid {
 		id := uint(approverID.Int64)
 		record.ApproverID = &id
+	}
+	if tagID.Valid {
+		record.TagID = uint(tagID.Int64)
 	}
 	return record, err
 }
@@ -69,8 +75,10 @@ func scanRecordDevice(row rowScanner) (recordmodel.ClinicRecordDevice, error) {
 
 func scanRecordWorker(row rowScanner) (recordmodel.ClinicRecordWorker, error) {
 	var worker recordmodel.ClinicRecordWorker
+	var workerDesc sql.NullString
 	var finishTime sql.NullTime
-	err := row.Scan(&worker.RecordID, &worker.WorkerID, &worker.WorkerDesc, &finishTime)
+	err := row.Scan(&worker.RecordID, &worker.WorkerID, &workerDesc, &finishTime)
+	worker.WorkerDesc = workerDesc.String
 	if finishTime.Valid {
 		worker.FinishTime = finishTime.Time
 	}
@@ -97,6 +105,7 @@ func scanRecordArrival(row rowScanner) (recordmodel.ClinicRecordArrival, error) 
 
 func scanRecordPhoto(row rowScanner) (recordmodel.ClinicRecordPhoto, error) {
 	var photo recordmodel.ClinicRecordPhoto
+	var createdAt sql.NullTime
 	err := row.Scan(
 		&photo.ID,
 		&photo.RecordID,
@@ -104,8 +113,11 @@ func scanRecordPhoto(row rowScanner) (recordmodel.ClinicRecordPhoto, error) {
 		&photo.ContentType,
 		&photo.Size,
 		&photo.Position,
-		&photo.CreatedAt,
+		&createdAt,
 	)
+	if createdAt.Valid {
+		photo.CreatedAt = createdAt.Time
+	}
 	return photo, err
 }
 

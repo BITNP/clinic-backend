@@ -554,6 +554,38 @@ func TestAdminRecordServiceListBatchedQueryCount(t *testing.T) {
 	}
 }
 
+func TestAdminRecordService_GetByID_NullableLegacyColumns(t *testing.T) {
+	db := setupAdminRecordTestDB(t)
+	svc := recordservice.NewAdminRecordService(testutil.RawDB(t, db))
+	room := roommodel.ClinicRoom{Name: "Room", Enabled: true}
+	if err := db.Create(&room).Error; err != nil {
+		t.Fatalf("seed room: %v", err)
+	}
+	if err := db.Exec(
+		`INSERT INTO clinic_record
+		 (id, "user", realname, phone_num, status, appointment_time, question_desc, room, approver_id, tag_id, liquid_metal_status, action_seq)
+		 VALUES (?, NULL, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, 0)`,
+		77, "r", "p", recordmodel.RecordStatusPending,
+		time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), "x", room.ID,
+	).Error; err != nil {
+		t.Fatalf("seed nullable record: %v", err)
+	}
+	if err := db.Exec(
+		"INSERT INTO clinic_record_worker (record_id, worker, worker_desc, finish_time) VALUES (?, 0, NULL, NULL)",
+		77,
+	).Error; err != nil {
+		t.Fatalf("seed nullable worker: %v", err)
+	}
+
+	view, err := svc.GetByID(context.Background(), 0, 77)
+	if err != nil {
+		t.Fatalf("get record: %v", err)
+	}
+	if view.User != "" || view.Tag != "" || view.WorkerDesc != "" {
+		t.Errorf("nullable fields = %q, %q, %q; want empty strings", view.User, view.Tag, view.WorkerDesc)
+	}
+}
+
 func TestAdminRecordServiceListSearchByRealname(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	svc := recordservice.NewAdminRecordService(testutil.RawDB(t, db))

@@ -173,6 +173,23 @@ func TestPhotoServiceAppendAssignsPositions(t *testing.T) {
 	}
 }
 
+func TestPhotoServiceList_NullableCreatedAt(t *testing.T) {
+	db, _, svc, rec := setupPhotoServiceTest(t, 9, 1024)
+	if _, err := svc.Append(context.Background(), rec.ID, photoUpload(testJPEG)); err != nil {
+		t.Fatalf("append photo: %v", err)
+	}
+	if err := db.Exec("UPDATE clinic_record_photo SET created_at = NULL WHERE record_id = ?", rec.ID).Error; err != nil {
+		t.Fatalf("clear created_at: %v", err)
+	}
+	photos, err := svc.List(context.Background(), rec.ID)
+	if err != nil {
+		t.Fatalf("list photos: %v", err)
+	}
+	if len(photos) != 1 || !photos[0].CreatedAt.IsZero() {
+		t.Fatalf("photos = %+v, want one zero-created-at row", photos)
+	}
+}
+
 func TestPhotoServiceGet(t *testing.T) {
 	_, store, svc, rec := setupPhotoServiceTest(t, 9, 1024)
 	ctx := context.Background()

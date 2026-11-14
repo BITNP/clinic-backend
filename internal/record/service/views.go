@@ -1,6 +1,7 @@
 package service
 
 import (
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -161,12 +162,12 @@ func loadRecordViewRelations(db rowsQueryer, recs []recordmodel.ClinicRecord) (r
 		}
 		for rows.Next() {
 			var id int
-			var realname string
+			var realname sql.NullString
 			if err := rows.Scan(&id, &realname); err != nil {
 				rows.Close()
 				return rel, fmt.Errorf("scan staff name: %w", err)
 			}
-			rel.staffNames[id] = realname
+			rel.staffNames[id] = realname.String
 		}
 		if err := rows.Close(); err != nil {
 			return rel, fmt.Errorf("load staff names: %w", err)
