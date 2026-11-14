@@ -145,7 +145,7 @@ func setupUserTestEnv(t *testing.T) *userTestEnv {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	staffSvc := staffservice.NewStaffService(db)
+	staffSvc := staffservice.NewStaffService(testutil.RawDB(t, db))
 	sessionSvc := authservice.NewSessionService(sessionSQLDB(t, db), time.Hour)
 
 	staff, err := staffSvc.GetOrCreateByAccountID("integration_user", "测试", "", "")

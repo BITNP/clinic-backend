@@ -16,6 +16,7 @@ import (
 	authservice "clinic-backend/internal/auth/service"
 	staffmodel "clinic-backend/internal/staff/model"
 	staffservice "clinic-backend/internal/staff/service"
+	"clinic-backend/internal/testutil"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -39,7 +40,7 @@ func setupKeycloakTest(t *testing.T) (*rsa.PrivateKey, string, *staffservice.Sta
 	if err := db.AutoMigrate(&staffmodel.ClinicStaff{}, &staffmodel.ClinicStaffWorkyear{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	staffSvc := staffservice.NewStaffService(db)
+	staffSvc := staffservice.NewStaffService(testutil.RawDB(t, db))
 
 	return key, "fake-kid", staffSvc, db
 }

@@ -426,7 +426,10 @@ func (s *WorkScheduleService) AddStaff(scheduleID uint, in StaffAssignmentInput)
 	}
 
 	// Validate staff is in the schedule's work year.
-	staffSvc := staffservice.NewStaffService(s.db)
+	staffSvc, err := staffservice.NewStaffServiceFromGorm(s.db)
+	if err != nil {
+		return schedulingmodel.ClinicWorkScheduleStaff{}, fmt.Errorf("staff service: %w", err)
+	}
 	ok, err := staffSvc.IsValidForDate(in.StaffID, sch.StartDate)
 	if err != nil {
 		return schedulingmodel.ClinicWorkScheduleStaff{}, err
@@ -506,7 +509,10 @@ func (s *WorkScheduleService) ListValidStaff(scheduleID uint) ([]staffservice.St
 		}
 		return nil, fmt.Errorf("find schedule: %w", err)
 	}
-	staffSvc := staffservice.NewStaffService(s.db)
+	staffSvc, err := staffservice.NewStaffServiceFromGorm(s.db)
+	if err != nil {
+		return nil, fmt.Errorf("staff service: %w", err)
+	}
 	return staffSvc.ListValidForYear(sch.StartDate.Year())
 }
 

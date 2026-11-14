@@ -16,6 +16,7 @@ import (
 	authservice "clinic-backend/internal/auth/service"
 	staffmodel "clinic-backend/internal/staff/model"
 	staffservice "clinic-backend/internal/staff/service"
+	"clinic-backend/internal/testutil"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/sqlite"
@@ -49,7 +50,7 @@ func setupCASAuthRouterVersion(t *testing.T, fakeCAS *httptest.Server, currentVe
 		t.Fatalf("migrate: %v", err)
 	}
 
-	staffSvc := staffservice.NewStaffService(db)
+	staffSvc := staffservice.NewStaffService(testutil.RawDB(t, db))
 	sessionSvc := authservice.NewSessionService(sessionSQLDB(t, db), time.Hour)
 
 	var casClient authclient.CASClient

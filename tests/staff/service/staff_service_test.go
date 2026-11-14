@@ -6,6 +6,7 @@ import (
 
 	staffmodel "clinic-backend/internal/staff/model"
 	staffservice "clinic-backend/internal/staff/service"
+	"clinic-backend/internal/testutil"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -13,7 +14,7 @@ import (
 
 func TestStaffService_EnsureWorkYears(t *testing.T) {
 	db := setupStaffTestDB(t)
-	svc := staffservice.NewStaffService(db)
+	svc := staffservice.NewStaffService(testutil.RawDB(t, db))
 
 	staff := staffmodel.ClinicStaff{ID: 9, AccountID: "cas:staff9"}
 	if err := db.Create(&staff).Error; err != nil {
@@ -55,7 +56,7 @@ func TestStaffService_EnsureWorkYears(t *testing.T) {
 
 func TestStaffService_GetOrCreateByAccountID(t *testing.T) {
 	db := setupStaffTestDB(t)
-	svc := staffservice.NewStaffService(db)
+	svc := staffservice.NewStaffService(testutil.RawDB(t, db))
 
 	staff, err := svc.GetOrCreateByAccountID("cas:staff10", "张三", "zhangsan@example.com", "123456789")
 	if err != nil {

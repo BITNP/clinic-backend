@@ -220,7 +220,7 @@ func Run() {
 	ticketH := recordhandler.NewTicketHandler(ticketSvc)
 	legacyH := legacy.NewLegacyHandler(ticketSvc, serviceDateSvc, roomSvc, announcementSvc)
 
-	staffSvc := staffservice.NewStaffService(db)
+	staffSvc := staffservice.NewStaffService(rawDB)
 	staffH := staffhandler.NewStaffHandler(staffSvc)
 
 	sessionTTL := envDuration("SESSION_TTL", 336*time.Hour)
