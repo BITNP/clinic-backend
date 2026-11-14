@@ -15,5 +15,9 @@ func RawDB(t *testing.T, db *gorm.DB) *database.DB {
 	if err != nil {
 		t.Fatalf("get SQL database: %v", err)
 	}
-	return database.Wrap(sqlDB, database.DriverSQLite)
+	driver := database.DriverSQLite
+	if db.Dialector.Name() == string(database.DriverPostgres) {
+		driver = database.DriverPostgres
+	}
+	return database.Wrap(sqlDB, driver)
 }

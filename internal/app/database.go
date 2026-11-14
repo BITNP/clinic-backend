@@ -37,10 +37,10 @@ func openDatabase() (*gorm.DB, *databasepkg.DB) {
 	default:
 		log.Fatalf("invalid CLINIC_DB_DRIVER %q: must be sqlite or postgres", driver)
 	}
-	// The application uses gorm.ErrRecordNotFound as a normal control-flow
-	// signal when probing optional side tables, so silence those logs while
-	// keeping real errors and slow-query warnings. Colorful is disabled to
-	// avoid ANSI escapes in journald/syslog.
+	// GORM remains for schema migration and bootstrap only. Module services
+	// use database/sql, so keep migration logs quiet while retaining real
+	// errors and slow-query warnings. Colorful is disabled to avoid ANSI
+	// escapes in journald/syslog.
 	db, err := gorm.Open(dialector, &gorm.Config{
 		Logger: logger.New(
 			log.New(os.Stdout, "\r\n", log.LstdFlags),
