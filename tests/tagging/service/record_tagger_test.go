@@ -55,7 +55,7 @@ func (f *fakeTagAgent) lastText() string {
 func seedTaggerTags(t *testing.T) (*gorm.DB, *taggingservice.RecordTagService) {
 	t.Helper()
 	db := testutil.SetupTagTestDB(t)
-	tagSvc := taggingservice.NewRecordTagService(db)
+	tagSvc := taggingservice.NewRecordTagService(testutil.RawDB(t, db))
 	if _, err := tagSvc.SeedDefault(); err != nil {
 		t.Fatalf("seed default: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestRecordTagger_WorkerAssignsTag(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	tagger := taggingservice.NewRecordTagger(agent, db, tagSvc)
+	tagger := taggingservice.NewRecordTagger(agent, testutil.RawDB(t, db), tagSvc)
 	go tagger.Run(ctx)
 
 	testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
@@ -195,7 +195,7 @@ func TestRecordTagger_WorkerKeepsDefaultOnError(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	tagger := taggingservice.NewRecordTagger(agent, db, tagSvc)
+	tagger := taggingservice.NewRecordTagger(agent, testutil.RawDB(t, db), tagSvc)
 	go tagger.Run(ctx)
 
 	testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
@@ -292,7 +292,7 @@ func TestRecordTagger_RunsConfiguredWorkers(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	runDone := make(chan struct{})
-	tagger := taggingservice.NewRecordTagger(agent, db, tagSvc)
+	tagger := taggingservice.NewRecordTagger(agent, testutil.RawDB(t, db), tagSvc)
 	tagger.SetWorkers(2)
 	go func() {
 		defer close(runDone)
@@ -364,7 +364,7 @@ func TestRecordTagger_WorkerAssignsTagAndLiquidMetalStatus(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	tagger := taggingservice.NewRecordTagger(recordAgent, db, tagSvc)
+	tagger := taggingservice.NewRecordTagger(recordAgent, testutil.RawDB(t, db), tagSvc)
 	tagger.SetLiquidMetalTagger(newLiquidMetalTagger(t, liquidAgent))
 	go tagger.Run(ctx)
 
@@ -425,7 +425,7 @@ func TestRecordTagger_LiquidMetalRunsWhenRecordTagFails(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	tagger := taggingservice.NewRecordTagger(recordAgent, db, tagSvc)
+	tagger := taggingservice.NewRecordTagger(recordAgent, testutil.RawDB(t, db), tagSvc)
 	tagger.SetLiquidMetalTagger(newLiquidMetalTagger(t, liquidAgent))
 	go tagger.Run(ctx)
 
@@ -481,7 +481,7 @@ func TestRecordTagger_NoModelSkipsLiquidMetal(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	tagger := taggingservice.NewRecordTagger(recordAgent, db, tagSvc)
+	tagger := taggingservice.NewRecordTagger(recordAgent, testutil.RawDB(t, db), tagSvc)
 	tagger.SetLiquidMetalTagger(newLiquidMetalTagger(t, liquidAgent))
 	go tagger.Run(ctx)
 

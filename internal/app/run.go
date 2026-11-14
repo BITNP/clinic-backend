@@ -127,7 +127,7 @@ func Run() {
 	}
 	syncH := changes.NewSyncHandler(syncSvc, syncPollInterval)
 
-	recordTagSvc := taggingservice.NewRecordTagService(db)
+	recordTagSvc := taggingservice.NewRecordTagService(rawDB)
 	if _, err := recordTagSvc.SeedDefault(); err != nil {
 		log.Fatalf("failed to seed default record tag: %v", err)
 	}
@@ -177,7 +177,7 @@ func Run() {
 		if err != nil {
 			log.Fatalf("failed to build record tagger pool: %v", err)
 		}
-		recordTagger = taggingservice.NewRecordTagger(recordPool, db, recordTagSvc)
+		recordTagger = taggingservice.NewRecordTagger(recordPool, rawDB, recordTagSvc)
 		recordTagger.SetWorkers(recordPool.Size())
 		recordTagger.SetSyncService(syncSvc)
 

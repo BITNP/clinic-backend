@@ -11,7 +11,7 @@ import (
 
 func TestTicketService_Create_AssignsDefaultTag(t *testing.T) {
 	db := testutil.SetupTagTestDB(t)
-	tagSvc := taggingservice.NewRecordTagService(db)
+	tagSvc := taggingservice.NewRecordTagService(testutil.RawDB(t, db))
 	def, err := tagSvc.SeedDefault()
 	if err != nil {
 		t.Fatalf("seed default: %v", err)

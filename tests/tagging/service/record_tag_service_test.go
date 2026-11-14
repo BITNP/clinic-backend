@@ -13,7 +13,7 @@ import (
 
 func TestRecordTagService_SeedCatalog(t *testing.T) {
 	db := testutil.SetupTagTestDB(t)
-	svc := taggingservice.NewRecordTagService(db)
+	svc := taggingservice.NewRecordTagService(testutil.RawDB(t, db))
 
 	def, err := svc.SeedDefault()
 	if err != nil {
@@ -86,7 +86,7 @@ func TestRecordTagService_SeedCatalog(t *testing.T) {
 }
 
 func TestRecordTagService_Prompt(t *testing.T) {
-	svc := taggingservice.NewRecordTagService(testutil.SetupTagTestDB(t))
+	svc := taggingservice.NewRecordTagService(testutil.RawDB(t, testutil.SetupTagTestDB(t)))
 
 	prompt := svc.Prompt()
 	if prompt == "" {
@@ -101,7 +101,7 @@ func TestRecordTagService_Prompt(t *testing.T) {
 
 func TestRecordTagService_SeedAndLoad(t *testing.T) {
 	db := testutil.SetupTagTestDB(t)
-	svc := taggingservice.NewRecordTagService(db)
+	svc := taggingservice.NewRecordTagService(testutil.RawDB(t, db))
 
 	def, err := svc.SeedDefault()
 	if err != nil {
@@ -136,7 +136,7 @@ func TestRecordTagService_SeedAndLoad(t *testing.T) {
 
 func TestRecordTagService_BackfillRecords(t *testing.T) {
 	db := testutil.SetupTagTestDB(t)
-	svc := taggingservice.NewRecordTagService(db)
+	svc := taggingservice.NewRecordTagService(testutil.RawDB(t, db))
 
 	def, err := svc.SeedDefault()
 	if err != nil {
