@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,15 +16,13 @@ import (
 	"text/template"
 	"time"
 
-	roommodel "clinic-backend/internal/room/model"
+	"clinic-backend/internal/database"
 	schedulingmodel "clinic-backend/internal/scheduling/model"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // ReminderDelivery claims and submits persisted reminder jobs.
 type ReminderDelivery struct {
-	DB                      *gorm.DB
+	DB                      *database.DB
 	Discovery               *ReminderDiscovery
 	Client                  *http.Client
 	BaseURL, Account, Token string
@@ -33,26 +32,53 @@ type ReminderDelivery struct {
 }
 
 func (d *ReminderDelivery) Claim(ctx context.Context, now time.Time) (*schedulingmodel.ServiceDateReminder, error) {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	var randomBytes [16]byte
+	if _, err := rand.Read(randomBytes[:]); err != nil {
 		return nil, fmt.Errorf("create claim token: %w", err)
 	}
-	token := hex.EncodeToString(b[:])
+	token := hex.EncodeToString(randomBytes[:])
 	var job schedulingmodel.ServiceDateReminder
-	err := d.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).Where("(status = ? AND next_attempt_at <= ?) OR (status = ? AND lease_until <= ?)", "pending", now, "sending", now).Order("next_attempt_at, id").First(&job).Error
+	err := database.WithTx(ctx, d.DB.DB, func(tx *sql.Tx) error {
+		query := "SELECT " + reminderColumns +
+			" FROM clinic_service_date_reminder" +
+			" WHERE (status = $1 AND next_attempt_at <= $2) OR (status = $3 AND lease_until <= $4)" +
+			" ORDER BY next_attempt_at, id LIMIT 1"
+		if d.DB.Driver == database.DriverPostgres {
+			query += " FOR UPDATE SKIP LOCKED"
+		}
+		var err error
+		job, err = scanReminder(tx.QueryRow(query, "pending", now, "sending", now))
 		if err != nil {
 			return err
 		}
 		if job.Attempts >= 8 {
-			err := tx.Model(&job).Updates(map[string]any{"status": "cancelled", "lease_until": nil, "claim_token": "", "last_error": "retry limit reached"}).Error
+			if _, err := tx.Exec(
+				`UPDATE clinic_service_date_reminder
+				 SET status = 'cancelled', lease_until = NULL, claim_token = '', last_error = 'retry limit reached'
+				 WHERE id = $1`,
+				job.ID,
+			); err != nil {
+				return err
+			}
 			job.ID = 0
-			return err
+			return nil
 		}
 		lease := now.Add(d.Lease)
-		return tx.Model(&job).Updates(map[string]any{"status": "sending", "lease_until": lease, "claim_token": token, "attempts": gorm.Expr("attempts + 1")}).Error
+		if _, err := tx.Exec(
+			`UPDATE clinic_service_date_reminder
+			 SET status = 'sending', lease_until = $1, claim_token = $2, attempts = attempts + 1
+			 WHERE id = $3`,
+			lease, token, job.ID,
+		); err != nil {
+			return err
+		}
+		job.Status = "sending"
+		job.LeaseUntil = &lease
+		job.ClaimToken = token
+		job.Attempts++
+		return nil
 	})
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -61,19 +87,46 @@ func (d *ReminderDelivery) Claim(ctx context.Context, now time.Time) (*schedulin
 	if job.ID == 0 {
 		return nil, nil
 	}
-	job.ClaimToken = token
-	job.Attempts++
 	return &job, nil
 }
 
 func (d *ReminderDelivery) finish(ctx context.Context, job *schedulingmodel.ServiceDateReminder, updates map[string]any) error {
-	updates["claim_token"] = ""
-	updates["lease_until"] = nil
-	r := d.DB.WithContext(ctx).Model(&schedulingmodel.ServiceDateReminder{}).Where("id = ? AND status = ? AND claim_token = ?", job.ID, "sending", job.ClaimToken).Updates(updates)
-	if r.Error != nil {
-		return fmt.Errorf("update reminder %d: %w", job.ID, r.Error)
+	status, ok := updates["status"].(string)
+	if !ok || status == "" {
+		return fmt.Errorf("finish reminder %d: status is required", job.ID)
 	}
-	if r.RowsAffected != 1 {
+	sets := []string{"status = $1"}
+	args := []any{status}
+	add := func(column string, value any) {
+		args = append(args, value)
+		sets = append(sets, fmt.Sprintf("%s = $%d", column, len(args)))
+	}
+	if value, ok := updates["next_attempt_at"]; ok {
+		add("next_attempt_at", value)
+	}
+	if value, ok := updates["sent_at"]; ok {
+		add("sent_at", value)
+	}
+	if value, ok := updates["last_error"]; ok {
+		add("last_error", value)
+	}
+	sets = append(sets, "claim_token = ''", "lease_until = NULL")
+	args = append(args, job.ID, "sending", job.ClaimToken)
+	whereStart := len(args) - 2
+	res, err := d.DB.ExecContext(
+		ctx,
+		"UPDATE clinic_service_date_reminder SET "+strings.Join(sets, ", ")+
+			fmt.Sprintf(" WHERE id = $%d AND status = $%d AND claim_token = $%d", whereStart, whereStart+1, whereStart+2),
+		args...,
+	)
+	if err != nil {
+		return fmt.Errorf("update reminder %d: %w", job.ID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check updated reminder %d: %w", job.ID, err)
+	}
+	if n != 1 {
 		return fmt.Errorf("reminder %d claim expired", job.ID)
 	}
 	return nil
@@ -82,9 +135,12 @@ func (d *ReminderDelivery) finish(ctx context.Context, job *schedulingmodel.Serv
 // Deliver rechecks eligibility and sends one claimed job.
 func (d *ReminderDelivery) Deliver(ctx context.Context, job *schedulingmodel.ServiceDateReminder, now time.Time) error {
 	cancelJob := func() error { return d.finish(ctx, job, map[string]any{"status": "cancelled"}) }
-	var date schedulingmodel.ClinicServiceDate
-	err := d.DB.WithContext(ctx).First(&date, job.ServiceDateID).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	date, err := scanServiceDate(d.DB.QueryRowContext(
+		ctx,
+		"SELECT "+serviceDateColumns+" FROM clinic_service_date WHERE id = $1",
+		job.ServiceDateID,
+	))
+	if errors.Is(err, sql.ErrNoRows) {
 		return cancelJob()
 	}
 	if err != nil {
@@ -111,8 +167,12 @@ func (d *ReminderDelivery) Deliver(ctx context.Context, job *schedulingmodel.Ser
 	if err != nil || userID <= 0 {
 		return d.retry(ctx, job, now, fmt.Errorf("recipient QQ number is invalid"))
 	}
-	var room roommodel.ClinicRoom
-	if err = d.DB.WithContext(ctx).First(&room, *date.RoomID).Error; err != nil {
+	room, err := scanRoom(d.DB.QueryRowContext(
+		ctx,
+		"SELECT "+roomColumns+" FROM clinic_room WHERE id = $1",
+		*date.RoomID,
+	))
+	if err != nil {
 		return d.retry(ctx, job, now, fmt.Errorf("load room: %w", err))
 	}
 	loc := d.Discovery.Location

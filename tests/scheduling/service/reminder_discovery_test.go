@@ -6,6 +6,7 @@ import (
 	schedulingmodel "clinic-backend/internal/scheduling/model"
 	schedulingservice "clinic-backend/internal/scheduling/service"
 	staffmodel "clinic-backend/internal/staff/model"
+	"clinic-backend/internal/testutil"
 	"context"
 	"fmt"
 	"gorm.io/driver/sqlite"
@@ -48,7 +49,8 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	d := schedulingservice.ReminderDiscovery{DB: db, Location: loc, LeadTimes: []time.Duration{time.Hour}}
+	rawDB := testutil.RawDB(t, db)
+	d := schedulingservice.ReminderDiscovery{DB: rawDB, Location: loc, LeadTimes: []time.Duration{time.Hour}}
 	now := start.Add(-time.Hour).Add(time.Second)
 	for range 2 {
 		if err = d.Discover(context.Background(), now); err != nil {
@@ -79,7 +81,7 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 		sentMessage = string(body)
 		return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(`{"status":"async","retcode":1,"data":{"delivery_id":"qq-1"}}`)), Header: make(http.Header)}, nil
 	})}
-	delivery := schedulingservice.ReminderDelivery{DB: db, Discovery: &d, Client: client, BaseURL: "http://gateway", Account: "qq", Token: "secret", Template: template.Must(template.New("message").Parse("{{.PendingCount}} {{.LeadTime}}")), Lease: time.Minute, Now: func() time.Time { return now }}
+	delivery := schedulingservice.ReminderDelivery{DB: rawDB, Discovery: &d, Client: client, BaseURL: "http://gateway", Account: "qq", Token: "secret", Template: template.Must(template.New("message").Parse("{{.PendingCount}} {{.LeadTime}}")), Lease: time.Minute, Now: func() time.Time { return now }}
 	job, err := delivery.Claim(context.Background(), now)
 	if err != nil || job == nil {
 		t.Fatalf("claim %v %v", job, err)

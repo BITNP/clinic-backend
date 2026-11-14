@@ -6,6 +6,7 @@ import (
 	"time"
 
 	schedulingservice "clinic-backend/internal/scheduling/service"
+	"clinic-backend/internal/testutil"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -17,7 +18,8 @@ func TestReminderWorkerStopsOnCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	worker := schedulingservice.ReminderWorker{Discovery: &schedulingservice.ReminderDiscovery{DB: db}, Delivery: &schedulingservice.ReminderDelivery{DB: db}}
+	rawDB := testutil.RawDB(t, db)
+	worker := schedulingservice.ReminderWorker{Discovery: &schedulingservice.ReminderDiscovery{DB: rawDB}, Delivery: &schedulingservice.ReminderDelivery{DB: rawDB}}
 	done := make(chan struct{})
 	go func() { defer close(done); worker.Run(ctx) }()
 	select {

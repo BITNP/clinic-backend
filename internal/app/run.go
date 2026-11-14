@@ -203,7 +203,7 @@ func Run() {
 	announcementH := announcement.NewAnnouncementHandler(announcementSvc)
 
 	serviceDateLoc := envLocation("CLINIC_TIMEZONE", time.FixedZone("UTC+8", 8*60*60))
-	serviceDateSvc := schedulingservice.NewServiceDateService(db, serviceDateLoc)
+	serviceDateSvc := schedulingservice.NewServiceDateService(rawDB, serviceDateLoc)
 	serviceDateH := schedulinghandler.NewServiceDateHandler(serviceDateSvc)
 
 	roomSvc := roomservice.NewRoomService(rawDB)
@@ -235,7 +235,7 @@ func Run() {
 	adminRecordSvc.SetRecordActionService(recordActionSvc)
 	adminRecordH := recordhandler.NewAdminRecordHandler(adminRecordSvc)
 
-	workScheduleSvc := schedulingservice.NewWorkScheduleService(db)
+	workScheduleSvc := schedulingservice.NewWorkScheduleService(rawDB)
 	workScheduleH := schedulinghandler.NewWorkScheduleHandler(workScheduleSvc)
 
 	userH := authhandler.NewUserHandler()
@@ -320,8 +320,8 @@ func Run() {
 
 	var reminderDone <-chan struct{}
 	if reminderCfg.Enabled {
-		discovery := &schedulingservice.ReminderDiscovery{DB: db, Location: serviceDateLoc, LeadTimes: reminderCfg.LeadTimes}
-		delivery := &schedulingservice.ReminderDelivery{DB: db, Discovery: discovery, Client: &http.Client{Timeout: reminderCfg.Gateway.Timeout}, BaseURL: reminderCfg.Gateway.BaseURL, Account: reminderCfg.Gateway.Account, Token: reminderCfg.Gateway.AccountToken, Template: reminderCfg.MessageTemplate, Lease: reminderCfg.Gateway.Timeout + 45*time.Second}
+		discovery := &schedulingservice.ReminderDiscovery{DB: rawDB, Location: serviceDateLoc, LeadTimes: reminderCfg.LeadTimes}
+		delivery := &schedulingservice.ReminderDelivery{DB: rawDB, Discovery: discovery, Client: &http.Client{Timeout: reminderCfg.Gateway.Timeout}, BaseURL: reminderCfg.Gateway.BaseURL, Account: reminderCfg.Gateway.Account, Token: reminderCfg.Gateway.AccountToken, Template: reminderCfg.MessageTemplate, Lease: reminderCfg.Gateway.Timeout + 45*time.Second}
 		worker := &schedulingservice.ReminderWorker{Discovery: discovery, Delivery: delivery}
 		done := make(chan struct{})
 		reminderDone = done
