@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -9,13 +10,12 @@ import (
 	"time"
 
 	"clinic-backend/internal/calendar"
+	"clinic-backend/internal/database"
 	recordmodel "clinic-backend/internal/record/model"
 	roommodel "clinic-backend/internal/room/model"
 	schedulingmodel "clinic-backend/internal/scheduling/model"
 	schedulingservice "clinic-backend/internal/scheduling/service"
 	taggingservice "clinic-backend/internal/tagging/service"
-
-	"gorm.io/gorm"
 )
 
 // Ticket validation errors. Each carries the exact Chinese message the wire
@@ -33,7 +33,7 @@ var (
 
 // TicketService implements the customer-facing booking flow.
 type TicketService struct {
-	db           *gorm.DB
+	db           *database.DB
 	loc          *time.Location
 	defaultTagID uint
 	tagger       TicketTagger
@@ -50,7 +50,7 @@ type TicketTagger interface {
 	Enqueue(recordID uint, text, model, extra string)
 }
 
-func NewTicketService(db *gorm.DB, loc *time.Location) *TicketService {
+func NewTicketService(db *database.DB, loc *time.Location) *TicketService {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -120,33 +120,36 @@ func (s *TicketService) Create(in CreateTicketInput) (recordmodel.ClinicRecord, 
 	if in.AppointmentTime.IsZero() {
 		return recordmodel.ClinicRecord{}, ErrTicketInvalidDate
 	}
-	date := calendar.DateInLocation(in.AppointmentTime, s.loc)
+	appointmentDate := calendar.DateInLocation(in.AppointmentTime, s.loc)
 
-	if err := s.validateCreate(in.User, room.ID, date); err != nil {
+	if err := s.validateCreate(in.User, room.ID, appointmentDate); err != nil {
 		return recordmodel.ClinicRecord{}, err
 	}
 
-	rec := recordmodel.ClinicRecord{
-		User:            in.User,
-		Realname:        in.Realname,
-		PhoneNum:        in.PhoneNum,
-		Status:          recordmodel.RecordStatusPending,
-		AppointmentTime: date,
-		QuestionDesc:    in.Description,
-		RoomID:          room.ID,
-		TagID:           s.defaultTagID,
-	}
-
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&rec).Error; err != nil {
+	var record recordmodel.ClinicRecord
+	err = database.WithTx(context.Background(), s.db.DB, func(tx *sql.Tx) error {
+		var err error
+		record, err = scanRecord(tx.QueryRow(
+			`INSERT INTO clinic_record
+			 ("user", realname, phone_num, status, appointment_time, question_desc, room, approver_id, tag_id, liquid_metal_status, action_seq)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, 0, 0)
+			 RETURNING `+recordColumns,
+			in.User,
+			in.Realname,
+			in.PhoneNum,
+			recordmodel.RecordStatusPending,
+			appointmentDate,
+			in.Description,
+			room.ID,
+			s.defaultTagID,
+		))
+		if err != nil {
 			return fmt.Errorf("create ticket: %w", err)
 		}
-		device := recordmodel.ClinicRecordDevice{
-			RecordID:    rec.ID,
-			LaptopModel: in.Model,
-			Password:    in.Password,
-		}
-		if err := tx.Create(&device).Error; err != nil {
+		if _, err := tx.Exec(
+			"INSERT INTO clinic_record_device (record_id, laptop_model, password) VALUES ($1, $2, $3)",
+			record.ID, in.Model, in.Password,
+		); err != nil {
 			return fmt.Errorf("create ticket device: %w", err)
 		}
 		return nil
@@ -155,9 +158,9 @@ func (s *TicketService) Create(in CreateTicketInput) (recordmodel.ClinicRecord, 
 		return recordmodel.ClinicRecord{}, err
 	}
 	if s.tagger != nil {
-		s.tagger.Enqueue(rec.ID, taggerText(in.Description, in.Model), in.Model, in.Description)
+		s.tagger.Enqueue(record.ID, taggerText(in.Description, in.Model), in.Model, in.Description)
 	}
-	return rec, nil
+	return record, nil
 }
 
 // taggerText builds the text sent to the tagger: the customer's problem
@@ -182,28 +185,48 @@ func (s *TicketService) validateCreate(username string, roomID uint, date time.T
 
 	// STEP 2 — capacity. Statuses that do not count toward a day's ticketed
 	// total (see ticketedCountExcludeStatuses) are excluded from the count.
+	excluded := schedulingservice.TicketedCountExcludeStatuses(date, s.todayCutoff())
+	args := make([]any, 0, len(excluded)+2)
+	args = append(args, roomID, date)
+	for _, status := range excluded {
+		args = append(args, status)
+	}
 	var existing int64
-	if err := s.db.Model(&recordmodel.ClinicRecord{}).
-		Where("room = ? AND appointment_time = ? AND status NOT IN ?",
-			roomID, date, schedulingservice.TicketedCountExcludeStatuses(date, s.todayCutoff())).
-		Count(&existing).Error; err != nil {
+	if err := s.db.QueryRow(
+		fmt.Sprintf(
+			"SELECT COUNT(*) FROM clinic_record WHERE room = $1 AND appointment_time = $2 AND status NOT IN (%s)",
+			database.Placeholders(3, len(excluded)),
+		),
+		args...,
+	).Scan(&existing); err != nil {
 		return fmt.Errorf("count existing for capacity: %w", err)
 	}
 
-	var d schedulingmodel.ClinicServiceDate
-	if err := s.db.Where("room_id = ? AND date = ?", roomID, date).First(&d).Error; err != nil {
+	serviceDate, err := s.lookupServiceDate(roomID, date)
+	if err != nil {
 		return ErrTicketDateClosed
 	}
-	if uint(existing) >= d.Capacity {
+	if uint(existing) >= serviceDate.Capacity {
 		return ErrTicketNoCapacity
 	}
 
 	// STEP 3 — at most one working record per user with a future appointment.
+	workingStatuses := recordmodel.WorkingStatuses()
+	workingArgs := make([]any, 0, len(workingStatuses)+2)
+	workingArgs = append(workingArgs, username)
+	for _, status := range workingStatuses {
+		workingArgs = append(workingArgs, status)
+	}
+	workingArgs = append(workingArgs, s.todayCutoff())
 	var workingCount int64
-	today := s.todayCutoff()
-	if err := s.db.Model(&recordmodel.ClinicRecord{}).
-		Where(`"user" = ? AND status IN ? AND appointment_time >= ?`, username, recordmodel.WorkingStatuses(), today).
-		Count(&workingCount).Error; err != nil {
+	if err := s.db.QueryRow(
+		fmt.Sprintf(
+			`SELECT COUNT(*) FROM clinic_record WHERE "user" = $1 AND status IN (%s) AND appointment_time >= $%d`,
+			database.Placeholders(2, len(workingStatuses)),
+			len(workingArgs),
+		),
+		workingArgs...,
+	).Scan(&workingCount); err != nil {
 		return fmt.Errorf("count working for user: %w", err)
 	}
 	if workingCount >= 1 {
@@ -211,25 +234,32 @@ func (s *TicketService) validateCreate(username string, roomID uint, date time.T
 	}
 
 	// STEP 4 — no past appointment_time.
-	if date.Before(today) {
+	if date.Before(s.todayCutoff()) {
 		return ErrTicketPastTime
 	}
-
 	return nil
 }
 
 // List returns the user's records, hiding expired-but-still-active bookings.
 // Order: id DESC (newest first). Paginated.
 func (s *TicketService) List(username string, f ListTicketFilter) ([]recordmodel.ClinicRecord, int64, error) {
-	q := s.db.Model(&recordmodel.ClinicRecord{}).Where(`"user" = ?`, username)
-	today := s.todayCutoff()
-	q = q.Where("NOT (status IN ? AND appointment_time < ?)", recordmodel.WorkingStatuses(), today)
+	statuses := recordmodel.WorkingStatuses()
+	args := make([]any, 0, len(statuses)+2)
+	args = append(args, username)
+	for _, status := range statuses {
+		args = append(args, status)
+	}
+	args = append(args, s.todayCutoff())
+	where := fmt.Sprintf(
+		`"user" = $1 AND NOT (status IN (%s) AND appointment_time < $%d)`,
+		database.Placeholders(2, len(statuses)),
+		len(args),
+	)
 
 	var total int64
-	if err := q.Count(&total).Error; err != nil {
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM clinic_record WHERE "+where, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count tickets: %w", err)
 	}
-
 	if f.Page < 1 {
 		f.Page = 1
 	}
@@ -237,9 +267,27 @@ func (s *TicketService) List(username string, f ListTicketFilter) ([]recordmodel
 		f.PageSize = 20
 	}
 	offset := (f.Page - 1) * f.PageSize
-
-	var items []recordmodel.ClinicRecord
-	if err := q.Order("id DESC").Offset(offset).Limit(f.PageSize).Find(&items).Error; err != nil {
+	args = append(args, f.PageSize, offset)
+	rows, err := s.db.Query(
+		fmt.Sprintf(
+			"SELECT %s FROM clinic_record WHERE %s ORDER BY id DESC LIMIT $%d OFFSET $%d",
+			recordColumns, where, len(args)-1, len(args),
+		),
+		args...,
+	)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list tickets: %w", err)
+	}
+	defer rows.Close()
+	items := make([]recordmodel.ClinicRecord, 0)
+	for rows.Next() {
+		record, err := scanRecord(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("scan ticket: %w", err)
+		}
+		items = append(items, record)
+	}
+	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("list tickets: %w", err)
 	}
 	return items, total, nil
@@ -248,14 +296,18 @@ func (s *TicketService) List(username string, f ListTicketFilter) ([]recordmodel
 // Finished returns the user's closed repair records.
 // Order: id DESC. Paginated.
 func (s *TicketService) Finished(username string, f ListTicketFilter) ([]recordmodel.ClinicRecord, int64, error) {
-	q := s.db.Model(&recordmodel.ClinicRecord{}).
-		Where(`"user" = ? AND status IN ?`, username, recordmodel.FinishedStatuses())
+	statuses := recordmodel.FinishedStatuses()
+	args := make([]any, 0, len(statuses)+1)
+	args = append(args, username)
+	for _, status := range statuses {
+		args = append(args, status)
+	}
+	where := fmt.Sprintf(`"user" = $1 AND status IN (%s)`, database.Placeholders(2, len(statuses)))
 
 	var total int64
-	if err := q.Count(&total).Error; err != nil {
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM clinic_record WHERE "+where, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count finished tickets: %w", err)
 	}
-
 	if f.Page < 1 {
 		f.Page = 1
 	}
@@ -263,9 +315,27 @@ func (s *TicketService) Finished(username string, f ListTicketFilter) ([]recordm
 		f.PageSize = 20
 	}
 	offset := (f.Page - 1) * f.PageSize
-
-	var items []recordmodel.ClinicRecord
-	if err := q.Order("id DESC").Offset(offset).Limit(f.PageSize).Find(&items).Error; err != nil {
+	args = append(args, f.PageSize, offset)
+	rows, err := s.db.Query(
+		fmt.Sprintf(
+			"SELECT %s FROM clinic_record WHERE %s ORDER BY id DESC LIMIT $%d OFFSET $%d",
+			recordColumns, where, len(args)-1, len(args),
+		),
+		args...,
+	)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list finished tickets: %w", err)
+	}
+	defer rows.Close()
+	items := make([]recordmodel.ClinicRecord, 0)
+	for rows.Next() {
+		record, err := scanRecord(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("scan finished ticket: %w", err)
+		}
+		items = append(items, record)
+	}
+	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("list finished tickets: %w", err)
 	}
 	return items, total, nil
@@ -276,10 +346,15 @@ func (s *TicketService) Finished(username string, f ListTicketFilter) ([]recordm
 // before a rule change) we take the smallest id and log a warning per spec
 // line 224-227.
 func (s *TicketService) Working(username string) (*recordmodel.ClinicRecord, error) {
+	statuses := recordmodel.WorkingStatuses()
+	args := make([]any, 0, len(statuses)+1)
+	args = append(args, username)
+	for _, status := range statuses {
+		args = append(args, status)
+	}
+	where := fmt.Sprintf(`"user" = $1 AND status IN (%s)`, database.Placeholders(2, len(statuses)))
 	var count int64
-	if err := s.db.Model(&recordmodel.ClinicRecord{}).
-		Where(`"user" = ? AND status IN ?`, username, recordmodel.WorkingStatuses()).
-		Count(&count).Error; err != nil {
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM clinic_record WHERE "+where, args...).Scan(&count); err != nil {
 		return nil, fmt.Errorf("count working: %w", err)
 	}
 	if count == 0 {
@@ -288,43 +363,45 @@ func (s *TicketService) Working(username string) (*recordmodel.ClinicRecord, err
 	if count > 1 {
 		log.Printf("warning: user %s has %d working records; returning the first by id", username, count)
 	}
-	var rec recordmodel.ClinicRecord
-	if err := s.db.Where(`"user" = ? AND status IN ?`, username, recordmodel.WorkingStatuses()).
-		Order("id ASC").First(&rec).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
+	record, err := scanRecord(s.db.QueryRow(
+		"SELECT "+recordColumns+" FROM clinic_record WHERE "+where+" ORDER BY id ASC LIMIT 1",
+		args...,
+	))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
 		return nil, fmt.Errorf("get working: %w", err)
 	}
-	return &rec, nil
+	return &record, nil
 }
 
 // GetForUser fetches a record by id, requiring ownership. Returns
 // ErrTicketNotFound if missing, ErrTicketForbidden if it belongs to another user.
 func (s *TicketService) GetForUser(id uint, username string) (recordmodel.ClinicRecord, error) {
-	var rec recordmodel.ClinicRecord
-	if err := s.db.First(&rec, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	record, err := loadRecord(s.db, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return recordmodel.ClinicRecord{}, ErrTicketNotFound
 		}
 		return recordmodel.ClinicRecord{}, fmt.Errorf("get ticket %d: %w", id, err)
 	}
-	if rec.User != username {
+	if record.User != username {
 		return recordmodel.ClinicRecord{}, ErrTicketForbidden
 	}
-	return rec, nil
+	return record, nil
 }
 
 // UpdateForUser applies client-allowed field updates, re-running validation
 // steps 1, 2, 4 if appointment_time or campus changes (spec line 266-269).
 // status/worker_description/reject_reason are never accepted from clients.
 func (s *TicketService) UpdateForUser(id uint, username string, in UpdateTicketInput) (recordmodel.ClinicRecord, error) {
-	rec, err := s.GetForUser(id, username)
+	record, err := s.GetForUser(id, username)
 	if err != nil {
 		return recordmodel.ClinicRecord{}, err
 	}
 
-	roomID := rec.RoomID
+	roomID := record.RoomID
 	if in.Campus != nil && *in.Campus != "" {
 		room, err := s.lookupRoom(*in.Campus)
 		if err != nil {
@@ -333,66 +410,79 @@ func (s *TicketService) UpdateForUser(id uint, username string, in UpdateTicketI
 		roomID = room.ID
 	}
 
-	date := rec.AppointmentTime
+	date := record.AppointmentTime
 	if in.AppointmentTime != nil {
 		date = calendar.DateInLocation(*in.AppointmentTime, s.loc)
 	}
 
-	// Re-validate steps 1, 2, 4 if room or date changed.
 	roomOrDateChanged := (in.Campus != nil && *in.Campus != "") || in.AppointmentTime != nil
 	if roomOrDateChanged {
-		if err := s.validateUpdate(username, rec.ID, roomID, date); err != nil {
+		if err := s.validateUpdate(username, record.ID, roomID, date); err != nil {
 			return recordmodel.ClinicRecord{}, err
 		}
 	}
 
-	updates := map[string]any{}
+	var updates []string
+	var args []any
+	add := func(column string, value any) {
+		args = append(args, value)
+		updates = append(updates, fmt.Sprintf("%s = $%d", column, len(args)))
+	}
 	if in.Realname != nil {
-		updates["realname"] = *in.Realname
+		add("realname", *in.Realname)
 	}
 	if in.PhoneNum != nil {
-		updates["phone_num"] = *in.PhoneNum
+		add("phone_num", *in.PhoneNum)
 	}
 	if in.Campus != nil && *in.Campus != "" {
-		updates["room"] = roomID
+		add("room", roomID)
 	}
 	if in.AppointmentTime != nil {
-		updates["appointment_time"] = date
+		add("appointment_time", date)
 	}
 	if in.Description != nil {
-		updates["question_desc"] = *in.Description
+		add("question_desc", *in.Description)
 	}
-
 	if len(updates) > 0 {
-		if err := s.db.Model(&rec).Updates(updates).Error; err != nil {
+		args = append(args, id)
+		record, err = scanRecord(s.db.QueryRow(
+			"UPDATE clinic_record SET "+strings.Join(updates, ", ")+" WHERE id = $"+fmt.Sprint(len(args))+" RETURNING "+recordColumns,
+			args...,
+		))
+		if err != nil {
 			return recordmodel.ClinicRecord{}, fmt.Errorf("update ticket %d: %w", id, err)
 		}
 	}
 
 	// Side-table update for model + password.
 	if in.Model != nil || in.Password != nil {
-		var device recordmodel.ClinicRecordDevice
-		err := s.db.Where("record_id = ?", rec.ID).First(&device).Error
+		_, err := scanRecordDevice(s.db.QueryRow(
+			"SELECT "+recordDeviceColumns+" FROM clinic_record_device WHERE record_id = $1",
+			record.ID,
+		))
 		if err == nil {
-			dUpdates := map[string]any{}
+			var deviceUpdates []string
+			var deviceArgs []any
 			if in.Model != nil {
-				dUpdates["laptop_model"] = *in.Model
+				deviceArgs = append(deviceArgs, *in.Model)
+				deviceUpdates = append(deviceUpdates, fmt.Sprintf("laptop_model = $%d", len(deviceArgs)))
 			}
 			if in.Password != nil {
-				dUpdates["password"] = *in.Password
+				deviceArgs = append(deviceArgs, *in.Password)
+				deviceUpdates = append(deviceUpdates, fmt.Sprintf("password = $%d", len(deviceArgs)))
 			}
-			if len(dUpdates) > 0 {
-				if err := s.db.Model(&device).Updates(dUpdates).Error; err != nil {
-					return recordmodel.ClinicRecord{}, fmt.Errorf("update ticket %d device: %w", id, err)
-				}
+			deviceArgs = append(deviceArgs, record.ID)
+			if _, err := s.db.Exec(
+				"UPDATE clinic_record_device SET "+strings.Join(deviceUpdates, ", ")+" WHERE record_id = $"+fmt.Sprint(len(deviceArgs)),
+				deviceArgs...,
+			); err != nil {
+				return recordmodel.ClinicRecord{}, fmt.Errorf("update ticket %d device: %w", id, err)
 			}
-		} else if errors.Is(err, gorm.ErrRecordNotFound) {
-			device := recordmodel.ClinicRecordDevice{
-				RecordID:    rec.ID,
-				LaptopModel: deref(in.Model),
-				Password:    deref(in.Password),
-			}
-			if err := s.db.Create(&device).Error; err != nil {
+		} else if errors.Is(err, sql.ErrNoRows) {
+			if _, err := s.db.Exec(
+				"INSERT INTO clinic_record_device (record_id, laptop_model, password) VALUES ($1, $2, $3)",
+				record.ID, deref(in.Model), deref(in.Password),
+			); err != nil {
 				return recordmodel.ClinicRecord{}, fmt.Errorf("create ticket %d device: %w", id, err)
 			}
 		} else {
@@ -400,42 +490,50 @@ func (s *TicketService) UpdateForUser(id uint, username string, in UpdateTicketI
 		}
 	}
 
-	if err := s.db.First(&rec, id).Error; err != nil {
+	record, err = loadRecord(s.db, id)
+	if err != nil {
 		return recordmodel.ClinicRecord{}, fmt.Errorf("reload ticket %d: %w", id, err)
 	}
-	return rec, nil
+	return record, nil
 }
 
 // validateUpdate runs the open-date, capacity, and no-past-time checks for an
 // update. Capacity excludes the record itself.
 func (s *TicketService) validateUpdate(username string, recordID, roomID uint, date time.Time) error {
-	// STEP 1 — open-date.
 	if _, err := s.lookupServiceDate(roomID, date); err != nil {
 		if errors.Is(err, schedulingservice.ErrServiceDateNotFound) {
 			return ErrTicketDateClosed
 		}
 		return err
 	}
-
-	// STEP 4 — no past time.
 	today := s.todayCutoff()
 	if date.Before(today) {
 		return ErrTicketPastTime
 	}
 
-	// STEP 2 — capacity excluding this record itself.
+	excluded := schedulingservice.TicketedCountExcludeStatuses(date, today)
+	args := make([]any, 0, len(excluded)+3)
+	args = append(args, roomID, date)
+	for _, status := range excluded {
+		args = append(args, status)
+	}
+	args = append(args, recordID)
 	var existing int64
-	if err := s.db.Model(&recordmodel.ClinicRecord{}).
-		Where("room = ? AND appointment_time = ? AND status NOT IN ? AND id != ?",
-			roomID, date, schedulingservice.TicketedCountExcludeStatuses(date, s.todayCutoff()), recordID).
-		Count(&existing).Error; err != nil {
+	if err := s.db.QueryRow(
+		fmt.Sprintf(
+			"SELECT COUNT(*) FROM clinic_record WHERE room = $1 AND appointment_time = $2 AND status NOT IN (%s) AND id != $%d",
+			database.Placeholders(3, len(excluded)),
+			len(args),
+		),
+		args...,
+	).Scan(&existing); err != nil {
 		return fmt.Errorf("count existing for capacity: %w", err)
 	}
-	var d schedulingmodel.ClinicServiceDate
-	if err := s.db.Where("room_id = ? AND date = ?", roomID, date).First(&d).Error; err != nil {
+	serviceDate, err := s.lookupServiceDate(roomID, date)
+	if err != nil {
 		return ErrTicketDateClosed
 	}
-	if uint(existing) >= d.Capacity {
+	if uint(existing) >= serviceDate.Capacity {
 		return ErrTicketNoCapacity
 	}
 	return nil
@@ -445,35 +543,35 @@ func (s *TicketService) validateUpdate(username string, recordID, roomID uint, d
 // for the record's appointment day + room (spec line 276-299), then deletes the
 // record and its side-table rows.
 func (s *TicketService) DeleteForUser(id uint, username string) error {
-	rec, err := s.GetForUser(id, username)
+	record, err := s.GetForUser(id, username)
 	if err != nil {
 		return err
 	}
 
-	if _, err := s.lookupServiceDate(rec.RoomID, rec.AppointmentTime); err != nil {
+	if _, err := s.lookupServiceDate(record.RoomID, record.AppointmentTime); err != nil {
 		if errors.Is(err, schedulingservice.ErrServiceDateNotFound) {
 			return ErrTicketDateClosed
 		}
 		return err
 	}
 
-	if err := s.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("record_id = ?", rec.ID).Delete(&recordmodel.ClinicRecordDevice{}).Error; err != nil {
-			return fmt.Errorf("delete device for ticket %d: %w", id, err)
+	if err := database.WithTx(context.Background(), s.db.DB, func(tx *sql.Tx) error {
+		deletes := []struct {
+			table string
+			label string
+		}{
+			{"clinic_record_device", "device"},
+			{"clinic_record_arrival", "arrival"},
+			{"clinic_record_worker", "worker"},
+			{"clinic_record_rejection", "rejection"},
+			{"clinic_record_referral", "referral"},
 		}
-		if err := tx.Where("record_id = ?", rec.ID).Delete(&recordmodel.ClinicRecordArrival{}).Error; err != nil {
-			return fmt.Errorf("delete arrival for ticket %d: %w", id, err)
+		for _, item := range deletes {
+			if _, err := tx.Exec("DELETE FROM "+item.table+" WHERE record_id = $1", record.ID); err != nil {
+				return fmt.Errorf("delete %s for ticket %d: %w", item.label, id, err)
+			}
 		}
-		if err := tx.Where("record_id = ?", rec.ID).Delete(&recordmodel.ClinicRecordWorker{}).Error; err != nil {
-			return fmt.Errorf("delete worker for ticket %d: %w", id, err)
-		}
-		if err := tx.Where("record_id = ?", rec.ID).Delete(&recordmodel.ClinicRecordRejection{}).Error; err != nil {
-			return fmt.Errorf("delete rejection for ticket %d: %w", id, err)
-		}
-		if err := tx.Where("record_id = ?", rec.ID).Delete(&recordmodel.ClinicRecordReferral{}).Error; err != nil {
-			return fmt.Errorf("delete referral for ticket %d: %w", id, err)
-		}
-		if err := tx.Delete(&rec).Error; err != nil {
+		if _, err := tx.Exec("DELETE FROM clinic_record WHERE id = $1", id); err != nil {
 			return fmt.Errorf("delete ticket %d: %w", id, err)
 		}
 		return nil
@@ -481,7 +579,7 @@ func (s *TicketService) DeleteForUser(id uint, username string) error {
 		return err
 	}
 
-	s.deleteRecordPhotos(rec.ID)
+	s.deleteRecordPhotos(record.ID)
 	return nil
 }
 
@@ -504,25 +602,31 @@ func (s *TicketService) lookupRoom(name string) (roommodel.ClinicRoom, error) {
 	if name == "" {
 		return roommodel.ClinicRoom{}, ErrTicketRoomMissing
 	}
-	var r roommodel.ClinicRoom
-	if err := s.db.Where("name = ?", name).First(&r).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	room, err := scanRoom(s.db.QueryRow(
+		"SELECT "+roomColumns+" FROM clinic_room WHERE name = $1 ORDER BY id LIMIT 1",
+		name,
+	))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return roommodel.ClinicRoom{}, ErrTicketRoomMissing
 		}
 		return roommodel.ClinicRoom{}, fmt.Errorf("lookup room %q: %w", name, err)
 	}
-	return r, nil
+	return room, nil
 }
 
 func (s *TicketService) lookupServiceDate(roomID uint, date time.Time) (schedulingmodel.ClinicServiceDate, error) {
-	var d schedulingmodel.ClinicServiceDate
-	if err := s.db.Where("room_id = ? AND date = ?", roomID, calendar.DateInLocation(date, s.loc)).First(&d).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	serviceDate, err := scanServiceDate(s.db.QueryRow(
+		"SELECT "+serviceDateColumns+" FROM clinic_service_date WHERE room_id = $1 AND date = $2 ORDER BY id LIMIT 1",
+		roomID, calendar.DateInLocation(date, s.loc),
+	))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return schedulingmodel.ClinicServiceDate{}, schedulingservice.ErrServiceDateNotFound
 		}
 		return schedulingmodel.ClinicServiceDate{}, fmt.Errorf("lookup service date room=%d date=%s: %w", roomID, date.Format("2006-01-02"), err)
 	}
-	return d, nil
+	return serviceDate, nil
 }
 
 func deref(p *string) string {
@@ -554,63 +658,58 @@ type TicketView struct {
 // View assembles the wire representation of a record by joining the Room name
 // and the optional side tables (device, worker, rejection).
 func (s *TicketService) View(rec recordmodel.ClinicRecord) (TicketView, error) {
-	var room roommodel.ClinicRoom
-	if err := s.db.Select("name").Where("id = ?", rec.RoomID).First(&room).Error; err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return TicketView{}, fmt.Errorf("load room for ticket %d: %w", rec.ID, err)
-		}
+	var roomName string
+	if err := s.db.QueryRow("SELECT name FROM clinic_room WHERE id = $1", rec.RoomID).Scan(&roomName); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return TicketView{}, fmt.Errorf("load room for ticket %d: %w", rec.ID, err)
 	}
 
-	var device recordmodel.ClinicRecordDevice
-	hasDevice := true
-	if err := s.db.Where("record_id = ?", rec.ID).First(&device).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			hasDevice = false
-		} else {
-			return TicketView{}, fmt.Errorf("load device for ticket %d: %w", rec.ID, err)
-		}
+	device, err := scanRecordDevice(s.db.QueryRow(
+		"SELECT "+recordDeviceColumns+" FROM clinic_record_device WHERE record_id = $1",
+		rec.ID,
+	))
+	hasDevice := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return TicketView{}, fmt.Errorf("load device for ticket %d: %w", rec.ID, err)
 	}
 
-	var worker recordmodel.ClinicRecordWorker
-	hasWorker := true
-	if err := s.db.Where("record_id = ?", rec.ID).First(&worker).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			hasWorker = false
-		} else {
-			return TicketView{}, fmt.Errorf("load worker for ticket %d: %w", rec.ID, err)
-		}
+	worker, err := scanRecordWorker(s.db.QueryRow(
+		"SELECT "+recordWorkerColumns+" FROM clinic_record_worker WHERE record_id = $1",
+		rec.ID,
+	))
+	hasWorker := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return TicketView{}, fmt.Errorf("load worker for ticket %d: %w", rec.ID, err)
 	}
 
-	var rejection recordmodel.ClinicRecordRejection
-	hasRejection := true
-	if err := s.db.Where("record_id = ?", rec.ID).First(&rejection).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			hasRejection = false
-		} else {
-			return TicketView{}, fmt.Errorf("load rejection for ticket %d: %w", rec.ID, err)
-		}
+	rejection, err := scanRecordRejection(s.db.QueryRow(
+		"SELECT "+recordRejectionColumns+" FROM clinic_record_rejection WHERE record_id = $1",
+		rec.ID,
+	))
+	hasRejection := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return TicketView{}, fmt.Errorf("load rejection for ticket %d: %w", rec.ID, err)
 	}
 
-	v := TicketView{
+	view := TicketView{
 		URL:               fmt.Sprintf("/api/tickets/%d", rec.ID),
 		User:              rec.User,
 		Status:            string(rec.Status),
 		Realname:          rec.Realname,
 		PhoneNum:          rec.PhoneNum,
-		Campus:            room.Name,
+		Campus:            roomName,
 		AppointmentTime:   rec.AppointmentTime.UTC().Format("2006-01-02"),
 		Description:       rec.QuestionDesc,
 		LiquidMetalStatus: string(taggingservice.LiquidMetalStatusFromIndex(rec.LiquidMetalStatusIndex)),
 	}
 	if hasDevice {
-		v.Model = device.LaptopModel
-		v.Password = device.Password
+		view.Model = device.LaptopModel
+		view.Password = device.Password
 	}
 	if hasWorker {
-		v.WorkerDescription = worker.WorkerDesc
+		view.WorkerDescription = worker.WorkerDesc
 	}
 	if hasRejection {
-		v.RejectReason = rejection.RejectReason
+		view.RejectReason = rejection.RejectReason
 	}
-	return v, nil
+	return view, nil
 }

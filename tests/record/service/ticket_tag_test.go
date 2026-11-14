@@ -18,7 +18,7 @@ func TestTicketService_Create_AssignsDefaultTag(t *testing.T) {
 	}
 	roomID := testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
 
-	svc := recordservice.NewTicketService(db, nil)
+	svc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 	svc.SetDefaultTagID(def.ID)
 
 	rec, err := svc.Create(recordservice.CreateTicketInput{

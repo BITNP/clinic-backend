@@ -144,7 +144,7 @@ func TestRecordTagger_WorkerAssignsTag(t *testing.T) {
 	go tagger.Run(ctx)
 
 	testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
-	svc := recordservice.NewTicketService(db, nil)
+	svc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 	svc.SetDefaultTagID(tagSvc.DefaultID())
 	svc.SetTagger(tagger)
 
@@ -199,7 +199,7 @@ func TestRecordTagger_WorkerKeepsDefaultOnError(t *testing.T) {
 	go tagger.Run(ctx)
 
 	testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
-	svc := recordservice.NewTicketService(db, nil)
+	svc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 	svc.SetDefaultTagID(def.ID)
 	svc.SetTagger(tagger)
 
@@ -369,7 +369,7 @@ func TestRecordTagger_WorkerAssignsTagAndLiquidMetalStatus(t *testing.T) {
 	go tagger.Run(ctx)
 
 	testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
-	svc := recordservice.NewTicketService(db, nil)
+	svc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 	svc.SetDefaultTagID(tagSvc.DefaultID())
 	svc.SetTagger(tagger)
 
@@ -430,7 +430,7 @@ func TestRecordTagger_LiquidMetalRunsWhenRecordTagFails(t *testing.T) {
 	go tagger.Run(ctx)
 
 	testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
-	svc := recordservice.NewTicketService(db, nil)
+	svc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 	svc.SetDefaultTagID(def.ID)
 	svc.SetTagger(tagger)
 
@@ -486,7 +486,7 @@ func TestRecordTagger_NoModelSkipsLiquidMetal(t *testing.T) {
 	go tagger.Run(ctx)
 
 	testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
-	svc := recordservice.NewTicketService(db, nil)
+	svc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 	svc.SetDefaultTagID(tagSvc.DefaultID())
 	svc.SetTagger(tagger)
 

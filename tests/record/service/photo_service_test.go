@@ -13,6 +13,7 @@ import (
 	recordmodel "clinic-backend/internal/record/model"
 	recordservice "clinic-backend/internal/record/service"
 	"clinic-backend/internal/storage"
+	"clinic-backend/internal/testutil"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -120,7 +121,7 @@ func setupPhotoServiceTest(t *testing.T, maxCount int, maxSize int64) (*gorm.DB,
 	}
 
 	store := newFakePhotoStorage()
-	svc, err := recordservice.NewPhotoService(db, store, maxCount, maxSize)
+	svc, err := recordservice.NewPhotoService(testutil.RawDB(t, db), store, maxCount, maxSize)
 	if err != nil {
 		t.Fatalf("NewPhotoService() error = %v", err)
 	}
@@ -460,7 +461,7 @@ func TestPhotoServiceAppendCleansUpObjectOnDatabaseFailure(t *testing.T) {
 	}
 
 	store := newFakePhotoStorage()
-	svc, err := recordservice.NewPhotoService(db, store, 9, 1024)
+	svc, err := recordservice.NewPhotoService(testutil.RawDB(t, db), store, 9, 1024)
 	if err != nil {
 		t.Fatalf("NewPhotoService() error = %v", err)
 	}
@@ -483,13 +484,13 @@ func TestNewPhotoServiceValidation(t *testing.T) {
 	if _, err := recordservice.NewPhotoService(nil, store, 1, 1); err == nil {
 		t.Fatal("expected an error for a nil database")
 	}
-	if _, err := recordservice.NewPhotoService(db, nil, 1, 1); err == nil {
+	if _, err := recordservice.NewPhotoService(testutil.RawDB(t, db), nil, 1, 1); err == nil {
 		t.Fatal("expected an error for nil storage")
 	}
-	if _, err := recordservice.NewPhotoService(db, store, 0, 1); err == nil {
+	if _, err := recordservice.NewPhotoService(testutil.RawDB(t, db), store, 0, 1); err == nil {
 		t.Fatal("expected an error for zero max count")
 	}
-	if _, err := recordservice.NewPhotoService(db, store, 1, 0); err == nil {
+	if _, err := recordservice.NewPhotoService(testutil.RawDB(t, db), store, 1, 0); err == nil {
 		t.Fatal("expected an error for zero max size")
 	}
 }

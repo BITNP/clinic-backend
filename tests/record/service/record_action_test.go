@@ -11,6 +11,7 @@ import (
 	recordmodel "clinic-backend/internal/record/model"
 	recordservice "clinic-backend/internal/record/service"
 	roommodel "clinic-backend/internal/room/model"
+	"clinic-backend/internal/testutil"
 
 	"gorm.io/gorm"
 )
@@ -55,8 +56,8 @@ func (f *fakeActionStore) Remove(_ context.Context, actorID int, entry recordser
 	return nil
 }
 
-func newActionRecordService(db *gorm.DB, store *fakeActionStore) *recordservice.AdminRecordService {
-	svc := recordservice.NewAdminRecordService(db)
+func newActionRecordService(t *testing.T, db *gorm.DB, store *fakeActionStore) *recordservice.AdminRecordService {
+	svc := recordservice.NewAdminRecordService(testutil.RawDB(t, db))
 	svc.SetRecordActionService(recordservice.NewRecordActionService(store, 5*time.Minute))
 	return svc
 }
@@ -100,7 +101,7 @@ func TestRevertConfirmRestoresPending(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	v, err := svc.MarkConfirmed(context.Background(), rec.ID, 7)
 	if err != nil {
@@ -131,7 +132,7 @@ func TestRevertRejectRemovesRejection(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	if _, err := svc.MarkRejected(context.Background(), rec.ID, "bad", 7); err != nil {
 		t.Fatalf("reject: %v", err)
@@ -159,7 +160,7 @@ func TestRevertArriveRemovesArrival(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusConfirmed, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	if _, err := svc.MarkArrived(context.Background(), 7, rec.ID); err != nil {
 		t.Fatalf("arrive: %v", err)
@@ -187,7 +188,7 @@ func TestRevertInProgressRestoresWorker(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusArrived, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	if _, err := svc.MarkInProgress(context.Background(), 7, rec.ID); err != nil {
 		t.Fatalf("in-progress: %v", err)
@@ -218,7 +219,7 @@ func TestRevertCompleteClearsFinishTime(t *testing.T) {
 	if err := db.Create(&recordmodel.ClinicRecordWorker{RecordID: rec.ID, WorkerID: 7}).Error; err != nil {
 		t.Fatalf("seed worker: %v", err)
 	}
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	if _, err := svc.MarkCompleted(context.Background(), 7, rec.ID); err != nil {
 		t.Fatalf("complete: %v", err)
@@ -242,7 +243,7 @@ func TestRevertReferRemovesReferral(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	if _, err := svc.MarkReferred(context.Background(), rec.ID, "return", 7); err != nil {
 		t.Fatalf("refer: %v", err)
@@ -265,7 +266,7 @@ func TestRevertUpdateRestoresWorkerDesc(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	desc := "fixed it"
 	if _, err := svc.Update(context.Background(), 7, rec.ID, recordservice.UpdateAdminRecordInput{WorkerDesc: &desc}); err != nil {
@@ -289,7 +290,7 @@ func TestRevertStrictLIFO(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	if _, err := svc.MarkConfirmed(context.Background(), rec.ID, 7); err != nil {
 		t.Fatalf("confirm: %v", err)
@@ -322,7 +323,7 @@ func TestRevertSupersededByAnotherActor(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	if _, err := svc.MarkConfirmed(context.Background(), rec.ID, 1); err != nil {
 		t.Fatalf("confirm: %v", err)
@@ -343,7 +344,7 @@ func TestRevertUnavailableWhenNoAction(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	if _, err := svc.Revert(context.Background(), 7, rec.ID); !errors.Is(err, recordservice.ErrRevertUnavailable) {
 		t.Fatalf("expected unavailable, got %v", err)
@@ -355,7 +356,7 @@ func TestRevertExpiredWindowIsPruned(t *testing.T) {
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
 	store := newFakeActionStore()
-	svc := newActionRecordService(db, store)
+	svc := newActionRecordService(t, db, store)
 
 	// A journaled action whose window has already lapsed.
 	if err := store.Push(context.Background(), 7, recordservice.RecordActionEntry{
@@ -379,7 +380,7 @@ func TestRevertInvalidatedBySystemCleanup(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	// Make the appointment past so the nightly cleanup closes the record.
 	if err := db.Model(&recordmodel.ClinicRecord{}).
@@ -441,7 +442,7 @@ func TestRevertibleFieldsPerViewer(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 	ctx := context.Background()
 
 	if _, err := svc.MarkConfirmed(ctx, rec.ID, 7); err != nil {

@@ -2,12 +2,12 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
+	"clinic-backend/internal/database"
 	recordmodel "clinic-backend/internal/record/model"
-
-	"gorm.io/gorm"
 )
 
 func (s *AdminRecordService) CloseExpiredRecords(ctx context.Context, cutoff time.Time) (noShowCount, completedCount int64, err error) {
@@ -17,40 +17,48 @@ func (s *AdminRecordService) CloseExpiredRecords(ctx context.Context, cutoff tim
 		recordmodel.RecordStatusArrived,
 	}
 
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		r := tx.Model(&recordmodel.ClinicRecord{}).
-			Where("appointment_time < ? AND status IN ?", cutoff, noShowStatuses).
-			Updates(map[string]any{
-				"status":     recordmodel.RecordStatusNoShow,
-				"action_seq": gorm.Expr("action_seq + 1"),
-			})
-		if r.Error != nil {
-			return fmt.Errorf("mark no-show: %w", r.Error)
+	err = database.WithTx(ctx, s.db.DB, func(tx *sql.Tx) error {
+		args := make([]any, 0, len(noShowStatuses)+2)
+		args = append(args, recordmodel.RecordStatusNoShow, cutoff)
+		for _, status := range noShowStatuses {
+			args = append(args, status)
 		}
-		noShowCount = r.RowsAffected
+		res, err := tx.Exec(
+			fmt.Sprintf(
+				"UPDATE clinic_record SET status = $1, action_seq = action_seq + 1 WHERE appointment_time < $2 AND status IN (%s)",
+				database.Placeholders(3, len(noShowStatuses)),
+			),
+			args...,
+		)
+		if err != nil {
+			return fmt.Errorf("mark no-show: %w", err)
+		}
+		noShowCount, err = res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("mark no-show: %w", err)
+		}
 
-		r = tx.Model(&recordmodel.ClinicRecord{}).
-			Where("appointment_time < ? AND status = ?", cutoff, recordmodel.RecordStatusInProgress).
-			Updates(map[string]any{
-				"status":     recordmodel.RecordStatusCompleted,
-				"action_seq": gorm.Expr("action_seq + 1"),
-			})
-		if r.Error != nil {
-			return fmt.Errorf("mark completed: %w", r.Error)
+		res, err = tx.Exec(
+			"UPDATE clinic_record SET status = $1, action_seq = action_seq + 1 WHERE appointment_time < $2 AND status = $3",
+			recordmodel.RecordStatusCompleted, cutoff, recordmodel.RecordStatusInProgress,
+		)
+		if err != nil {
+			return fmt.Errorf("mark completed: %w", err)
 		}
-		completedCount = r.RowsAffected
+		completedCount, err = res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("mark completed: %w", err)
+		}
 
 		if completedCount > 0 {
-			sub := tx.Model(&recordmodel.ClinicRecord{}).
-				Select("id").
-				Where("appointment_time < ? AND status = ?", cutoff, recordmodel.RecordStatusCompleted)
-			if err := tx.Model(&recordmodel.ClinicRecordWorker{}).
-				Where("record_id IN (?)", sub).
-				Update("finish_time", time.Now().UTC()).Error; err != nil {
+			if _, err := tx.Exec(
+				`UPDATE clinic_record_worker SET finish_time = $1
+				 WHERE record_id IN (SELECT id FROM clinic_record WHERE appointment_time < $2 AND status = $3)`,
+				time.Now().UTC(), cutoff, recordmodel.RecordStatusCompleted,
+			); err != nil {
 				return fmt.Errorf("update worker finish_time: %w", err)
 			}
 		}
-
 		return nil
 	})
 	return

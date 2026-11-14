@@ -2,7 +2,11 @@ package service_test
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,18 +15,16 @@ import (
 	roommodel "clinic-backend/internal/room/model"
 	staffmodel "clinic-backend/internal/staff/model"
 	taggingservice "clinic-backend/internal/tagging/service"
+	"clinic-backend/internal/testutil"
 
-	"gorm.io/driver/sqlite"
+	mattsqlite "github.com/mattn/go-sqlite3"
+	gormsqlite "gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
-func setupAdminRecordTestDB(t *testing.T) *gorm.DB {
+func migrateAdminRecordTestModels(t *testing.T, db *gorm.DB) {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:?_fk=1"), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
 	if err := db.AutoMigrate(
 		&roommodel.ClinicCampus{},
 		&roommodel.ClinicRoom{},
@@ -37,6 +39,60 @@ func setupAdminRecordTestDB(t *testing.T) *gorm.DB {
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+}
+
+func setupAdminRecordTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(gormsqlite.Open(":memory:?_fk=1"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	migrateAdminRecordTestModels(t, db)
+	return db
+}
+
+var (
+	countingSQLiteOnce    sync.Once
+	countingSQLiteQueries atomic.Int64
+)
+
+type countingSQLiteDriver struct {
+	base driver.Driver
+}
+
+func (d *countingSQLiteDriver) Open(name string) (driver.Conn, error) {
+	conn, err := d.base.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	return &countingSQLiteConn{Conn: conn}, nil
+}
+
+type countingSQLiteConn struct {
+	driver.Conn
+}
+
+func (c *countingSQLiteConn) Prepare(query string) (driver.Stmt, error) {
+	countingSQLiteQueries.Add(1)
+	return c.Conn.Prepare(query)
+}
+
+func setupCountingAdminRecordTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	countingSQLiteOnce.Do(func() {
+		sql.Register("clinic-counting-sqlite", &countingSQLiteDriver{base: &mattsqlite.SQLiteDriver{}})
+	})
+	rawDB, err := sql.Open("clinic-counting-sqlite", ":memory:?_fk=1")
+	if err != nil {
+		t.Fatalf("open counting db: %v", err)
+	}
+	rawDB.SetMaxOpenConns(1)
+	rawDB.SetMaxIdleConns(1)
+	db, err := gorm.Open(gormsqlite.New(gormsqlite.Config{Conn: rawDB}), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatalf("open gorm db: %v", err)
+	}
+	migrateAdminRecordTestModels(t, db)
 	return db
 }
 
@@ -47,7 +103,7 @@ func yesterdayCutoff() time.Time {
 
 func TestCloseExpiredRecords_NoShow(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
-	svc := recordservice.NewAdminRecordService(db)
+	svc := recordservice.NewAdminRecordService(testutil.RawDB(t, db))
 	cutoff := yesterdayCutoff()
 	pastDate := cutoff.AddDate(0, 0, -1)
 
@@ -90,7 +146,7 @@ func TestCloseExpiredRecords_NoShow(t *testing.T) {
 
 func TestCloseExpiredRecords_Completed(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
-	svc := recordservice.NewAdminRecordService(db)
+	svc := recordservice.NewAdminRecordService(testutil.RawDB(t, db))
 	cutoff := yesterdayCutoff()
 	pastDate := cutoff.AddDate(0, 0, -1)
 
@@ -145,7 +201,7 @@ func TestCloseExpiredRecords_Completed(t *testing.T) {
 
 func TestCloseExpiredRecords_IgnoresTerminal(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
-	svc := recordservice.NewAdminRecordService(db)
+	svc := recordservice.NewAdminRecordService(testutil.RawDB(t, db))
 	cutoff := yesterdayCutoff()
 	pastDate := cutoff.AddDate(0, 0, -1)
 
@@ -183,7 +239,7 @@ func TestCloseExpiredRecords_IgnoresTerminal(t *testing.T) {
 
 func TestCloseExpiredRecords_IgnoresFutureTickets(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
-	svc := recordservice.NewAdminRecordService(db)
+	svc := recordservice.NewAdminRecordService(testutil.RawDB(t, db))
 	cutoff := yesterdayCutoff()
 	futureDate := cutoff.AddDate(0, 0, 3)
 
@@ -217,21 +273,9 @@ func TestCloseExpiredRecords_IgnoresFutureTickets(t *testing.T) {
 	}
 }
 
-// countingGormLogger counts how many SQL statements GORM traces while
-// delegating the actual logging to the default logger.
-type countingGormLogger struct {
-	logger.Interface
-	n int
-}
-
-func (l *countingGormLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
-	l.n++
-	l.Interface.Trace(ctx, begin, fc, err)
-}
-
 func TestAdminRecordServiceListNewestIDsFirst(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
-	svc := recordservice.NewAdminRecordService(db)
+	svc := recordservice.NewAdminRecordService(testutil.RawDB(t, db))
 	room := roommodel.ClinicRoom{Name: "Room", Enabled: true}
 	if err := db.Create(&room).Error; err != nil {
 		t.Fatalf("seed room: %v", err)
@@ -299,7 +343,7 @@ func TestAdminRecordServiceListNewestIDsFirst(t *testing.T) {
 
 func TestAdminRecordServiceListBatchedViews(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
-	svc := recordservice.NewAdminRecordService(db)
+	svc := recordservice.NewAdminRecordService(testutil.RawDB(t, db))
 
 	roomA := roommodel.ClinicRoom{Name: "Room A", Address: "addr-a", Enabled: true}
 	roomB := roommodel.ClinicRoom{Name: "Room B", Address: "addr-b", Enabled: true}
@@ -439,7 +483,7 @@ func TestAdminRecordServiceListBatchedViews(t *testing.T) {
 
 func TestAdminRecordServiceGetByIDPhotoCount(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
-	svc := recordservice.NewAdminRecordService(db)
+	svc := recordservice.NewAdminRecordService(testutil.RawDB(t, db))
 
 	room := roommodel.ClinicRoom{Name: "Room", Address: "addr", Enabled: true}
 	if err := db.Create(&room).Error; err != nil {
@@ -477,8 +521,8 @@ func TestAdminRecordServiceGetByIDPhotoCount(t *testing.T) {
 }
 
 func TestAdminRecordServiceListBatchedQueryCount(t *testing.T) {
-	db := setupAdminRecordTestDB(t)
-	svc := recordservice.NewAdminRecordService(db)
+	db := setupCountingAdminRecordTestDB(t)
+	svc := recordservice.NewAdminRecordService(testutil.RawDB(t, db))
 
 	room := roommodel.ClinicRoom{Name: "Room", Address: "addr", Enabled: true}
 	if err := db.Create(&room).Error; err != nil {
@@ -498,23 +542,21 @@ func TestAdminRecordServiceListBatchedQueryCount(t *testing.T) {
 		}
 	}
 
-	counter := &countingGormLogger{Interface: logger.Default}
-	db.Logger = counter
-
+	countingSQLiteQueries.Store(0)
 	if _, _, err := svc.List(context.Background(), 0, recordservice.ListAdminRecordFilter{Page: 1, PageSize: 10}); err != nil {
 		t.Fatalf("List: %v", err)
 	}
 
 	// count + page find + room + device + worker + photo counts + rejection + referral + arrival.
 	const want = 9
-	if counter.n != want {
-		t.Errorf("List issued %d queries, want %d (per-record loads likely regressed)", counter.n, want)
+	if got := int(countingSQLiteQueries.Load()); got != want {
+		t.Errorf("List issued %d queries, want %d (per-record loads likely regressed)", got, want)
 	}
 }
 
 func TestAdminRecordServiceListSearchByRealname(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
-	svc := recordservice.NewAdminRecordService(db)
+	svc := recordservice.NewAdminRecordService(testutil.RawDB(t, db))
 
 	room := roommodel.ClinicRoom{Name: "Room", Enabled: true}
 	if err := db.Create(&room).Error; err != nil {

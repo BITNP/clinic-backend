@@ -55,7 +55,7 @@ func setupLegacyHandlerRouter(t *testing.T) (*gin.Engine, *gorm.DB, *recordservi
 		t.Fatalf("migrate: %v", err)
 	}
 
-	ticketSvc := recordservice.NewTicketService(db, nil)
+	ticketSvc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 	serviceDateSvc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
 	roomSvc := roomservice.NewRoomService(testutil.RawDB(t, db))
 	announceSvc := newAnnouncementService(t, db)
@@ -540,7 +540,7 @@ func TestLegacy_Dates_AlwaysShiftsToUTC8(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	ticketSvc := recordservice.NewTicketService(db, time.UTC)
+	ticketSvc := recordservice.NewTicketService(testutil.RawDB(t, db), time.UTC)
 	serviceDateSvc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), time.UTC)
 	roomSvc := roomservice.NewRoomService(testutil.RawDB(t, db))
 	announceSvc := newAnnouncementService(t, db)

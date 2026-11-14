@@ -4,12 +4,9 @@ import (
 	"fmt"
 	"time"
 
+	"clinic-backend/internal/database"
 	recordmodel "clinic-backend/internal/record/model"
-	roommodel "clinic-backend/internal/room/model"
-	staffmodel "clinic-backend/internal/staff/model"
 	taggingservice "clinic-backend/internal/tagging/service"
-
-	"gorm.io/gorm"
 )
 
 func (s *AdminRecordService) buildView(rec recordmodel.ClinicRecord) (AdminRecordView, error) {
@@ -31,9 +28,9 @@ type recordViewRelations struct {
 	arrivals    map[uint]recordmodel.ClinicRecordArrival
 }
 
-// loadRecordViewRelationsTx loads the room name and the optional side-table rows
+// loadRecordViewRelations loads the room name and the optional side-table rows
 // for every record in recs using one query per table.
-func loadRecordViewRelationsTx(tx *gorm.DB, recs []recordmodel.ClinicRecord) (recordViewRelations, error) {
+func loadRecordViewRelations(db rowsQueryer, recs []recordmodel.ClinicRecord) (recordViewRelations, error) {
 	rel := recordViewRelations{
 		rooms:       make(map[uint]string),
 		devices:     make(map[uint]recordmodel.ClinicRecordDevice),
@@ -60,31 +57,64 @@ func loadRecordViewRelationsTx(tx *gorm.DB, recs []recordmodel.ClinicRecord) (re
 			}
 		}
 	}
+	idArgs := uintArgs(ids)
 
 	if len(roomIDs) > 0 {
-		var rooms []roommodel.ClinicRoom
-		if err := tx.Select("id", "name").Where("id IN ?", roomIDs).Find(&rooms).Error; err != nil {
+		rows, err := db.Query(
+			"SELECT id, name FROM clinic_room WHERE id IN ("+database.Placeholders(1, len(roomIDs))+")",
+			uintArgs(roomIDs)...,
+		)
+		if err != nil {
 			return rel, fmt.Errorf("load rooms: %w", err)
 		}
-		for _, r := range rooms {
-			rel.rooms[r.ID] = r.Name
+		for rows.Next() {
+			var id uint
+			var name string
+			if err := rows.Scan(&id, &name); err != nil {
+				rows.Close()
+				return rel, fmt.Errorf("scan room: %w", err)
+			}
+			rel.rooms[id] = name
+		}
+		if err := rows.Close(); err != nil {
+			return rel, fmt.Errorf("load rooms: %w", err)
+		}
+		if err := rows.Err(); err != nil {
+			return rel, fmt.Errorf("load rooms: %w", err)
 		}
 	}
 
-	var devices []recordmodel.ClinicRecordDevice
-	if err := tx.Where("record_id IN ?", ids).Find(&devices).Error; err != nil {
+	rows, err := db.Query(
+		"SELECT "+recordDeviceColumns+" FROM clinic_record_device WHERE record_id IN ("+database.Placeholders(1, len(ids))+")",
+		idArgs...,
+	)
+	if err != nil {
 		return rel, fmt.Errorf("load devices: %w", err)
 	}
-	for _, d := range devices {
-		rel.devices[d.RecordID] = d
+	for rows.Next() {
+		device, err := scanRecordDevice(rows)
+		if err != nil {
+			rows.Close()
+			return rel, fmt.Errorf("scan device: %w", err)
+		}
+		rel.devices[device.RecordID] = device
+	}
+	if err := rows.Close(); err != nil {
+		return rel, fmt.Errorf("load devices: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return rel, fmt.Errorf("load devices: %w", err)
 	}
 
-	var workers []recordmodel.ClinicRecordWorker
-	if err := tx.Where("record_id IN ?", ids).Find(&workers).Error; err != nil {
+	rows, err = db.Query(
+		"SELECT "+recordWorkerColumns+" FROM clinic_record_worker WHERE record_id IN ("+database.Placeholders(1, len(ids))+")",
+		idArgs...,
+	)
+	if err != nil {
 		return rel, fmt.Errorf("load workers: %w", err)
 	}
-	staffIDs := make([]int, 0, len(recs)+len(workers))
-	seenStaff := make(map[int]struct{}, len(recs)+len(workers))
+	staffIDs := make([]int, 0, len(recs))
+	seenStaff := make(map[int]struct{}, len(recs))
 	for _, rec := range recs {
 		if rec.ApproverID == nil {
 			continue
@@ -96,71 +126,160 @@ func loadRecordViewRelationsTx(tx *gorm.DB, recs []recordmodel.ClinicRecord) (re
 		seenStaff[id] = struct{}{}
 		staffIDs = append(staffIDs, id)
 	}
-	for _, w := range workers {
-		rel.workers[w.RecordID] = w
-		id := int(w.WorkerID)
+	for rows.Next() {
+		worker, err := scanRecordWorker(rows)
+		if err != nil {
+			rows.Close()
+			return rel, fmt.Errorf("scan worker: %w", err)
+		}
+		rel.workers[worker.RecordID] = worker
+		id := int(worker.WorkerID)
 		if _, ok := seenStaff[id]; ok {
 			continue
 		}
 		seenStaff[id] = struct{}{}
 		staffIDs = append(staffIDs, id)
 	}
+	if err := rows.Close(); err != nil {
+		return rel, fmt.Errorf("load workers: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return rel, fmt.Errorf("load workers: %w", err)
+	}
+
 	if len(staffIDs) > 0 {
-		var staff []staffmodel.ClinicStaff
-		if err := tx.Select("id", "realname").Where("id IN ?", staffIDs).Find(&staff).Error; err != nil {
+		staffArgs := make([]any, len(staffIDs))
+		for i, id := range staffIDs {
+			staffArgs[i] = id
+		}
+		rows, err := db.Query(
+			"SELECT id, realname FROM clinic_staff WHERE id IN ("+database.Placeholders(1, len(staffIDs))+")",
+			staffArgs...,
+		)
+		if err != nil {
 			return rel, fmt.Errorf("load staff names: %w", err)
 		}
-		for _, st := range staff {
-			rel.staffNames[st.ID] = st.Realname
+		for rows.Next() {
+			var id int
+			var realname string
+			if err := rows.Scan(&id, &realname); err != nil {
+				rows.Close()
+				return rel, fmt.Errorf("scan staff name: %w", err)
+			}
+			rel.staffNames[id] = realname
+		}
+		if err := rows.Close(); err != nil {
+			return rel, fmt.Errorf("load staff names: %w", err)
+		}
+		if err := rows.Err(); err != nil {
+			return rel, fmt.Errorf("load staff names: %w", err)
 		}
 	}
 
-	var photoCounts []struct {
-		RecordID uint
-		Count    int64
-	}
-	if err := tx.Model(&recordmodel.ClinicRecordPhoto{}).
-		Select("record_id, COUNT(*) AS count").
-		Where("record_id IN ?", ids).
-		Group("record_id").
-		Scan(&photoCounts).Error; err != nil {
+	rows, err = db.Query(
+		"SELECT record_id, COUNT(*) FROM clinic_record_photo WHERE record_id IN ("+database.Placeholders(1, len(ids))+") GROUP BY record_id",
+		idArgs...,
+	)
+	if err != nil {
 		return rel, fmt.Errorf("load photo counts: %w", err)
 	}
-	for _, count := range photoCounts {
-		rel.photoCounts[count.RecordID] = count.Count
+	for rows.Next() {
+		var recordID uint
+		var count int64
+		if err := rows.Scan(&recordID, &count); err != nil {
+			rows.Close()
+			return rel, fmt.Errorf("scan photo count: %w", err)
+		}
+		rel.photoCounts[recordID] = count
+	}
+	if err := rows.Close(); err != nil {
+		return rel, fmt.Errorf("load photo counts: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return rel, fmt.Errorf("load photo counts: %w", err)
 	}
 
-	var rejections []recordmodel.ClinicRecordRejection
-	if err := tx.Where("record_id IN ?", ids).Find(&rejections).Error; err != nil {
+	rows, err = db.Query(
+		"SELECT "+recordRejectionColumns+" FROM clinic_record_rejection WHERE record_id IN ("+database.Placeholders(1, len(ids))+")",
+		idArgs...,
+	)
+	if err != nil {
 		return rel, fmt.Errorf("load rejections: %w", err)
 	}
-	for _, r := range rejections {
-		rel.rejections[r.RecordID] = r
+	for rows.Next() {
+		rejection, err := scanRecordRejection(rows)
+		if err != nil {
+			rows.Close()
+			return rel, fmt.Errorf("scan rejection: %w", err)
+		}
+		rel.rejections[rejection.RecordID] = rejection
+	}
+	if err := rows.Close(); err != nil {
+		return rel, fmt.Errorf("load rejections: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return rel, fmt.Errorf("load rejections: %w", err)
 	}
 
-	var referrals []recordmodel.ClinicRecordReferral
-	if err := tx.Where("record_id IN ?", ids).Find(&referrals).Error; err != nil {
+	rows, err = db.Query(
+		"SELECT "+recordReferralColumns+" FROM clinic_record_referral WHERE record_id IN ("+database.Placeholders(1, len(ids))+")",
+		idArgs...,
+	)
+	if err != nil {
 		return rel, fmt.Errorf("load referrals: %w", err)
 	}
-	for _, r := range referrals {
-		rel.referrals[r.RecordID] = r
+	for rows.Next() {
+		referral, err := scanRecordReferral(rows)
+		if err != nil {
+			rows.Close()
+			return rel, fmt.Errorf("scan referral: %w", err)
+		}
+		rel.referrals[referral.RecordID] = referral
+	}
+	if err := rows.Close(); err != nil {
+		return rel, fmt.Errorf("load referrals: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return rel, fmt.Errorf("load referrals: %w", err)
 	}
 
-	var arrivals []recordmodel.ClinicRecordArrival
-	if err := tx.Where("record_id IN ?", ids).Find(&arrivals).Error; err != nil {
+	rows, err = db.Query(
+		"SELECT "+recordArrivalColumns+" FROM clinic_record_arrival WHERE record_id IN ("+database.Placeholders(1, len(ids))+")",
+		idArgs...,
+	)
+	if err != nil {
 		return rel, fmt.Errorf("load arrivals: %w", err)
 	}
-	for _, a := range arrivals {
-		rel.arrivals[a.RecordID] = a
+	for rows.Next() {
+		arrival, err := scanRecordArrival(rows)
+		if err != nil {
+			rows.Close()
+			return rel, fmt.Errorf("scan arrival: %w", err)
+		}
+		rel.arrivals[arrival.RecordID] = arrival
+	}
+	if err := rows.Close(); err != nil {
+		return rel, fmt.Errorf("load arrivals: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return rel, fmt.Errorf("load arrivals: %w", err)
 	}
 
 	return rel, nil
 }
 
+func uintArgs(ids []uint) []any {
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	return args
+}
+
 // buildViewsTx assembles the admin view for each record using a single batch of
 // relation loads. The returned slice follows the same order as recs.
-func (s *AdminRecordService) buildViewsTx(tx *gorm.DB, recs []recordmodel.ClinicRecord) ([]AdminRecordView, error) {
-	rel, err := loadRecordViewRelationsTx(tx, recs)
+func (s *AdminRecordService) buildViewsTx(db rowsQueryer, recs []recordmodel.ClinicRecord) ([]AdminRecordView, error) {
+	rel, err := loadRecordViewRelations(db, recs)
 	if err != nil {
 		return nil, err
 	}
@@ -171,8 +290,8 @@ func (s *AdminRecordService) buildViewsTx(tx *gorm.DB, recs []recordmodel.Clinic
 	return views, nil
 }
 
-func (s *AdminRecordService) buildViewTx(tx *gorm.DB, rec recordmodel.ClinicRecord) (AdminRecordView, error) {
-	views, err := s.buildViewsTx(tx, []recordmodel.ClinicRecord{rec})
+func (s *AdminRecordService) buildViewTx(db rowsQueryer, rec recordmodel.ClinicRecord) (AdminRecordView, error) {
+	views, err := s.buildViewsTx(db, []recordmodel.ClinicRecord{rec})
 	if err != nil {
 		return AdminRecordView{}, err
 	}

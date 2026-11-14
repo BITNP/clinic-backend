@@ -79,7 +79,7 @@ func Run() {
 
 	db, rawDB := openDatabase()
 
-	photoSvc, err := recordservice.NewPhotoService(db, storageSvc, photoCfg.MaxCount, photoCfg.MaxSizeBytes)
+	photoSvc, err := recordservice.NewPhotoService(rawDB, storageSvc, photoCfg.MaxCount, photoCfg.MaxSizeBytes)
 	if err != nil {
 		closeDatabase(db)
 		log.Fatalf("photo service: %v", err)
@@ -211,7 +211,7 @@ func Run() {
 	campusSvc := roomservice.NewCampusService(rawDB)
 	campusH := roomhandler.NewCampusHandler(campusSvc, roomSvc)
 
-	ticketSvc := recordservice.NewTicketService(db, serviceDateLoc)
+	ticketSvc := recordservice.NewTicketService(rawDB, serviceDateLoc)
 	ticketSvc.SetDefaultTagID(recordTagSvc.DefaultID())
 	ticketSvc.SetPhotoService(photoSvc)
 	if recordTagger != nil {
@@ -226,7 +226,7 @@ func Run() {
 	sessionTTL := envDuration("SESSION_TTL", 336*time.Hour)
 	sessionSvc := authservice.NewSessionService(sqlDB, sessionTTL)
 
-	adminRecordSvc := recordservice.NewAdminRecordService(db)
+	adminRecordSvc := recordservice.NewAdminRecordService(rawDB)
 	adminRecordSvc.SetRecordTagService(recordTagSvc)
 	recordActionSvc := recordservice.NewRecordActionService(
 		recordservice.NewRedisRecordActionStore(redisClient),
