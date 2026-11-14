@@ -26,8 +26,8 @@ func setupCampusHandlerRouter(t *testing.T) (*gin.Engine, *roomservice.CampusSer
 		t.Fatalf("migrate: %v", err)
 	}
 
-	campusSvc := roomservice.NewCampusService(db)
-	roomSvc := roomservice.NewRoomService(db)
+	campusSvc := roomservice.NewCampusService(testutil.RawDB(t, db))
+	roomSvc := roomservice.NewRoomService(testutil.RawDB(t, db))
 	h := roomhandler.NewCampusHandler(campusSvc, roomSvc)
 
 	r := gin.New()

@@ -1,15 +1,15 @@
 package service
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"clinic-backend/internal/database"
 	recordmodel "clinic-backend/internal/record/model"
 	roommodel "clinic-backend/internal/room/model"
-	schedulingmodel "clinic-backend/internal/scheduling/model"
-
-	"gorm.io/gorm"
 )
 
 // ErrRoomNotFound is returned when no room matches the given id.
@@ -37,11 +37,32 @@ var ErrRoomInvalidType = errors.New("invalid room type")
 
 // RoomService contains the business logic for clinic room CRUD.
 type RoomService struct {
-	db *gorm.DB
+	db *database.DB
 }
 
-func NewRoomService(db *gorm.DB) *RoomService {
+func NewRoomService(db *database.DB) *RoomService {
 	return &RoomService{db: db}
+}
+
+const roomColumns = "id, name, address, enabled, campus_id, type"
+
+func scanRoom(row interface{ Scan(...any) error }) (roommodel.ClinicRoom, error) {
+	var r roommodel.ClinicRoom
+	var campusID sql.NullInt64
+	err := row.Scan(&r.ID, &r.Name, &r.Address, &r.Enabled, &campusID, &r.Type)
+	if campusID.Valid {
+		id := uint(campusID.Int64)
+		r.CampusID = &id
+	}
+	return r, err
+}
+
+type rowQuerier interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+type rowsQuerier interface {
+	Query(query string, args ...any) (*sql.Rows, error)
 }
 
 // CreateRoomInput carries the fields a caller may set on creation.
@@ -77,7 +98,7 @@ func (s *RoomService) Create(in CreateRoomInput) (roommodel.ClinicRoom, error) {
 	if in.CampusID == 0 {
 		return roommodel.ClinicRoom{}, ErrRoomCampusRequired
 	}
-	campus, err := s.lookupCampus(s.db, in.CampusID)
+	campus, err := lookupCampus(s.db.DB, in.CampusID)
 	if err != nil {
 		return roommodel.ClinicRoom{}, err
 	}
@@ -95,14 +116,12 @@ func (s *RoomService) Create(in CreateRoomInput) (roommodel.ClinicRoom, error) {
 		enabled = *in.Enabled
 	}
 	campusID := in.CampusID
-	r := roommodel.ClinicRoom{
-		Name:     in.Name,
-		Address:  in.Address,
-		Enabled:  enabled,
-		CampusID: &campusID,
-		Type:     roomType,
-	}
-	if err := s.db.Create(&r).Error; err != nil {
+	r, err := scanRoom(s.db.QueryRow(
+		`INSERT INTO clinic_room (name, address, enabled, campus_id, type)
+		 VALUES ($1, $2, $3, $4, $5) RETURNING `+roomColumns,
+		in.Name, in.Address, enabled, campusID, roomType,
+	))
+	if err != nil {
 		if database.IsUniqueViolation(err) {
 			return roommodel.ClinicRoom{}, ErrRoomNameTaken
 		}
@@ -113,35 +132,58 @@ func (s *RoomService) Create(in CreateRoomInput) (roommodel.ClinicRoom, error) {
 }
 
 func (s *RoomService) GetByID(id uint) (roommodel.ClinicRoom, error) {
-	var r roommodel.ClinicRoom
-	if err := s.db.Preload("Campus").First(&r, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	r, err := scanRoom(s.db.QueryRow(
+		"SELECT "+roomColumns+" FROM clinic_room WHERE id = $1",
+		id,
+	))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return roommodel.ClinicRoom{}, ErrRoomNotFound
 		}
 		return roommodel.ClinicRoom{}, fmt.Errorf("get room %d: %w", id, err)
+	}
+	if r.CampusID != nil {
+		campus, err := lookupCampus(s.db.DB, *r.CampusID)
+		if err != nil {
+			return roommodel.ClinicRoom{}, err
+		}
+		r.Campus = &campus
 	}
 	return r, nil
 }
 
 func (s *RoomService) GetByName(name string) (roommodel.ClinicRoom, error) {
-	var r roommodel.ClinicRoom
-	if err := s.db.Preload("Campus").Where("name = ?", name).First(&r).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	r, err := scanRoom(s.db.QueryRow(
+		"SELECT "+roomColumns+" FROM clinic_room WHERE name = $1 ORDER BY id LIMIT 1",
+		name,
+	))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return roommodel.ClinicRoom{}, ErrRoomNotFound
 		}
 		return roommodel.ClinicRoom{}, fmt.Errorf("get room by name %q: %w", name, err)
+	}
+	if r.CampusID != nil {
+		campus, err := lookupCampus(s.db.DB, *r.CampusID)
+		if err != nil {
+			return roommodel.ClinicRoom{}, err
+		}
+		r.Campus = &campus
 	}
 	return r, nil
 }
 
 // lookupCampus resolves a room's campus and maps missing rows to room errors.
-func (s *RoomService) lookupCampus(db *gorm.DB, id uint) (roommodel.ClinicCampus, error) {
+func lookupCampus(db rowQuerier, id uint) (roommodel.ClinicCampus, error) {
 	if id == 0 {
 		return roommodel.ClinicCampus{}, ErrRoomCampusRequired
 	}
-	var c roommodel.ClinicCampus
-	if err := db.First(&c, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	c, err := scanCampus(db.QueryRow(
+		"SELECT "+campusColumns+" FROM clinic_campus WHERE id = $1",
+		id,
+	))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return roommodel.ClinicCampus{}, ErrRoomCampusNotFound
 		}
 		return roommodel.ClinicCampus{}, fmt.Errorf("get campus %d: %w", id, err)
@@ -150,22 +192,28 @@ func (s *RoomService) lookupCampus(db *gorm.DB, id uint) (roommodel.ClinicCampus
 }
 
 func (s *RoomService) List(f ListRoomFilter) ([]roommodel.ClinicRoom, int64, error) {
-	q := s.db.Model(&roommodel.ClinicRoom{})
+	where := []string{"1 = 1"}
+	var args []any
 	if f.Name != "" {
-		q = q.Where("name LIKE ?", "%"+f.Name+"%")
+		args = append(args, "%"+f.Name+"%")
+		where = append(where, fmt.Sprintf("name LIKE $%d", len(args)))
 	}
 	if f.EnabledOnly {
-		q = q.Where("enabled = ?", true)
+		args = append(args, true)
+		where = append(where, fmt.Sprintf("enabled = $%d", len(args)))
 	}
 	if f.CampusID != nil {
-		q = q.Where("campus_id = ?", *f.CampusID)
+		args = append(args, *f.CampusID)
+		where = append(where, fmt.Sprintf("campus_id = $%d", len(args)))
 	}
 	if f.Type != nil {
-		q = q.Where("type = ?", *f.Type)
+		args = append(args, *f.Type)
+		where = append(where, fmt.Sprintf("type = $%d", len(args)))
 	}
+	predicate := " WHERE " + joinAnd(where)
 
 	var total int64
-	if err := q.Count(&total).Error; err != nil {
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM clinic_room"+predicate, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count rooms: %w", err)
 	}
 
@@ -177,23 +225,43 @@ func (s *RoomService) List(f ListRoomFilter) ([]roommodel.ClinicRoom, int64, err
 	}
 	offset := (f.Page - 1) * f.PageSize
 
-	var items []roommodel.ClinicRoom
-	if err := q.
-		Preload("Campus").
-		Order("id ASC").
-		Offset(offset).
-		Limit(f.PageSize).
-		Find(&items).Error; err != nil {
+	args = append(args, f.PageSize, offset)
+	query := fmt.Sprintf(
+		"SELECT %s FROM clinic_room%s ORDER BY id ASC LIMIT $%d OFFSET $%d",
+		roomColumns, predicate, len(args)-1, len(args),
+	)
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
 		return nil, 0, fmt.Errorf("list rooms: %w", err)
+	}
+	defer rows.Close()
+	items := make([]roommodel.ClinicRoom, 0)
+	for rows.Next() {
+		r, err := scanRoom(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("scan room: %w", err)
+		}
+		items = append(items, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("list rooms: %w", err)
+	}
+	if err := loadRoomCampuses(s.db, items); err != nil {
+		return nil, 0, err
 	}
 	return items, total, nil
 }
 
 func (s *RoomService) Update(id uint, in UpdateRoomInput) (roommodel.ClinicRoom, error) {
 	var r roommodel.ClinicRoom
-	err := s.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.First(&r, id).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
+	err := database.WithTx(context.Background(), s.db.DB, func(tx *sql.Tx) error {
+		var err error
+		r, err = scanRoom(tx.QueryRow(
+			"SELECT "+roomColumns+" FROM clinic_room WHERE id = $1",
+			id,
+		))
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
 				return ErrRoomNotFound
 			}
 			return fmt.Errorf("get room %d for update: %w", id, err)
@@ -201,7 +269,7 @@ func (s *RoomService) Update(id uint, in UpdateRoomInput) (roommodel.ClinicRoom,
 
 		// Disabling a room is refused while it still has unfinished tickets.
 		if in.Enabled != nil && !*in.Enabled {
-			unfinished, err := s.hasUnfinishedRecords(tx, id)
+			unfinished, err := hasUnfinishedRecords(tx, id)
 			if err != nil {
 				return err
 			}
@@ -210,40 +278,61 @@ func (s *RoomService) Update(id uint, in UpdateRoomInput) (roommodel.ClinicRoom,
 			}
 		}
 
-		updates := map[string]any{}
+		var updates []string
+		var args []any
+		add := func(column string, value any) {
+			args = append(args, value)
+			updates = append(updates, fmt.Sprintf("%s = $%d", column, len(args)))
+		}
 		if in.Name != nil {
-			updates["name"] = *in.Name
+			add("name", *in.Name)
 		}
 		if in.Address != nil {
-			updates["address"] = *in.Address
+			add("address", *in.Address)
 		}
 		if in.Enabled != nil {
-			updates["enabled"] = *in.Enabled
+			add("enabled", *in.Enabled)
 		}
 		if in.CampusID != nil {
-			if _, err := s.lookupCampus(tx, *in.CampusID); err != nil {
+			if _, err := lookupCampus(tx, *in.CampusID); err != nil {
 				return err
 			}
-			updates["campus_id"] = *in.CampusID
+			add("campus_id", *in.CampusID)
 		}
 		if in.Type != nil {
 			if !in.Type.Valid() {
 				return ErrRoomInvalidType
 			}
-			updates["type"] = *in.Type
+			add("type", *in.Type)
 		}
 
 		if len(updates) > 0 {
-			if err := tx.Model(&r).Updates(updates).Error; err != nil {
+			args = append(args, id)
+			query := fmt.Sprintf(
+				"UPDATE clinic_room SET %s WHERE id = $%d",
+				strings.Join(updates, ", "), len(args),
+			)
+			if _, err := tx.Exec(query, args...); err != nil {
 				if database.IsUniqueViolation(err) {
 					return ErrRoomNameTaken
 				}
 				return fmt.Errorf("update room %d: %w", id, err)
 			}
+			r, err = scanRoom(tx.QueryRow(
+				"SELECT "+roomColumns+" FROM clinic_room WHERE id = $1",
+				id,
+			))
+			if err != nil {
+				return fmt.Errorf("reload room %d: %w", id, err)
+			}
 		}
 
-		if err := tx.Preload("Campus").First(&r, id).Error; err != nil {
-			return fmt.Errorf("reload room %d: %w", id, err)
+		if r.CampusID != nil {
+			campus, err := lookupCampus(tx, *r.CampusID)
+			if err != nil {
+				return fmt.Errorf("reload room %d: %w", id, err)
+			}
+			r.Campus = &campus
 		}
 		return nil
 	})
@@ -254,17 +343,19 @@ func (s *RoomService) Update(id uint, in UpdateRoomInput) (roommodel.ClinicRoom,
 }
 
 func (s *RoomService) Delete(id uint) error {
-	var r roommodel.ClinicRoom
-	if err := s.db.First(&r, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	if _, err := scanRoom(s.db.QueryRow(
+		"SELECT "+roomColumns+" FROM clinic_room WHERE id = $1",
+		id,
+	)); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return ErrRoomNotFound
 		}
 		return fmt.Errorf("get room %d for delete: %w", id, err)
 	}
 
-	return s.db.Transaction(func(tx *gorm.DB) error {
+	return database.WithTx(context.Background(), s.db.DB, func(tx *sql.Tx) error {
 		// A room with unfinished tickets cannot be removed.
-		unfinished, err := s.hasUnfinishedRecords(tx, id)
+		unfinished, err := hasUnfinishedRecords(tx, id)
 		if err != nil {
 			return err
 		}
@@ -272,14 +363,14 @@ func (s *RoomService) Delete(id uint) error {
 			return ErrRoomHasUnfinishedRecords
 		}
 
-		inUse, err := s.isRoomInUse(tx, id)
+		inUse, err := isRoomInUse(tx, id)
 		if err != nil {
 			return err
 		}
 		if inUse {
 			return ErrRoomInUse
 		}
-		if err := tx.Delete(&r).Error; err != nil {
+		if _, err := tx.Exec("DELETE FROM clinic_room WHERE id = $1", id); err != nil {
 			return fmt.Errorf("delete room %d: %w", id, err)
 		}
 		return nil
@@ -288,22 +379,28 @@ func (s *RoomService) Delete(id uint) error {
 
 // hasUnfinishedRecords reports whether any ticket referencing the room is still
 // in an unfinished (working) state. Shared by the room disable/remove guards.
-func (s *RoomService) hasUnfinishedRecords(tx *gorm.DB, roomID uint) (bool, error) {
+func hasUnfinishedRecords(tx *sql.Tx, roomID uint) (bool, error) {
+	statuses := recordmodel.WorkingStatuses()
+	args := make([]any, 0, len(statuses)+1)
+	args = append(args, roomID)
+	for _, status := range statuses {
+		args = append(args, status)
+	}
 	var n int64
-	if err := tx.Model(&recordmodel.ClinicRecord{}).
-		Where("room = ? AND status IN ?", roomID, recordmodel.WorkingStatuses()).
-		Count(&n).Error; err != nil {
+	query := fmt.Sprintf(
+		"SELECT COUNT(*) FROM clinic_record WHERE room = $1 AND status IN (%s)",
+		database.Placeholders(2, len(statuses)),
+	)
+	if err := tx.QueryRow(query, args...).Scan(&n); err != nil {
 		return false, fmt.Errorf("count unfinished records for room %d: %w", roomID, err)
 	}
 	return n > 0, nil
 }
 
 // isRoomInUse reports whether any service date or repair record references the room.
-func (s *RoomService) isRoomInUse(tx *gorm.DB, roomID uint) (bool, error) {
+func isRoomInUse(tx *sql.Tx, roomID uint) (bool, error) {
 	var dates int64
-	if err := tx.Model(&schedulingmodel.ClinicServiceDate{}).
-		Where("room_id = ?", roomID).
-		Count(&dates).Error; err != nil {
+	if err := tx.QueryRow("SELECT COUNT(*) FROM clinic_service_date WHERE room_id = $1", roomID).Scan(&dates); err != nil {
 		return false, fmt.Errorf("count service dates for room %d: %w", roomID, err)
 	}
 	if dates > 0 {
@@ -311,10 +408,60 @@ func (s *RoomService) isRoomInUse(tx *gorm.DB, roomID uint) (bool, error) {
 	}
 
 	var records int64
-	if err := tx.Model(&recordmodel.ClinicRecord{}).
-		Where("room = ?", roomID).
-		Count(&records).Error; err != nil {
+	if err := tx.QueryRow("SELECT COUNT(*) FROM clinic_record WHERE room = $1", roomID).Scan(&records); err != nil {
 		return false, fmt.Errorf("count records for room %d: %w", roomID, err)
 	}
 	return records > 0, nil
+}
+
+func loadRoomCampuses(db rowsQuerier, rooms []roommodel.ClinicRoom) error {
+	ids := make([]uint, 0, len(rooms))
+	seen := make(map[uint]struct{}, len(rooms))
+	for _, room := range rooms {
+		if room.CampusID == nil {
+			continue
+		}
+		id := *room.CampusID
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	query := "SELECT " + campusColumns + " FROM clinic_campus WHERE id IN (" + database.Placeholders(1, len(ids)) + ")"
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return fmt.Errorf("load room campuses: %w", err)
+	}
+	defer rows.Close()
+	campuses := make(map[uint]roommodel.ClinicCampus, len(ids))
+	for rows.Next() {
+		campus, err := scanCampus(rows)
+		if err != nil {
+			return fmt.Errorf("scan room campus: %w", err)
+		}
+		campuses[campus.ID] = campus
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("load room campuses: %w", err)
+	}
+	for i := range rooms {
+		if rooms[i].CampusID == nil {
+			continue
+		}
+		campus, ok := campuses[*rooms[i].CampusID]
+		if !ok {
+			continue
+		}
+		rooms[i].Campus = &campus
+	}
+	return nil
 }

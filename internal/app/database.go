@@ -8,6 +8,7 @@ import (
 
 	"clinic-backend/internal/announcement"
 	authmodel "clinic-backend/internal/auth/model"
+	databasepkg "clinic-backend/internal/database"
 	recordmodel "clinic-backend/internal/record/model"
 	roommodel "clinic-backend/internal/room/model"
 	schedulingmodel "clinic-backend/internal/scheduling/model"
@@ -20,7 +21,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-func openDatabase() *gorm.DB {
+func openDatabase() (*gorm.DB, *databasepkg.DB) {
 	driver := envString("CLINIC_DB_DRIVER", "sqlite")
 	dsn := envString("CLINIC_DB_DSN", "clinic.db")
 
@@ -102,5 +103,13 @@ func openDatabase() *gorm.DB {
 		log.Fatalf("failed to create enabled-schedule unique index: %v", err)
 	}
 
-	return db
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatalf("failed to get SQL database: %v", err)
+	}
+	rawDriver := databasepkg.DriverSQLite
+	if driver == "postgres" {
+		rawDriver = databasepkg.DriverPostgres
+	}
+	return db, databasepkg.Wrap(sqlDB, rawDriver)
 }

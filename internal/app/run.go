@@ -77,7 +77,7 @@ func Run() {
 		}
 	}
 
-	db := openDatabase()
+	db, rawDB := openDatabase()
 
 	photoSvc, err := recordservice.NewPhotoService(db, storageSvc, photoCfg.MaxCount, photoCfg.MaxSizeBytes)
 	if err != nil {
@@ -206,9 +206,9 @@ func Run() {
 	serviceDateSvc := schedulingservice.NewServiceDateService(db, serviceDateLoc)
 	serviceDateH := schedulinghandler.NewServiceDateHandler(serviceDateSvc)
 
-	roomSvc := roomservice.NewRoomService(db)
+	roomSvc := roomservice.NewRoomService(rawDB)
 	roomH := roomhandler.NewRoomHandler(roomSvc)
-	campusSvc := roomservice.NewCampusService(db)
+	campusSvc := roomservice.NewCampusService(rawDB)
 	campusH := roomhandler.NewCampusHandler(campusSvc, roomSvc)
 
 	ticketSvc := recordservice.NewTicketService(db, serviceDateLoc)

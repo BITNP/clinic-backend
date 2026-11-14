@@ -57,7 +57,7 @@ func setupLegacyHandlerRouter(t *testing.T) (*gin.Engine, *gorm.DB, *recordservi
 
 	ticketSvc := recordservice.NewTicketService(db, nil)
 	serviceDateSvc := schedulingservice.NewServiceDateService(db, nil)
-	roomSvc := roomservice.NewRoomService(db)
+	roomSvc := roomservice.NewRoomService(testutil.RawDB(t, db))
 	announceSvc := newAnnouncementService(t, db)
 	legacyH := legacy.NewLegacyHandler(ticketSvc, serviceDateSvc, roomSvc, announceSvc)
 
@@ -542,7 +542,7 @@ func TestLegacy_Dates_AlwaysShiftsToUTC8(t *testing.T) {
 
 	ticketSvc := recordservice.NewTicketService(db, time.UTC)
 	serviceDateSvc := schedulingservice.NewServiceDateService(db, time.UTC)
-	roomSvc := roomservice.NewRoomService(db)
+	roomSvc := roomservice.NewRoomService(testutil.RawDB(t, db))
 	announceSvc := newAnnouncementService(t, db)
 	legacyH := legacy.NewLegacyHandler(ticketSvc, serviceDateSvc, roomSvc, announceSvc)
 
