@@ -1,6 +1,7 @@
 package service
 
 import (
+	"database/sql"
 	"fmt"
 
 	"clinic-backend/internal/database"
@@ -32,7 +33,10 @@ const recordTagColumns = "id, title, description, apply_rule"
 
 func scanRecordTag(row interface{ Scan(...any) error }) (taggingmodel.ClinicRecordTag, error) {
 	var tag taggingmodel.ClinicRecordTag
-	err := row.Scan(&tag.ID, &tag.Title, &tag.Description, &tag.ApplyRule)
+	var description, applyRule sql.NullString
+	err := row.Scan(&tag.ID, &tag.Title, &description, &applyRule)
+	tag.Description = description.String
+	tag.ApplyRule = applyRule.String
 	return tag, err
 }
 
