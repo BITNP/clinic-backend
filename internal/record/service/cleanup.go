@@ -14,7 +14,10 @@ func (s *AdminRecordService) CloseExpiredRecords(ctx context.Context, cutoff tim
 	noShowStatuses := []recordmodel.RecordStatus{
 		recordmodel.RecordStatusPending,
 		recordmodel.RecordStatusConfirmed,
+	}
+	completedStatuses := []recordmodel.RecordStatus{
 		recordmodel.RecordStatusArrived,
+		recordmodel.RecordStatusInProgress,
 	}
 
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -30,7 +33,7 @@ func (s *AdminRecordService) CloseExpiredRecords(ctx context.Context, cutoff tim
 		noShowCount = r.RowsAffected
 
 		r = tx.Model(&recordmodel.ClinicRecord{}).
-			Where("appointment_time < ? AND status = ?", cutoff, recordmodel.RecordStatusInProgress).
+			Where("appointment_time < ? AND status IN ?", cutoff, completedStatuses).
 			Updates(map[string]any{
 				"status":     recordmodel.RecordStatusCompleted,
 				"action_seq": gorm.Expr("action_seq + 1"),

@@ -824,6 +824,11 @@ Record lifecycle states:
 | `referred` | Referred elsewhere |
 | `no_show` | Customer did not arrive |
 
+At the clinic-local midnight (`CLINIC_TIMEZONE`, UTC+8 by default), records
+whose appointment date has passed are closed automatically. `pending` and
+`confirmed` records become `no_show`; `arrived` and `in_progress` records become
+`completed`. An existing arrival timestamp is preserved.
+
 Admin record view:
 
 | Field | Type | Description |

@@ -59,7 +59,6 @@ func TestCloseExpiredRecords_NoShow(t *testing.T) {
 	for _, st := range []recordmodel.RecordStatus{
 		recordmodel.RecordStatusPending,
 		recordmodel.RecordStatusConfirmed,
-		recordmodel.RecordStatusArrived,
 	} {
 		if err := db.Create(&recordmodel.ClinicRecord{
 			User: "u", Realname: "r", PhoneNum: "p",
@@ -74,8 +73,8 @@ func TestCloseExpiredRecords_NoShow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CloseExpiredRecords: %v", err)
 	}
-	if noShow != 3 {
-		t.Errorf("expected 3 no_shows, got %d", noShow)
+	if noShow != 2 {
+		t.Errorf("expected 2 no_shows, got %d", noShow)
 	}
 	if completed != 0 {
 		t.Errorf("expected 0 completed, got %d", completed)
@@ -83,12 +82,12 @@ func TestCloseExpiredRecords_NoShow(t *testing.T) {
 
 	var count int64
 	db.Model(&recordmodel.ClinicRecord{}).Where("status = ?", recordmodel.RecordStatusNoShow).Count(&count)
-	if count != 3 {
-		t.Errorf("expected 3 no_show records, got %d", count)
+	if count != 2 {
+		t.Errorf("expected 2 no_show records, got %d", count)
 	}
 }
 
-func TestCloseExpiredRecords_Completed(t *testing.T) {
+func TestCloseExpiredRecords_CompletesArrivedAndInProgress(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	svc := recordservice.NewAdminRecordService(db)
 	cutoff := yesterdayCutoff()
@@ -99,16 +98,32 @@ func TestCloseExpiredRecords_Completed(t *testing.T) {
 		t.Fatalf("seed room: %v", err)
 	}
 
-	rec := recordmodel.ClinicRecord{
+	arrived := recordmodel.ClinicRecord{
+		User: "u", Realname: "r", PhoneNum: "p",
+		Status: recordmodel.RecordStatusArrived, AppointmentTime: pastDate,
+		QuestionDesc: "x", RoomID: room.ID,
+	}
+	if err := db.Create(&arrived).Error; err != nil {
+		t.Fatalf("seed arrived record: %v", err)
+	}
+	arriveTime := pastDate.Add(10 * time.Hour)
+	if err := db.Create(&recordmodel.ClinicRecordArrival{
+		RecordID:   arrived.ID,
+		ArriveTime: arriveTime,
+	}).Error; err != nil {
+		t.Fatalf("seed arrival: %v", err)
+	}
+
+	inProgress := recordmodel.ClinicRecord{
 		User: "u", Realname: "r", PhoneNum: "p",
 		Status: recordmodel.RecordStatusInProgress, AppointmentTime: pastDate,
 		QuestionDesc: "x", RoomID: room.ID,
 	}
-	if err := db.Create(&rec).Error; err != nil {
-		t.Fatalf("seed: %v", err)
+	if err := db.Create(&inProgress).Error; err != nil {
+		t.Fatalf("seed in-progress record: %v", err)
 	}
 	if err := db.Create(&recordmodel.ClinicRecordWorker{
-		RecordID:   rec.ID,
+		RecordID:   inProgress.ID,
 		WorkerID:   1,
 		WorkerDesc: "working",
 	}).Error; err != nil {
@@ -122,24 +137,34 @@ func TestCloseExpiredRecords_Completed(t *testing.T) {
 	if noShow != 0 {
 		t.Errorf("expected 0 no_shows, got %d", noShow)
 	}
-	if completed != 1 {
-		t.Errorf("expected 1 completed, got %d", completed)
+	if completed != 2 {
+		t.Errorf("expected 2 completed, got %d", completed)
 	}
 
-	var updated recordmodel.ClinicRecord
-	if err := db.First(&updated, rec.ID).Error; err != nil {
-		t.Fatalf("reload: %v", err)
-	}
-	if updated.Status != recordmodel.RecordStatusCompleted {
-		t.Errorf("expected completed, got %s", updated.Status)
+	for _, rec := range []recordmodel.ClinicRecord{arrived, inProgress} {
+		var updated recordmodel.ClinicRecord
+		if err := db.First(&updated, rec.ID).Error; err != nil {
+			t.Fatalf("reload record %d: %v", rec.ID, err)
+		}
+		if updated.Status != recordmodel.RecordStatusCompleted {
+			t.Errorf("record %d: expected completed, got %s", rec.ID, updated.Status)
+		}
 	}
 
 	var worker recordmodel.ClinicRecordWorker
-	if err := db.Where("record_id = ?", rec.ID).First(&worker).Error; err != nil {
+	if err := db.Where("record_id = ?", inProgress.ID).First(&worker).Error; err != nil {
 		t.Fatalf("reload worker: %v", err)
 	}
 	if worker.FinishTime.IsZero() {
 		t.Errorf("expected finish_time to be set, got zero")
+	}
+
+	var arrival recordmodel.ClinicRecordArrival
+	if err := db.First(&arrival, "record_id = ?", arrived.ID).Error; err != nil {
+		t.Fatalf("reload arrival: %v", err)
+	}
+	if !arrival.ArriveTime.Equal(arriveTime) {
+		t.Errorf("arrival time = %v, want %v", arrival.ArriveTime, arriveTime)
 	}
 }
 
@@ -194,6 +219,7 @@ func TestCloseExpiredRecords_IgnoresFutureTickets(t *testing.T) {
 
 	for _, st := range []recordmodel.RecordStatus{
 		recordmodel.RecordStatusConfirmed,
+		recordmodel.RecordStatusArrived,
 		recordmodel.RecordStatusInProgress,
 	} {
 		if err := db.Create(&recordmodel.ClinicRecord{
