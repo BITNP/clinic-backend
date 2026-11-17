@@ -873,6 +873,7 @@ counter but return photo objects.
 | `status` | string | no | Exact lifecycle state. Unknown values yield an empty page. |
 | `realname` | string | no | Case-insensitive substring match. |
 | `room_id` | integer | no | Exact room filter; non-numeric values are ignored. |
+| `campus_id` | integer | no | Filter records by their room’s campus; non-numeric values are ignored. Combined with `room_id` when both are supplied. |
 | `from_date` | string | no | `YYYY-MM-DD` inclusive lower bound on appointment date. |
 | `to_date` | string | no | `YYYY-MM-DD` inclusive upper bound. |
 | `page` | integer | no | Default `1`. |

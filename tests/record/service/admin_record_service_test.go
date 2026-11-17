@@ -597,3 +597,42 @@ func TestAdminRecordServiceListSearchByRealname(t *testing.T) {
 		t.Fatalf("underscore search = %v (total %d), want [9] (total 1)", ids, total)
 	}
 }
+
+func TestListAdminRecordsByCampus(t *testing.T) {
+	db := setupAdminRecordTestDB(t)
+	campuses := []roommodel.ClinicCampus{{Name: "A"}, {Name: "B"}, {Name: "Empty"}}
+	for i := range campuses {
+		if err := db.Create(&campuses[i]).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	rooms := []roommodel.ClinicRoom{{Name: "A1", CampusID: &campuses[0].ID}, {Name: "A2", CampusID: &campuses[0].ID}, {Name: "B1", CampusID: &campuses[1].ID}}
+	for i := range rooms {
+		if err := db.Create(&rooms[i]).Error; err != nil {
+			t.Fatal(err)
+		}
+		rec := recordmodel.ClinicRecord{User: "u", Realname: "r", PhoneNum: "p", Status: recordmodel.RecordStatusPending, AppointmentTime: time.Now(), QuestionDesc: "x", RoomID: rooms[i].ID}
+		if err := db.Create(&rec).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := recordservice.NewAdminRecordService(db)
+	for _, tc := range []struct {
+		name   string
+		campus *uint
+		room   *uint
+		total  int64
+	}{
+		{"all", nil, nil, 3}, {"campus", &campuses[0].ID, nil, 2}, {"empty", &campuses[2].ID, nil, 0}, {"room", nil, &rooms[1].ID, 1}, {"intersection", &campuses[1].ID, &rooms[1].ID, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			items, total, err := svc.List(context.Background(), 1, recordservice.ListAdminRecordFilter{CampusID: tc.campus, RoomID: tc.room, Page: 1, PageSize: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if total != tc.total || len(items) != int(min(tc.total, 1)) {
+				t.Errorf("total/items = %d/%d, want %d with page size 1", total, len(items), tc.total)
+			}
+		})
+	}
+}
