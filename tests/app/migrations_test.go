@@ -211,23 +211,30 @@ func TestMigrateAfterAutoMigrate_AssignsRoomsCreatedLater(t *testing.T) {
 func TestMigrateAfterAutoMigrate_BackfillsType(t *testing.T) {
 	db := setupMigrationTestDB(t)
 
-	room := roommodel.ClinicRoom{Name: "Room A", Address: "addr", Enabled: true}
-	if err := db.Create(&room).Error; err != nil {
-		t.Fatalf("seed room: %v", err)
+	emptyTypeRoom := roommodel.ClinicRoom{Name: "Room A", Address: "addr", Enabled: true}
+	if err := db.Create(&emptyTypeRoom).Error; err != nil {
+		t.Fatalf("seed room with empty type: %v", err)
 	}
-	if err := db.Exec("UPDATE clinic_room SET type = '' WHERE id = ?", room.ID).Error; err != nil {
+	if err := db.Exec("UPDATE clinic_room SET type = '' WHERE id = ?", emptyTypeRoom.ID).Error; err != nil {
 		t.Fatalf("clear room type: %v", err)
+	}
+
+	autoSelectRoom := roommodel.ClinicRoom{Name: "Room B", Address: "addr", Enabled: true, Type: "auto_select"}
+	if err := db.Create(&autoSelectRoom).Error; err != nil {
+		t.Fatalf("seed room with removed type: %v", err)
 	}
 
 	if err := app.MigrateAfterAutoMigrate(db); err != nil {
 		t.Fatalf("migrate room defaults: %v", err)
 	}
 
-	var got roommodel.ClinicRoom
-	if err := db.First(&got, room.ID).Error; err != nil {
-		t.Fatalf("load room: %v", err)
-	}
-	if got.Type != roommodel.RoomTypeNormal {
-		t.Errorf("type = %q, want %q", got.Type, roommodel.RoomTypeNormal)
+	for _, roomID := range []uint{emptyTypeRoom.ID, autoSelectRoom.ID} {
+		var got roommodel.ClinicRoom
+		if err := db.First(&got, roomID).Error; err != nil {
+			t.Fatalf("load room %d: %v", roomID, err)
+		}
+		if got.Type != roommodel.RoomTypeNormal {
+			t.Errorf("room %d type = %q, want %q", roomID, got.Type, roommodel.RoomTypeNormal)
+		}
 	}
 }

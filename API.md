@@ -662,7 +662,7 @@ curl -X DELETE "$BASE/api/admin/campuses/1" \
 | --- | --- | --- | --- |
 | `name` | string | no | Case-sensitive substring match. |
 | `enabled` | string | no | `true` returns only enabled rooms. |
-| `type` | string | no | `normal`, `dynamic`, or `auto_select`. |
+| `type` | string | no | `normal` or `dynamic`. |
 | `page` | integer | no | Default `1`. |
 | `pageSize` | integer | no | Default `20`. |
 
@@ -691,7 +691,7 @@ Room object:
 | `enabled` | boolean | Disabled rooms are not bookable. |
 | `campus_id` | integer | Id of the campus the room belongs to. |
 | `campus` | object | Nested campus `{id, name}`. |
-| `type` | string | `normal`, `dynamic`, or `auto_select`. Defaults to `normal`. |
+| `type` | string | `normal` or `dynamic`. Defaults to `normal`. |
 
 Mutations bump the `room` counter.
 
@@ -706,7 +706,7 @@ Mutations bump the `room` counter.
 | `name` | string | no | Case-sensitive substring match. |
 | `enabled` | string | no | `true` returns only enabled rooms. |
 | `campus_id` | integer | no | Return only rooms belonging to this campus. |
-| `type` | string | no | `normal`, `dynamic`, or `auto_select`. |
+| `type` | string | no | `normal` or `dynamic`. |
 | `page` | integer | no | Default `1`. |
 | `pageSize` | integer | no | Default `20`. |
 
@@ -747,7 +747,7 @@ curl "$BASE/api/admin/rooms/1" -b cookies.txt
 | `address` | string | yes | Max 256. |
 | `campus_id` | integer | yes | Existing campus id. |
 | `enabled` | boolean | no | Defaults to `true`. |
-| `type` | string | no | `normal`, `dynamic`, or `auto_select`. Defaults to `normal`. |
+| `type` | string | no | `normal` or `dynamic`. Defaults to `normal`. |
 
 **Response `201 Created`** — room object.
 
@@ -776,7 +776,7 @@ has unfinished tickets. Bumps the `room` counter.
 | `address` | string | no | Max 256. |
 | `campus_id` | integer | no | Move the room to this campus. |
 | `enabled` | boolean | no | `true` enables, `false` disables. |
-| `type` | string | no | `normal`, `dynamic`, or `auto_select`. |
+| `type` | string | no | `normal` or `dynamic`. |
 
 **Response `200 OK`** — updated room object.
 

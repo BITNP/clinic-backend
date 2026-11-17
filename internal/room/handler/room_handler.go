@@ -24,7 +24,7 @@ type createRoomRequest struct {
 	Address  string `json:"address" binding:"required,max=256"`
 	Enabled  *bool  `json:"enabled"`
 	CampusID uint   `json:"campus_id" binding:"required"`
-	Type     string `json:"type" binding:"omitempty,oneof=normal dynamic auto_select"`
+	Type     string `json:"type" binding:"omitempty,oneof=normal dynamic"`
 }
 
 type updateRoomRequest struct {
@@ -32,7 +32,7 @@ type updateRoomRequest struct {
 	Address  *string `json:"address" binding:"omitempty,max=256"`
 	Enabled  *bool   `json:"enabled"`
 	CampusID *uint   `json:"campus_id"`
-	Type     *string `json:"type" binding:"omitempty,oneof=normal dynamic auto_select"`
+	Type     *string `json:"type" binding:"omitempty,oneof=normal dynamic"`
 }
 
 func (h *RoomHandler) Create(c *gin.Context) {

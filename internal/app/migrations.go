@@ -41,10 +41,10 @@ func MigrateAfterAutoMigrate(db *gorm.DB) error {
 }
 
 // backfillRoomTypes gives rooms created before the type column existed the
-// normal type.
+// normal type and migrates rooms using the removed auto_select type.
 func backfillRoomTypes(tx *gorm.DB) error {
 	if err := tx.Model(&roommodel.ClinicRoom{}).
-		Where("type IS NULL OR type = ?", "").
+		Where("type IS NULL OR type IN ?", []string{"", "auto_select"}).
 		Update("type", roommodel.RoomTypeNormal).Error; err != nil {
 		return fmt.Errorf("backfill room type: %w", err)
 	}
