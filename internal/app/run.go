@@ -202,7 +202,7 @@ func Run() {
 	serviceDateSvc := schedulingservice.NewServiceDateService(db, serviceDateLoc)
 	serviceDateH := schedulinghandler.NewServiceDateHandler(serviceDateSvc)
 
-	roomSvc := roomservice.NewRoomService(db)
+	roomSvc := roomservice.NewRoomService(db, serviceDateLoc)
 	roomH := roomhandler.NewRoomHandler(roomSvc)
 	campusSvc := roomservice.NewCampusService(db)
 	campusH := roomhandler.NewCampusHandler(campusSvc, roomSvc)

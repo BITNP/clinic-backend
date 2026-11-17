@@ -42,3 +42,28 @@ func TestClinicCampus_TableName(t *testing.T) {
 		t.Errorf("table name = %q, want %q", got, "clinic_campus")
 	}
 }
+
+func TestClinicCampus_MigrateSelectionPolicy(t *testing.T) {
+	db := setupTestDB(t)
+	if err := db.Migrator().DropTable(&roommodel.ClinicCampus{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("CREATE TABLE clinic_campus (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("INSERT INTO clinic_campus (id, name) VALUES (1, 'existing')").Error; err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := db.AutoMigrate(&roommodel.ClinicCampus{}); err != nil {
+			t.Fatal(err)
+		}
+		var got roommodel.ClinicCampus
+		if err := db.First(&got, 1).Error; err != nil {
+			t.Fatal(err)
+		}
+		if got.SelectionPolicy != roommodel.SelectionPolicyBalanced {
+			t.Fatalf("existing campus default: %+v", got)
+		}
+	}
+}

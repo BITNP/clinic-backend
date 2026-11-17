@@ -187,7 +187,7 @@ func (h routeHandlers) router() *gin.Engine {
 	campusClient.Use(h.clientAuth)
 	{
 		campusClient.GET("", h.campusH.List)
-		campusClient.GET("/:id/rooms", h.campusH.ListRooms)
+		campusClient.GET("/:id/rooms", h.campusH.ListClientRooms)
 	}
 	roomClient := r.Group("/api/rooms")
 	roomClient.Use(h.clientAuth)

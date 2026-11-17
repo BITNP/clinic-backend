@@ -141,6 +141,7 @@ func (h *RoomHandler) Delete(c *gin.Context) {
 
 // writeRoomError maps service errors to HTTP statuses.
 var roomErrorMappings = []httpx.ErrStatus{
+	{Err: roomservice.ErrSelectionDate, Status: http.StatusBadRequest},
 	{Err: roomservice.ErrRoomNotFound, Status: http.StatusNotFound},
 	{Err: roomservice.ErrRoomNameTaken, Status: http.StatusConflict},
 	{Err: roomservice.ErrRoomInUse, Status: http.StatusConflict},

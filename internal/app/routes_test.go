@@ -9,9 +9,11 @@ import (
 	"time"
 
 	authhandler "clinic-backend/internal/auth/handler"
+	recordmodel "clinic-backend/internal/record/model"
 	roomhandler "clinic-backend/internal/room/handler"
 	roommodel "clinic-backend/internal/room/model"
 	roomservice "clinic-backend/internal/room/service"
+	schedulingmodel "clinic-backend/internal/scheduling/model"
 	"clinic-backend/internal/testutil"
 
 	"github.com/gin-gonic/gin"
@@ -27,7 +29,7 @@ func TestClientCampusRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open fake database: %v", err)
 	}
-	if err := db.AutoMigrate(&roommodel.ClinicCampus{}, &roommodel.ClinicRoom{}); err != nil {
+	if err := db.AutoMigrate(&roommodel.ClinicCampus{}, &roommodel.ClinicRoom{}, &recordmodel.ClinicRecord{}, &schedulingmodel.ClinicServiceDate{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
@@ -76,7 +78,7 @@ func TestClientCampusRoutes(t *testing.T) {
 		t.Fatalf("unexpected campuses: %+v", campusResp)
 	}
 
-	roomPath := "/api/campuses/" + testutil.Itoa(mainCampus.ID) + "/rooms?enabled=true"
+	roomPath := "/api/campuses/" + testutil.Itoa(mainCampus.ID) + "/rooms?enabled=true&date=" + time.Now().AddDate(0, 0, 1).Format("2006-01-02")
 	got = clientCampusesRequest(t, router, roomPath, true)
 	if got.Code != http.StatusOK {
 		t.Fatalf("list campus rooms: expected 200, got %d: %s", got.Code, got.Body.String())
