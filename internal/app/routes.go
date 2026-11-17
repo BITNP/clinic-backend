@@ -183,6 +183,12 @@ func (h routeHandlers) router() *gin.Engine {
 		serviceDateClient.GET("", h.serviceDateH.List)
 		serviceDateClient.GET("/:id", h.serviceDateH.Get)
 	}
+	campusClient := r.Group("/api/campuses")
+	campusClient.Use(h.clientAuth)
+	{
+		campusClient.GET("", h.campusH.List)
+		campusClient.GET("/:id/rooms", h.campusH.ListRooms)
+	}
 	roomClient := r.Group("/api/rooms")
 	roomClient.Use(h.clientAuth)
 	{

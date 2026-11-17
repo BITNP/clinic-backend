@@ -1866,6 +1866,78 @@ curl "$BASE/api/service-dates/1?username=$USERNAME" \
   -H "Date: $DATE" -H "X-API-KEY: $KEY"
 ```
 
+## Client: campuses
+
+Campus shape is the same as the admin campus object.
+
+### `GET /api/campuses`
+
+**Description:** Lists campuses available to API-key clients.
+
+**Query parameters**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | string | no | Case-sensitive substring match. |
+| `page` | integer | no | Default `1`. |
+| `pageSize` | integer | no | Default `20`. |
+
+**Response `200 OK`** — paginated campus objects, ordered by id ascending.
+
+```json
+{
+  "items": [
+    { "id": 1, "name": "中关村校区" }
+  ],
+  "total": 1,
+  "page": 1,
+  "pageSize": 20
+}
+```
+
+**Error responses:** `401`, `500`.
+
+**curl**
+
+```bash
+curl "$BASE/api/campuses?username=$USERNAME" \
+  -H "Date: $DATE" -H "X-API-KEY: $KEY"
+```
+
+### `GET /api/campuses/{id}/rooms`
+
+**Description:** Lists the rooms belonging to one campus for API-key clients.
+Disabled rooms are included unless `enabled=true`.
+
+**Path parameter**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | integer | yes | Campus id. |
+
+**Query parameters**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | string | no | Case-sensitive substring match. |
+| `enabled` | string | no | `true` returns only enabled rooms. |
+| `type` | string | no | `normal` or `dynamic`. |
+| `page` | integer | no | Default `1`. |
+| `pageSize` | integer | no | Default `20`. |
+
+**Response `200 OK`** — paginated room objects, ordered by id ascending. Each
+room includes its nested `campus` object.
+
+**Error responses:** `400` (invalid id or type), `401`, `404` (campus not
+found), `500`.
+
+**curl**
+
+```bash
+curl "$BASE/api/campuses/1/rooms?username=$USERNAME&enabled=true&type=normal" \
+  -H "Date: $DATE" -H "X-API-KEY: $KEY"
+```
+
 ## Client: rooms
 
 Room shape is the same as the admin room object.
