@@ -14,7 +14,7 @@ func TestRoomType_Valid(t *testing.T) {
 	}{
 		{name: "normal", typ: roommodel.RoomTypeNormal, want: true},
 		{name: "dynamic", typ: roommodel.RoomTypeDynamic, want: true},
-		{name: "auto select", typ: roommodel.RoomTypeAutoSelect, want: true},
+		{name: "auto select removed", typ: "auto_select", want: false},
 		{name: "empty", typ: "", want: false},
 		{name: "unknown", typ: "unknown", want: false},
 	}

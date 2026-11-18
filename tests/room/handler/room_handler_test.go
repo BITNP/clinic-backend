@@ -121,6 +121,7 @@ func TestRoomHandler_Create_Validation(t *testing.T) {
 		{"missing campus", map[string]any{"name": "n", "address": "a"}},
 		{"name too long", map[string]any{"name": stringOfLen(65), "address": "a", "campus_id": campusID}},
 		{"invalid type", map[string]any{"name": "n", "address": "a", "campus_id": campusID, "type": "invalid"}},
+		{"removed type", map[string]any{"name": "n", "address": "a", "campus_id": campusID, "type": "auto_select"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -226,6 +227,7 @@ func TestRoomHandler_List_CampusAndTypeFilters(t *testing.T) {
 	for _, path := range []string{
 		"/api/admin/rooms?campus_id=abc",
 		"/api/admin/rooms?type=unknown",
+		"/api/admin/rooms?type=auto_select",
 	} {
 		if w := testutil.DoRequest(t, r, http.MethodGet, path, nil); w.Code != http.StatusBadRequest {
 			t.Errorf("%s: expected 400, got %d", path, w.Code)
@@ -251,7 +253,7 @@ func TestRoomHandler_Update_CampusAndType(t *testing.T) {
 
 	w := testutil.DoRequest(t, r, http.MethodPut, "/api/admin/rooms/"+testutil.Itoa(room.ID), map[string]any{
 		"campus_id": newCampus.ID,
-		"type":      "auto_select",
+		"type":      "dynamic",
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
@@ -263,11 +265,18 @@ func TestRoomHandler_Update_CampusAndType(t *testing.T) {
 	if got.CampusID == nil || *got.CampusID != newCampus.ID {
 		t.Errorf("campus_id = %v, want %d", got.CampusID, newCampus.ID)
 	}
-	if got.Type != roommodel.RoomTypeAutoSelect {
-		t.Errorf("type = %q, want auto_select", got.Type)
+	if got.Type != roommodel.RoomTypeDynamic {
+		t.Errorf("type = %q, want dynamic", got.Type)
 	}
 	if got.Campus == nil || got.Campus.ID != newCampus.ID {
 		t.Errorf("campus = %+v, want campus %d", got.Campus, newCampus.ID)
+	}
+
+	w = testutil.DoRequest(t, r, http.MethodPut, "/api/admin/rooms/"+testutil.Itoa(room.ID), map[string]any{
+		"type": "auto_select",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected removed type to return 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

@@ -95,14 +95,16 @@ func TestRoomService_Create_InvalidType(t *testing.T) {
 	db := setupRoomServiceDB(t)
 	svc := roomservice.NewRoomService(db)
 
-	_, err := svc.Create(roomservice.CreateRoomInput{
-		Name:     "Bad Type",
-		Address:  "x",
-		CampusID: testCampusID(t, db),
-		Type:     "invalid",
-	})
-	if !errors.Is(err, roomservice.ErrRoomInvalidType) {
-		t.Fatalf("expected ErrRoomInvalidType, got %v", err)
+	for _, roomType := range []roommodel.RoomType{"invalid", "auto_select"} {
+		_, err := svc.Create(roomservice.CreateRoomInput{
+			Name:     "Bad Type",
+			Address:  "x",
+			CampusID: testCampusID(t, db),
+			Type:     roomType,
+		})
+		if !errors.Is(err, roomservice.ErrRoomInvalidType) {
+			t.Errorf("type %q: expected ErrRoomInvalidType, got %v", roomType, err)
+		}
 	}
 }
 
@@ -326,10 +328,11 @@ func TestRoomService_Update_InvalidType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	badType := roommodel.RoomType("invalid")
-	_, err = svc.Update(r.ID, roomservice.UpdateRoomInput{Type: &badType})
-	if !errors.Is(err, roomservice.ErrRoomInvalidType) {
-		t.Fatalf("expected ErrRoomInvalidType, got %v", err)
+	for _, roomType := range []roommodel.RoomType{"invalid", "auto_select"} {
+		_, err = svc.Update(r.ID, roomservice.UpdateRoomInput{Type: &roomType})
+		if !errors.Is(err, roomservice.ErrRoomInvalidType) {
+			t.Errorf("type %q: expected ErrRoomInvalidType, got %v", roomType, err)
+		}
 	}
 }
 

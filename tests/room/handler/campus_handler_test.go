@@ -1,10 +1,14 @@
 package handler_test
 
 import (
+	"clinic-backend/internal/calendar"
+	recordmodel "clinic-backend/internal/record/model"
+	schedulingmodel "clinic-backend/internal/scheduling/model"
 	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	roomhandler "clinic-backend/internal/room/handler"
 	roommodel "clinic-backend/internal/room/model"
@@ -267,5 +271,97 @@ func TestCampusHandler_ListRooms_InvalidType(t *testing.T) {
 	w := testutil.DoRequest(t, r, http.MethodGet, "/api/admin/campuses/"+testutil.Itoa(campus.ID)+"/rooms?type=unknown", nil)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCampusHandler_PolicyValidation(t *testing.T) {
+	r, svc, _ := setupCampusHandlerRouter(t)
+	campus, err := svc.Create(roomservice.CreateCampusInput{Name: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, policy := range []string{"", "unknown"} {
+		w := testutil.DoRequest(t, r, http.MethodPut, "/api/admin/campuses/"+testutil.Itoa(campus.ID), map[string]any{"selection_policy": policy})
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("policy %q: %d %s", policy, w.Code, w.Body.String())
+		}
+	}
+	w := testutil.DoRequest(t, r, http.MethodPut, "/api/admin/campuses/"+testutil.Itoa(campus.ID), map[string]any{"selection_policy": "fulfill"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("valid update: %d %s", w.Code, w.Body.String())
+	}
+	got, err := svc.GetByID(campus.ID)
+	if err != nil || got.SelectionPolicy != roommodel.SelectionPolicyFulfill {
+		t.Fatalf("policy not saved: %+v, %v", got, err)
+	}
+	w = testutil.DoRequest(t, r, http.MethodPost, "/api/admin/campuses", map[string]any{"name": "invalid", "selection_policy": "unknown"})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid create: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCampusHandler_ClientRecommendation(t *testing.T) {
+	r, svc, db := setupCampusHandlerRouter(t)
+	if err := db.AutoMigrate(&schedulingmodel.ClinicServiceDate{}, &recordmodel.ClinicRecord{}); err != nil {
+		t.Fatal(err)
+	}
+	h := roomhandler.NewCampusHandler(svc, roomservice.NewRoomService(db))
+	r.GET("/api/campuses/:id/rooms", h.ListClientRooms)
+	campus, err := svc.Create(roomservice.CreateCampusInput{Name: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	date := calendar.DateInLocation(time.Now(), calendar.DefaultServiceDateLocation()).AddDate(0, 0, 1)
+	rooms := []roommodel.ClinicRoom{
+		{Name: "closed", Enabled: true, CampusID: &campus.ID},
+		{Name: "available", Enabled: true, CampusID: &campus.ID},
+	}
+	if err := db.Create(&rooms).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&schedulingmodel.ClinicServiceDate{RoomID: &rooms[1].ID, Date: date, Capacity: 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/campuses/" + testutil.Itoa(campus.ID) + "/rooms"
+	for _, query := range []string{"", "?date=bad", "?date=2026-02-30", "?date=2000-01-01"} {
+		w := testutil.DoRequest(t, r, http.MethodGet, path+query, nil)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("date %q: %d %s", query, w.Code, w.Body.String())
+		}
+	}
+	for _, query := range []string{"&pageSize=1", "&name=absent"} {
+		w := testutil.DoRequest(t, r, http.MethodGet, path+"?date="+date.Format("2006-01-02")+query, nil)
+		if w.Code != http.StatusOK {
+			t.Fatalf("list: %d %s", w.Code, w.Body.String())
+		}
+		var got struct {
+			Items     []roommodel.ClinicRoom `json:"items"`
+			Preferred *uint                  `json:"preferred_room_id"`
+			Total     int64                  `json:"total"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(w.Body.String(), "\"preferred_room_id\":") {
+			t.Fatal("missing preferred_room_id")
+		}
+		if query == "&pageSize=1" {
+			if got.Preferred == nil || *got.Preferred != rooms[1].ID || len(got.Items) != 1 || got.Items[0].ID != rooms[0].ID || got.Total != 2 {
+				t.Fatalf("pagination/recommendation: %+v", got)
+			}
+		} else if got.Preferred != nil || got.Total != 0 {
+			t.Fatalf("empty list: %+v", got)
+		}
+	}
+	w := testutil.DoRequest(t, r, http.MethodGet, "/api/admin/campuses/"+testutil.Itoa(campus.ID)+"/rooms", nil)
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), "preferred_room_id") {
+		t.Fatalf("admin regression: %d %s", w.Code, w.Body.String())
+	}
+	if err := db.Migrator().DropTable(&recordmodel.ClinicRecord{}); err != nil {
+		t.Fatal(err)
+	}
+	w = testutil.DoRequest(t, r, http.MethodGet, path+"?date="+date.Format("2006-01-02"), nil)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("db failure: %d %s", w.Code, w.Body.String())
 	}
 }

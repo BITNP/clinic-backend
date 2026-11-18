@@ -3,7 +3,9 @@ package service
 import (
 	"errors"
 	"fmt"
+	"time"
 
+	"clinic-backend/internal/calendar"
 	"clinic-backend/internal/database"
 	recordmodel "clinic-backend/internal/record/model"
 	roommodel "clinic-backend/internal/room/model"
@@ -37,11 +39,17 @@ var ErrRoomInvalidType = errors.New("invalid room type")
 
 // RoomService contains the business logic for clinic room CRUD.
 type RoomService struct {
-	db *gorm.DB
+	db  *gorm.DB
+	loc *time.Location
 }
 
-func NewRoomService(db *gorm.DB) *RoomService {
-	return &RoomService{db: db}
+// NewRoomService uses the supplied clinic timezone, or UTC+8 when omitted.
+func NewRoomService(db *gorm.DB, locations ...*time.Location) *RoomService {
+	loc := calendar.DefaultServiceDateLocation()
+	if len(locations) > 0 && locations[0] != nil {
+		loc = locations[0]
+	}
+	return &RoomService{db: db, loc: loc}
 }
 
 // CreateRoomInput carries the fields a caller may set on creation.

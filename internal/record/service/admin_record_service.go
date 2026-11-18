@@ -47,6 +47,7 @@ func (s *AdminRecordService) SetRecordActionService(actions *RecordActionService
 type ListAdminRecordFilter struct {
 	Status   string
 	RoomID   *uint
+	CampusID *uint
 	FromDate *time.Time
 	ToDate   *time.Time
 	// Realname filters records whose realname contains this text.
@@ -103,6 +104,9 @@ func (s *AdminRecordService) List(ctx context.Context, actorID int, f ListAdminR
 	}
 	if f.RoomID != nil {
 		q = q.Where("room = ?", *f.RoomID)
+	}
+	if f.CampusID != nil {
+		q = q.Where("room IN (?)", s.db.Table("clinic_room").Select("id").Where("campus_id = ?", *f.CampusID))
 	}
 	if f.FromDate != nil {
 		q = q.Where("appointment_time >= ?", calendar.DateInLocation(*f.FromDate, nil))

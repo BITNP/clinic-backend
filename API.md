@@ -551,6 +551,7 @@ Campus object:
 | --- | --- | --- |
 | `id` | integer | Campus id. |
 | `name` | string | Unique campus name, max 64 characters. |
+| `selection_policy` | string | `balanced` (default, including existing campuses) or `fulfill`. |
 
 Mutations bump the `room` counter.
 
@@ -599,6 +600,7 @@ curl "$BASE/api/admin/campuses/1" -b cookies.txt
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `name` | string | yes | Max 64, unique. |
+| `selection_policy` | string | no | `balanced` (default) or `fulfill`; unsupported values return `400`. |
 
 **Response `201 Created`** — campus object.
 
@@ -622,6 +624,7 @@ curl -X POST "$BASE/api/admin/campuses" \
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `name` | string | no | Max 64, unique. |
+| `selection_policy` | string | no | `balanced` or `fulfill`; omitted leaves unchanged, invalid/empty values return `400`. |
 
 **Response `200 OK`** — updated campus object.
 
@@ -633,7 +636,7 @@ curl -X POST "$BASE/api/admin/campuses" \
 curl -X PUT "$BASE/api/admin/campuses/1" \
   -b cookies.txt -H "X-CSRF-Token: $CSRF" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"主校区"}'
+  -d '{"name":"主校区","selection_policy":"fulfill"}'
 ```
 
 ### `DELETE /api/admin/campuses/{id}`
@@ -662,7 +665,7 @@ curl -X DELETE "$BASE/api/admin/campuses/1" \
 | --- | --- | --- | --- |
 | `name` | string | no | Case-sensitive substring match. |
 | `enabled` | string | no | `true` returns only enabled rooms. |
-| `type` | string | no | `normal`, `dynamic`, or `auto_select`. |
+| `type` | string | no | `normal` or `dynamic`. |
 | `page` | integer | no | Default `1`. |
 | `pageSize` | integer | no | Default `20`. |
 
@@ -691,7 +694,7 @@ Room object:
 | `enabled` | boolean | Disabled rooms are not bookable. |
 | `campus_id` | integer | Id of the campus the room belongs to. |
 | `campus` | object | Nested campus `{id, name}`. |
-| `type` | string | `normal`, `dynamic`, or `auto_select`. Defaults to `normal`. |
+| `type` | string | `normal` or `dynamic`. Defaults to `normal`. |
 
 Mutations bump the `room` counter.
 
@@ -706,7 +709,7 @@ Mutations bump the `room` counter.
 | `name` | string | no | Case-sensitive substring match. |
 | `enabled` | string | no | `true` returns only enabled rooms. |
 | `campus_id` | integer | no | Return only rooms belonging to this campus. |
-| `type` | string | no | `normal`, `dynamic`, or `auto_select`. |
+| `type` | string | no | `normal` or `dynamic`. |
 | `page` | integer | no | Default `1`. |
 | `pageSize` | integer | no | Default `20`. |
 
@@ -747,7 +750,7 @@ curl "$BASE/api/admin/rooms/1" -b cookies.txt
 | `address` | string | yes | Max 256. |
 | `campus_id` | integer | yes | Existing campus id. |
 | `enabled` | boolean | no | Defaults to `true`. |
-| `type` | string | no | `normal`, `dynamic`, or `auto_select`. Defaults to `normal`. |
+| `type` | string | no | `normal` or `dynamic`. Defaults to `normal`. |
 
 **Response `201 Created`** — room object.
 
@@ -776,7 +779,7 @@ has unfinished tickets. Bumps the `room` counter.
 | `address` | string | no | Max 256. |
 | `campus_id` | integer | no | Move the room to this campus. |
 | `enabled` | boolean | no | `true` enables, `false` disables. |
-| `type` | string | no | `normal`, `dynamic`, or `auto_select`. |
+| `type` | string | no | `normal` or `dynamic`. |
 
 **Response `200 OK`** — updated room object.
 
@@ -875,6 +878,7 @@ counter but return photo objects.
 | `status` | string | no | Exact lifecycle state. Unknown values yield an empty page. |
 | `realname` | string | no | Case-insensitive substring match. |
 | `room_id` | integer | no | Exact room filter; non-numeric values are ignored. |
+| `campus_id` | integer | no | Filter records by their room’s campus; non-numeric values are ignored. Combined with `room_id` when both are supplied. |
 | `from_date` | string | no | `YYYY-MM-DD` inclusive lower bound on appointment date. |
 | `to_date` | string | no | `YYYY-MM-DD` inclusive upper bound. |
 | `page` | integer | no | Default `1`. |
@@ -1868,6 +1872,100 @@ curl "$BASE/api/service-dates?username=$USERNAME&active=true&available=true" \
 
 ```bash
 curl "$BASE/api/service-dates/1?username=$USERNAME" \
+  -H "Date: $DATE" -H "X-API-KEY: $KEY"
+```
+
+## Client: campuses
+
+Campus shape is the same as the admin campus object.
+
+### `GET /api/campuses`
+
+**Description:** Lists campuses available to API-key clients.
+
+**Query parameters**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | string | no | Case-sensitive substring match. |
+| `page` | integer | no | Default `1`. |
+| `pageSize` | integer | no | Default `20`. |
+
+**Response `200 OK`** — paginated campus objects, ordered by id ascending.
+
+```json
+{
+  "items": [
+    { "id": 1, "name": "中关村校区", "selection_policy": "balanced" }
+  ],
+  "total": 1,
+  "page": 1,
+  "pageSize": 20
+}
+```
+
+**Error responses:** `401`, `500`.
+
+**curl**
+
+```bash
+curl "$BASE/api/campuses?username=$USERNAME" \
+  -H "Date: $DATE" -H "X-API-KEY: $KEY"
+```
+
+### `GET /api/campuses/{id}/rooms`
+
+**Description:** Lists the rooms belonging to one campus for API-key clients.
+Disabled rooms are included unless `enabled=true`, but are never recommended.
+`preferred_room_id` recommends a room for ticket insertion on the required date.
+Only enabled rooms with a service date and remaining capacity are eligible.
+`balanced` chooses the fewest tickets (ties: lowest room id); `fulfill` chooses
+the lowest room id until full, then the next eligible room. Counts match booking:
+rejected, referred and no-show tickets are excluded; completed tickets are also
+excluded for future dates. Today is determined in the configured clinic timezone.
+Selection respects name/type filters across all matching rooms independently of
+pagination, so the preferred room may be on another page. This does not reserve
+capacity; ticket insertion still validates availability.
+
+**Path parameter**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | integer | yes | Campus id. |
+
+**Query parameters**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `date` | string | yes | Appointment date, strictly `YYYY-MM-DD`, today or later. |
+| `name` | string | no | Case-sensitive substring match. |
+| `enabled` | string | no | `true` returns only enabled rooms. |
+| `type` | string | no | `normal` or `dynamic`. |
+| `page` | integer | no | Default `1`. |
+| `pageSize` | integer | no | Default `20`. |
+
+**Response `200 OK`** — paginated room objects, ordered by id ascending. Each
+room includes its nested `campus` object.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `items` | array | Room objects on this page. |
+| `total` | integer | Total matching rooms, including unavailable rooms. |
+| `page` | integer | Current page. |
+| `pageSize` | integer | Page size. |
+| `preferred_room_id` | integer or null | Recommended room id; null if none is eligible. |
+
+```json
+{"items":[],"total":0,"page":1,"pageSize":20,"preferred_room_id":null}
+```
+
+**Error responses:** `400` (invalid id/type, missing/malformed/past date), `401`, `404` (campus not
+found), `500`.
+
+**curl**
+
+```bash
+curl "$BASE/api/campuses/1/rooms?username=$USERNAME&date=2026-12-01&enabled=true&type=normal" \
   -H "Date: $DATE" -H "X-API-KEY: $KEY"
 ```
 

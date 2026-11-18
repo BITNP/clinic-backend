@@ -2,8 +2,10 @@ package handler
 
 import (
 	"net/http"
+	"time"
 
 	"clinic-backend/internal/httpx"
+	roommodel "clinic-backend/internal/room/model"
 	roomservice "clinic-backend/internal/room/service"
 
 	"github.com/gin-gonic/gin"
@@ -19,11 +21,13 @@ func NewCampusHandler(campusSvc *roomservice.CampusService, roomSvc *roomservice
 }
 
 type createCampusRequest struct {
-	Name string `json:"name" binding:"required,max=64"`
+	SelectionPolicy roommodel.SelectionPolicy `json:"selection_policy" binding:"omitempty,oneof=balanced fulfill"`
+	Name            string                    `json:"name" binding:"required,max=64"`
 }
 
 type updateCampusRequest struct {
-	Name *string `json:"name" binding:"omitempty,max=64"`
+	SelectionPolicy *roommodel.SelectionPolicy `json:"selection_policy" binding:"omitempty,oneof=balanced fulfill"`
+	Name            *string                    `json:"name" binding:"omitempty,max=64"`
 }
 
 func (h *CampusHandler) Create(c *gin.Context) {
@@ -33,7 +37,7 @@ func (h *CampusHandler) Create(c *gin.Context) {
 		return
 	}
 
-	campus, err := h.campusSvc.Create(roomservice.CreateCampusInput{Name: req.Name})
+	campus, err := h.campusSvc.Create(roomservice.CreateCampusInput{Name: req.Name, SelectionPolicy: req.SelectionPolicy})
 	if err != nil {
 		writeCampusError(c, err)
 		return
@@ -77,7 +81,7 @@ func (h *CampusHandler) Update(c *gin.Context) {
 		return
 	}
 
-	campus, err := h.campusSvc.Update(id, roomservice.UpdateCampusInput{Name: req.Name})
+	campus, err := h.campusSvc.Update(id, roomservice.UpdateCampusInput{Name: req.Name, SelectionPolicy: req.SelectionPolicy})
 	if err != nil {
 		writeCampusError(c, err)
 		return
@@ -98,11 +102,21 @@ func (h *CampusHandler) Delete(c *gin.Context) {
 }
 
 func (h *CampusHandler) ListRooms(c *gin.Context) {
+	h.listRooms(c, false)
+}
+
+// ListClientRooms adds a date-specific room recommendation to the client list.
+func (h *CampusHandler) ListClientRooms(c *gin.Context) {
+	h.listRooms(c, true)
+}
+
+func (h *CampusHandler) listRooms(c *gin.Context, recommend bool) {
 	id, ok := httpx.ParseID(c)
 	if !ok {
 		return
 	}
-	if _, err := h.campusSvc.GetByID(id); err != nil {
+	campus, err := h.campusSvc.GetByID(id)
+	if err != nil {
 		writeCampusError(c, err)
 		return
 	}
@@ -119,9 +133,26 @@ func (h *CampusHandler) ListRooms(c *gin.Context) {
 	f.Type = roomType
 	f.Page, f.PageSize = httpx.ParsePagination(c)
 
+	var preferred *uint
+	if recommend {
+		date, err := time.Parse("2006-01-02", c.Query("date"))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "date is required and must be YYYY-MM-DD"})
+			return
+		}
+		preferred, err = h.roomSvc.PreferredRoom(c.Request.Context(), campus, date, f)
+		if err != nil {
+			writeRoomError(c, err)
+			return
+		}
+	}
 	items, total, err := h.roomSvc.List(f)
 	if err != nil {
 		writeRoomError(c, err)
+		return
+	}
+	if recommend {
+		c.JSON(http.StatusOK, gin.H{"items": items, "total": total, "page": f.Page, "pageSize": f.PageSize, "preferred_room_id": preferred})
 		return
 	}
 	httpx.PaginatedResponse(c, items, total, f.Page, f.PageSize)
@@ -129,6 +160,7 @@ func (h *CampusHandler) ListRooms(c *gin.Context) {
 
 // writeCampusError maps campus service errors to HTTP statuses.
 var campusErrorMappings = []httpx.ErrStatus{
+	{Err: roomservice.ErrCampusInvalidPolicy, Status: http.StatusBadRequest},
 	{Err: roomservice.ErrCampusNotFound, Status: http.StatusNotFound},
 	{Err: roomservice.ErrCampusNameTaken, Status: http.StatusConflict},
 	{Err: roomservice.ErrCampusInUse, Status: http.StatusConflict},

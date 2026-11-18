@@ -4,15 +4,14 @@ package model
 type RoomType string
 
 const (
-	RoomTypeNormal     RoomType = "normal"
-	RoomTypeDynamic    RoomType = "dynamic"
-	RoomTypeAutoSelect RoomType = "auto_select"
+	RoomTypeNormal  RoomType = "normal"
+	RoomTypeDynamic RoomType = "dynamic"
 )
 
 // Valid reports whether t is a supported room type.
 func (t RoomType) Valid() bool {
 	switch t {
-	case RoomTypeNormal, RoomTypeDynamic, RoomTypeAutoSelect:
+	case RoomTypeNormal, RoomTypeDynamic:
 		return true
 	}
 	return false

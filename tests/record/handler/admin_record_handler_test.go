@@ -39,7 +39,11 @@ func TestAdminRecordHandlerListSearchByRealname(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	room := roommodel.ClinicRoom{Name: "Room", Enabled: true}
+	campus := roommodel.ClinicCampus{Name: "Campus"}
+	if err := db.Create(&campus).Error; err != nil {
+		t.Fatal(err)
+	}
+	room := roommodel.ClinicRoom{Name: "Room", Enabled: true, CampusID: &campus.ID}
 	if err := db.Create(&room).Error; err != nil {
 		t.Fatalf("seed room: %v", err)
 	}
@@ -97,5 +101,28 @@ func TestAdminRecordHandlerListSearchByRealname(t *testing.T) {
 	}
 	if resp.Page != 1 || resp.PageSize != 1 {
 		t.Errorf("pagination = %d/%d, want 1/1", resp.Page, resp.PageSize)
+	}
+
+	for _, tc := range []struct {
+		query string
+		want  int64
+	}{{"campus_id=1", 3}, {"campus_id=999", 0}, {"campus_id=invalid", 3}} {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "/api/admin/records?"+tc.query, nil)
+		c.Set("staff", staffmodel.ClinicStaff{ID: 1})
+		h.List(c)
+		var result struct {
+			Total int64 `json:"total"`
+		}
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: status %d", tc.query, w.Code)
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Total != tc.want {
+			t.Errorf("%s: total %d, want %d", tc.query, result.Total, tc.want)
+		}
 	}
 }

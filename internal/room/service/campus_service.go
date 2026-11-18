@@ -10,6 +10,9 @@ import (
 	"gorm.io/gorm"
 )
 
+// ErrCampusInvalidPolicy indicates an unsupported selection policy.
+var ErrCampusInvalidPolicy = errors.New("invalid selection_policy")
+
 // ErrCampusNotFound is returned when no campus matches the given id.
 var ErrCampusNotFound = errors.New("campus not found")
 
@@ -30,12 +33,14 @@ func NewCampusService(db *gorm.DB) *CampusService {
 
 // CreateCampusInput carries the fields a caller may set on creation.
 type CreateCampusInput struct {
-	Name string
+	SelectionPolicy roommodel.SelectionPolicy
+	Name            string
 }
 
 // UpdateCampusInput uses pointers so omitted fields stay unchanged.
 type UpdateCampusInput struct {
-	Name *string
+	SelectionPolicy *roommodel.SelectionPolicy
+	Name            *string
 }
 
 // ListCampusFilter controls listing behavior.
@@ -46,7 +51,14 @@ type ListCampusFilter struct {
 }
 
 func (s *CampusService) Create(in CreateCampusInput) (roommodel.ClinicCampus, error) {
-	c := roommodel.ClinicCampus{Name: in.Name}
+	policy := in.SelectionPolicy
+	if policy == "" {
+		policy = roommodel.SelectionPolicyBalanced
+	}
+	if !policy.Valid() {
+		return roommodel.ClinicCampus{}, ErrCampusInvalidPolicy
+	}
+	c := roommodel.ClinicCampus{Name: in.Name, SelectionPolicy: policy}
 	if err := s.db.Create(&c).Error; err != nil {
 		if database.IsUniqueViolation(err) {
 			return roommodel.ClinicCampus{}, ErrCampusNameTaken
@@ -108,6 +120,12 @@ func (s *CampusService) Update(id uint, in UpdateCampusInput) (roommodel.ClinicC
 		}
 
 		updates := map[string]any{}
+		if in.SelectionPolicy != nil {
+			if !in.SelectionPolicy.Valid() {
+				return ErrCampusInvalidPolicy
+			}
+			updates["selection_policy"] = *in.SelectionPolicy
+		}
 		if in.Name != nil {
 			updates["name"] = *in.Name
 		}

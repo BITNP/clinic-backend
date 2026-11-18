@@ -52,6 +52,12 @@ func (h *AdminRecordHandler) List(c *gin.Context) {
 			f.RoomID = &id
 		}
 	}
+	if v := c.Query("campus_id"); v != "" {
+		id, err := parseUintQuery(v)
+		if err == nil {
+			f.CampusID = &id
+		}
+	}
 	if v := c.Query("from_date"); v != "" {
 		t, err := time.Parse("2006-01-02", v)
 		if err == nil {
