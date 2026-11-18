@@ -23,8 +23,9 @@ const (
 type StaffRole string
 
 const (
-	RoleAdmin StaffRole = "admin"
-	RoleStaff StaffRole = "staff"
+	RoleSuperAdmin StaffRole = "superadmin"
+	RoleAdmin      StaffRole = "admin"
+	RoleStaff      StaffRole = "staff"
 )
 
 // ContextStaff extracts the ClinicStaff from the Gin context.
@@ -47,27 +48,36 @@ func ContextRole(c *gin.Context) (StaffRole, bool) {
 	return r, ok
 }
 
-// RequireStaff aborts with 403 unless the request is authenticated as staff or admin.
+// RequireStaff aborts with 403 unless the request has at least staff access.
 func RequireStaff(c *gin.Context) {
 	role, ok := ContextRole(c)
-	if !ok || (role != RoleStaff && role != RoleAdmin) {
+	if !ok || !hasStaffAccess(role) {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 	c.Next()
 }
 
-// RequireAdmin aborts with 403 unless the request is authenticated as admin.
+// RequireAdmin aborts with 403 unless the request has admin access.
 func RequireAdmin(c *gin.Context) {
 	role, ok := ContextRole(c)
-	if !ok || role != RoleAdmin {
+	if !ok || !hasAdminAccess(role) {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 	c.Next()
 }
 
-// determineRole maps group names to staff/admin roles using the same rules as Keycloak.
+func hasAdminAccess(role StaffRole) bool {
+	return role == RoleAdmin || role == RoleSuperAdmin
+}
+
+func hasStaffAccess(role StaffRole) bool {
+	return role == RoleStaff || hasAdminAccess(role)
+}
+
+// determineRole preserves the CAS group-based role rules. Keycloak uses
+// determineKeycloakRole because its tokens can identify the user's realm.
 func determineRole(groups []string) StaffRole {
 	hasManagement := false
 	hasClinic := false
@@ -87,6 +97,30 @@ func determineRole(groups []string) StaffRole {
 		return RoleStaff
 	}
 	return ""
+}
+
+// determineKeycloakRole maps the Keycloak realm claim to an elevated role
+// before falling back to the clinic group rule.
+func determineKeycloakRole(realm string, groups []string) StaffRole {
+	switch strings.ToLower(strings.TrimSpace(realm)) {
+	case "position-association-vice-chair-clinic", "position-clinic-head":
+		return RoleSuperAdmin
+	case "position-clinic-advisor", "position-clinic-deputy-head":
+		return RoleAdmin
+	}
+	if hasClinicGroup(groups) {
+		return RoleStaff
+	}
+	return ""
+}
+
+func hasClinicGroup(groups []string) bool {
+	for _, group := range groups {
+		if strings.Contains(strings.ToLower(group), "clinic") {
+			return true
+		}
+	}
+	return false
 }
 
 // ExtractWorkYears parses group names of the form YYYY-XXXX and returns the

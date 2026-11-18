@@ -26,7 +26,7 @@ There are two independent authentication schemes. Every endpoint below states
 which one it uses; `/healthz`, `/login`, `/logout`, and
 `GET /api/announcement/toc` are public.
 
-### Staff and admin (session or Keycloak)
+### Staff, admin, and superadmin (session or Keycloak)
 
 Admin/staff endpoints accept either:
 
@@ -44,10 +44,17 @@ X-CSRF-Token: <value of the csrf_token cookie>
 Missing or mismatched CSRF tokens receive `403 Forbidden`. Bearer-token requests
 do not need a CSRF token.
 
-Staff and admin are separate authorization levels:
+Keycloak bearer roles are resolved from the `realm` claim before groups are
+checked. The realms `position-association-vice-chair-clinic` and
+`position-clinic-head` map to `superadmin`; `position-clinic-advisor` and
+`position-clinic-deputy-head` map to `admin`. Any other realm falls back to the
+group rule: a group containing `clinic` maps to `staff`. CAS sessions retain
+their existing group-based `staff`/`admin` rules.
 
-- **Staff** endpoints (`RequireStaff`) accept role `staff` or `admin`.
-- **Admin** endpoints (`RequireAdmin`) accept role `admin` only.
+Authorization levels are hierarchical:
+
+- **Staff** endpoints (`RequireStaff`) accept `staff`, `admin`, or `superadmin`.
+- **Admin** endpoints (`RequireAdmin`) accept `admin` or `superadmin`.
 
 A session whose staff `version` differs from the configured `STAFF_VERSION` is
 rejected with `401` and must log in again.
@@ -217,7 +224,7 @@ session cookie or a Keycloak bearer token.
 | `realname` | string | Display name. |
 | `email` | string | Email address. |
 | `qq_number` | string | QQ number from the `qq-number` login claim (`""` if unset). |
-| `role` | string | `staff` or `admin` (`""` if unknown). |
+| `role` | string | `staff`, `admin`, `superadmin`, or `""` if unknown. |
 
 ```json
 {
@@ -1301,7 +1308,7 @@ Staff object:
 | `realname` | string | Display name. |
 | `email` | string | Email address. |
 | `qq_number` | string | QQ number, synced from the `qq-number` login claim. A missing claim does not clear it. |
-| `role` | string | `staff`, `admin`, or `""`. |
+| `role` | string | `staff`, `admin`, `superadmin`, or `""`. |
 | `version` | integer | Login version; compared with `STAFF_VERSION`. |
 
 Staff list item adds:

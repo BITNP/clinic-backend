@@ -74,9 +74,10 @@ func (a *KeycloakAuthenticator) Authenticate(tokenStr string) (staffmodel.Clinic
 	}
 
 	groups := extractGroups(claims)
-	role := determineRole(groups)
+	realm := extractRealm(claims)
+	role := determineKeycloakRole(realm, groups)
 	if role == "" {
-		return staffmodel.ClinicStaff{}, "", errors.New("insufficient group membership")
+		return staffmodel.ClinicStaff{}, "", errors.New("insufficient realm or group membership")
 	}
 
 	accountID := extractAccountID(claims)
@@ -136,6 +137,13 @@ func extractGroups(claims jwt.MapClaims) []string {
 		return v
 	}
 	return nil
+}
+
+func extractRealm(claims jwt.MapClaims) string {
+	if v, ok := claims["realm"].(string); ok {
+		return strings.TrimSpace(v)
+	}
+	return ""
 }
 
 func extractAccountID(claims jwt.MapClaims) string {
