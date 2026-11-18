@@ -18,6 +18,7 @@ import (
 	recordmodel "clinic-backend/internal/record/model"
 	recordservice "clinic-backend/internal/record/service"
 	"clinic-backend/internal/storage"
+	"clinic-backend/internal/testutil"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/sqlite"
@@ -106,7 +107,7 @@ func setupPhotoHandlerTest(t *testing.T, maxCount int, maxSize int64) (*recordha
 	}
 
 	store := newFakePhotoStorage()
-	svc, err := recordservice.NewPhotoService(db, store, maxCount, maxSize)
+	svc, err := recordservice.NewPhotoService(testutil.RawDB(t, db), store, maxCount, maxSize)
 	if err != nil {
 		t.Fatalf("NewPhotoService() error = %v", err)
 	}

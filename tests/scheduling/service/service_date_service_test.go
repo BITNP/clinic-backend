@@ -29,7 +29,7 @@ func setupServiceDateServiceDB(t *testing.T) *gorm.DB {
 
 func TestServiceDateService_Create(t *testing.T) {
 	db := setupServiceDateServiceDB(t)
-	svc := schedulingservice.NewServiceDateService(db, nil)
+	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
 	testutil.MustCreateRoom(t, db, 1)
 
 	d, err := svc.Create(testutil.ValidServiceDateInput(1, 5, 10))
@@ -46,7 +46,7 @@ func TestServiceDateService_Create(t *testing.T) {
 
 func TestServiceDateService_GetByID_NotFound(t *testing.T) {
 	db := setupServiceDateServiceDB(t)
-	svc := schedulingservice.NewServiceDateService(db, nil)
+	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
 
 	_, err := svc.GetByID(999)
 	if !errors.Is(err, schedulingservice.ErrServiceDateNotFound) {
@@ -54,9 +54,45 @@ func TestServiceDateService_GetByID_NotFound(t *testing.T) {
 	}
 }
 
+func TestServiceDateService_NullRoom(t *testing.T) {
+	db := setupServiceDateServiceDB(t)
+	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
+	day := testutil.FutureDate(5)
+	date := schedulingmodel.ClinicServiceDate{Capacity: 10, Date: day, StartTime: day, EndTime: day.Add(time.Hour), Title: "legacy"}
+	if err := db.Create(&date).Error; err != nil {
+		t.Fatal(err)
+	}
+	capacity := uint(5)
+	updated, err := svc.Update(date.ID, schedulingservice.UpdateServiceDateInput{Capacity: &capacity})
+	if err != nil || updated.RoomID != nil || updated.Capacity != capacity {
+		t.Fatalf("update without room: %+v, %v", updated, err)
+	}
+	testutil.MustCreateRoom(t, db, 1)
+	if err := db.Create(&recordmodel.ClinicRecord{User: "u", Realname: "r", PhoneNum: "p", Status: recordmodel.RecordStatusPending, AppointmentTime: day, QuestionDesc: "x", RoomID: 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+	roomID := uint(1)
+	if _, err := svc.Update(date.ID, schedulingservice.UpdateServiceDateInput{RoomID: &roomID}); !errors.Is(err, schedulingservice.ErrServiceDateInUse) {
+		t.Fatalf("assign occupied room: %v", err)
+	}
+	if err := db.Where("room = ?", roomID).Delete(&recordmodel.ClinicRecord{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	updated, err = svc.Update(date.ID, schedulingservice.UpdateServiceDateInput{RoomID: &roomID})
+	if err != nil || updated.RoomID == nil || *updated.RoomID != roomID {
+		t.Fatalf("assign room: %+v, %v", updated, err)
+	}
+	if err := db.Model(&date).Update("room_id", nil).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Delete(date.ID); err != nil {
+		t.Fatalf("delete without room: %v", err)
+	}
+}
+
 func TestServiceDateService_Create_RoomNotFound(t *testing.T) {
 	db := setupServiceDateServiceDB(t)
-	svc := schedulingservice.NewServiceDateService(db, nil)
+	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
 
 	_, err := svc.Create(testutil.ValidServiceDateInput(999, 5, 10))
 	if !errors.Is(err, schedulingservice.ErrServiceDateRoomNotFound) {
@@ -66,7 +102,7 @@ func TestServiceDateService_Create_RoomNotFound(t *testing.T) {
 
 func TestServiceDateService_List_Filter(t *testing.T) {
 	db := setupServiceDateServiceDB(t)
-	svc := schedulingservice.NewServiceDateService(db, nil)
+	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
 
 	room1 := uint(1)
 	room2 := uint(2)
@@ -172,7 +208,7 @@ func TestServiceDateService_List_Filter(t *testing.T) {
 
 func TestServiceDateService_GetByDateAndRoom_NonMidnightInput(t *testing.T) {
 	db := setupServiceDateServiceDB(t)
-	svc := schedulingservice.NewServiceDateService(db, nil)
+	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
 
 	loc := time.FixedZone("UTC+8", 8*60*60)
 	localDay := time.Date(2026, 7, 20, 0, 0, 0, 0, loc)
@@ -195,7 +231,7 @@ func TestServiceDateService_GetByDateAndRoom_NonMidnightInput(t *testing.T) {
 
 func TestServiceDateService_List_ActiveOnly_TodayInTimezone(t *testing.T) {
 	db := setupServiceDateServiceDB(t)
-	svc := schedulingservice.NewServiceDateService(db, nil)
+	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
 
 	loc := time.FixedZone("UTC+8", 8*60*60)
 	now := time.Now().In(loc)
@@ -233,7 +269,7 @@ func TestServiceDateService_List_ActiveOnly_TodayInTimezone(t *testing.T) {
 
 func TestServiceDateService_TicketedCount_ByRecency(t *testing.T) {
 	db := setupServiceDateServiceDB(t)
-	svc := schedulingservice.NewServiceDateService(db, nil)
+	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
 	testutil.MustCreateRoom(t, db, 1)
 
 	past := testutil.MustCreateServiceDate(t, db, svc, testutil.ValidServiceDateInput(1, -15, 20))
@@ -291,9 +327,61 @@ func TestServiceDateService_TicketedCount_ByRecency(t *testing.T) {
 	}
 }
 
+func TestServiceDateService_List_BatchesBookingCounts(t *testing.T) {
+	db := setupServiceDateServiceDB(t)
+	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
+	testutil.MustCreateRoom(t, db, 1)
+
+	past := testutil.MustCreateServiceDate(t, db, svc, testutil.ValidServiceDateInput(1, -15, 20))
+	future := testutil.MustCreateServiceDate(t, db, svc, testutil.ValidServiceDateInput(1, 15, 20))
+	statuses := []recordmodel.RecordStatus{
+		recordmodel.RecordStatusPending,
+		recordmodel.RecordStatusConfirmed,
+		recordmodel.RecordStatusArrived,
+		recordmodel.RecordStatusInProgress,
+		recordmodel.RecordStatusCompleted,
+		recordmodel.RecordStatusRejected,
+		recordmodel.RecordStatusReferred,
+		recordmodel.RecordStatusNoShow,
+	}
+	for _, date := range []schedulingmodel.ClinicServiceDate{past, future} {
+		for i, status := range statuses {
+			if err := db.Create(&recordmodel.ClinicRecord{
+				User:            fmt.Sprintf("batch-%d-%d", date.ID, i),
+				Realname:        "x",
+				PhoneNum:        "000",
+				Status:          status,
+				AppointmentTime: date.Date,
+				QuestionDesc:    "x",
+				RoomID:          *date.RoomID,
+			}).Error; err != nil {
+				t.Fatalf("seed record for service date %d: %v", date.ID, err)
+			}
+		}
+	}
+
+	items, total, err := svc.List(schedulingservice.ListServiceDateFilter{})
+	if err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	if total != 2 || len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d (total %d)", len(items), total)
+	}
+	counts := make(map[uint]int64, len(items))
+	for _, item := range items {
+		counts[item.ID] = item.Count
+	}
+	if counts[past.ID] != 5 {
+		t.Errorf("past count = %d, want 5", counts[past.ID])
+	}
+	if counts[future.ID] != 4 {
+		t.Errorf("future count = %d, want 4", counts[future.ID])
+	}
+}
+
 func TestServiceDateService_List_HasCapacity(t *testing.T) {
 	db := setupServiceDateServiceDB(t)
-	svc := schedulingservice.NewServiceDateService(db, nil)
+	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
 
 	roomID := uint(1)
 	testutil.MustCreateRoom(t, db, roomID)
@@ -329,7 +417,7 @@ func TestServiceDateService_List_HasCapacity(t *testing.T) {
 
 func TestServiceDateService_Update_Partial(t *testing.T) {
 	db := setupServiceDateServiceDB(t)
-	svc := schedulingservice.NewServiceDateService(db, nil)
+	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
 
 	d := testutil.MustCreateServiceDate(t, db, svc, testutil.ValidServiceDateInput(1, 5, 10))
 	newTitle := "Closed Day"
@@ -344,7 +432,7 @@ func TestServiceDateService_Update_Partial(t *testing.T) {
 
 func TestServiceDateService_Update_NotFound(t *testing.T) {
 	db := setupServiceDateServiceDB(t)
-	svc := schedulingservice.NewServiceDateService(db, nil)
+	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
 
 	newTitle := "x"
 	_, err := svc.Update(999, schedulingservice.UpdateServiceDateInput{Title: &newTitle})
@@ -355,7 +443,7 @@ func TestServiceDateService_Update_NotFound(t *testing.T) {
 
 func TestServiceDateService_Update_RoomNotFound(t *testing.T) {
 	db := setupServiceDateServiceDB(t)
-	svc := schedulingservice.NewServiceDateService(db, nil)
+	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
 	d := testutil.MustCreateServiceDate(t, db, svc, testutil.ValidServiceDateInput(1, 5, 10))
 
 	badRoom := uint(999)
@@ -367,7 +455,7 @@ func TestServiceDateService_Update_RoomNotFound(t *testing.T) {
 
 func TestServiceDateService_Update_InUse(t *testing.T) {
 	db := setupServiceDateServiceDB(t)
-	svc := schedulingservice.NewServiceDateService(db, nil)
+	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
 	testutil.MustCreateRoom(t, db, 1)
 	testutil.MustCreateRoom(t, db, 2)
 
@@ -429,7 +517,7 @@ func TestServiceDateService_Update_InUse(t *testing.T) {
 
 func TestServiceDateService_Delete_Success(t *testing.T) {
 	db := setupServiceDateServiceDB(t)
-	svc := schedulingservice.NewServiceDateService(db, nil)
+	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
 
 	d := testutil.MustCreateServiceDate(t, db, svc, testutil.ValidServiceDateInput(1, 5, 10))
 	if err := svc.Delete(d.ID); err != nil {
@@ -442,7 +530,7 @@ func TestServiceDateService_Delete_Success(t *testing.T) {
 
 func TestServiceDateService_Delete_NotFound(t *testing.T) {
 	db := setupServiceDateServiceDB(t)
-	svc := schedulingservice.NewServiceDateService(db, nil)
+	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
 
 	if err := svc.Delete(999); !errors.Is(err, schedulingservice.ErrServiceDateNotFound) {
 		t.Fatalf("expected ErrServiceDateNotFound, got %v", err)
@@ -451,7 +539,7 @@ func TestServiceDateService_Delete_NotFound(t *testing.T) {
 
 func TestServiceDateService_Delete_InUse(t *testing.T) {
 	db := setupServiceDateServiceDB(t)
-	svc := schedulingservice.NewServiceDateService(db, nil)
+	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
 
 	d := testutil.MustCreateServiceDate(t, db, svc, testutil.ValidServiceDateInput(1, 5, 10))
 	if err := db.Create(&recordmodel.ClinicRecord{

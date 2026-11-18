@@ -1,8 +1,11 @@
 package service
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"clinic-backend/internal/database"
@@ -10,8 +13,6 @@ import (
 	schedulingmodel "clinic-backend/internal/scheduling/model"
 	staffmodel "clinic-backend/internal/staff/model"
 	staffservice "clinic-backend/internal/staff/service"
-
-	"gorm.io/gorm"
 )
 
 var (
@@ -28,10 +29,10 @@ var (
 )
 
 type WorkScheduleService struct {
-	db *gorm.DB
+	db *database.DB
 }
 
-func NewWorkScheduleService(db *gorm.DB) *WorkScheduleService {
+func NewWorkScheduleService(db *database.DB) *WorkScheduleService {
 	return &WorkScheduleService{db: db}
 }
 
@@ -95,7 +96,7 @@ func parseTimeOnly(s string) (time.Time, error) {
 	return time.Time{}, errors.New("time must be in HH:MM:SS or HH:MM format")
 }
 
-func (s *WorkScheduleService) validateWeekdayInTx(tx *gorm.DB, in WeekdayInput, skipStaff bool) (parsedWeekday, error) {
+func (s *WorkScheduleService) validateWeekdayInTx(tx *sql.Tx, in WeekdayInput, skipStaff bool) (parsedWeekday, error) {
 	if in.Weekday < 0 || in.Weekday > 6 {
 		return parsedWeekday{}, ErrWorkScheduleInvalidWeekday
 	}
@@ -110,21 +111,21 @@ func (s *WorkScheduleService) validateWeekdayInTx(tx *gorm.DB, in WeekdayInput, 
 	if !startTime.Before(endTime) {
 		return parsedWeekday{}, ErrWorkScheduleInvalidTimeWindow
 	}
-	var roomCount int64
-	if err := tx.Model(&roommodel.ClinicRoom{}).Where("id = ?", in.RoomID).Count(&roomCount).Error; err != nil {
+	var roomExists bool
+	if err := tx.QueryRow("SELECT EXISTS (SELECT 1 FROM clinic_room WHERE id = $1)", in.RoomID).Scan(&roomExists); err != nil {
 		return parsedWeekday{}, fmt.Errorf("check room: %w", err)
 	}
-	if roomCount == 0 {
+	if !roomExists {
 		return parsedWeekday{}, ErrWorkScheduleRoomNotFound
 	}
-	if !skipStaff && len(in.StaffIDs) > 0 {
-		for _, sid := range in.StaffIDs {
-			var staffCount int64
-			if err := tx.Model(&staffmodel.ClinicStaff{}).Where("id = ?", sid).Count(&staffCount).Error; err != nil {
-				return parsedWeekday{}, fmt.Errorf("check staff %d: %w", sid, err)
+	if !skipStaff {
+		for _, staffID := range in.StaffIDs {
+			var staffExists bool
+			if err := tx.QueryRow("SELECT EXISTS (SELECT 1 FROM clinic_staff WHERE id = $1)", staffID).Scan(&staffExists); err != nil {
+				return parsedWeekday{}, fmt.Errorf("check staff %d: %w", staffID, err)
 			}
-			if staffCount == 0 {
-				return parsedWeekday{}, fmt.Errorf("staff %d: %w", sid, ErrWorkScheduleStaffNotFound)
+			if !staffExists {
+				return parsedWeekday{}, fmt.Errorf("staff %d: %w", staffID, ErrWorkScheduleStaffNotFound)
 			}
 		}
 	}
@@ -145,28 +146,25 @@ type parsedWeekday struct {
 	staffIDs  []int
 }
 
-func (s *WorkScheduleService) createWeekdaysInTx(tx *gorm.DB, scheduleID uint, inputs []WeekdayInput) error {
+func (s *WorkScheduleService) createWeekdaysInTx(tx *sql.Tx, scheduleID uint, inputs []WeekdayInput) error {
 	for _, in := range inputs {
-		pw, err := s.validateWeekdayInTx(tx, in, false)
+		parsed, err := s.validateWeekdayInTx(tx, in, false)
 		if err != nil {
 			return err
 		}
-		wd := schedulingmodel.ClinicWorkScheduleWeekday{
-			WorkScheduleID: scheduleID,
-			Weekday:        pw.weekday,
-			StartTime:      pw.startTime,
-			EndTime:        pw.endTime,
-			RoomID:         pw.roomID,
-		}
-		if err := tx.Create(&wd).Error; err != nil {
+		weekday, err := scanWorkScheduleWeekday(tx.QueryRow(
+			`INSERT INTO clinic_work_schedule_weekday (work_schedule_id, weekday, start_time, end_time, room_id)
+			 VALUES ($1, $2, $3, $4, $5) RETURNING `+workScheduleWeekdayColumns,
+			scheduleID, parsed.weekday, parsed.startTime, parsed.endTime, parsed.roomID,
+		))
+		if err != nil {
 			return fmt.Errorf("create weekday: %w", err)
 		}
-		for _, sid := range pw.staffIDs {
-			if err := tx.Create(&schedulingmodel.ClinicWorkScheduleStaff{
-				WeekdayID:  wd.ID,
-				StaffID:    sid,
-				ScheduleID: scheduleID,
-			}).Error; err != nil {
+		for _, staffID := range parsed.staffIDs {
+			if _, err := tx.Exec(
+				"INSERT INTO clinic_work_schedule_staff (weekday_id, staff_id, schedule_id) VALUES ($1, $2, $3)",
+				weekday.ID, staffID, scheduleID,
+			); err != nil {
 				return fmt.Errorf("create staff assignment: %w", err)
 			}
 		}
@@ -174,16 +172,19 @@ func (s *WorkScheduleService) createWeekdaysInTx(tx *gorm.DB, scheduleID uint, i
 	return nil
 }
 
-func (s *WorkScheduleService) hasEnabledSchedule(tx *gorm.DB, excludeID uint) (bool, error) {
-	q := tx.Model(&schedulingmodel.ClinicWorkSchedule{}).Where("enabled = ?", true)
+func (s *WorkScheduleService) hasEnabledSchedule(tx *sql.Tx, excludeID uint) (bool, error) {
+	query := "SELECT EXISTS (SELECT 1 FROM clinic_work_schedule WHERE enabled = $1"
+	args := []any{true}
 	if excludeID > 0 {
-		q = q.Where("id != ?", excludeID)
+		args = append(args, excludeID)
+		query += fmt.Sprintf(" AND id != $%d", len(args))
 	}
-	var count int64
-	if err := q.Count(&count).Error; err != nil {
+	query += ")"
+	var exists bool
+	if err := tx.QueryRow(query, args...).Scan(&exists); err != nil {
 		return false, fmt.Errorf("check enabled schedule: %w", err)
 	}
-	return count > 0, nil
+	return exists, nil
 }
 
 func (s *WorkScheduleService) Create(in CreateWorkScheduleInput) (schedulingmodel.ClinicWorkSchedule, error) {
@@ -197,14 +198,8 @@ func (s *WorkScheduleService) Create(in CreateWorkScheduleInput) (schedulingmode
 		return schedulingmodel.ClinicWorkSchedule{}, ErrWorkScheduleInvalidDateRange
 	}
 
-	sch := schedulingmodel.ClinicWorkSchedule{
-		Name:      in.Name,
-		StartDate: in.StartDate,
-		EndDate:   in.EndDate,
-		Enabled:   in.Enabled,
-	}
-
-	err := s.db.Transaction(func(tx *gorm.DB) error {
+	var schedule schedulingmodel.ClinicWorkSchedule
+	err := database.WithTx(context.Background(), s.db.DB, func(tx *sql.Tx) error {
 		if in.Enabled {
 			enabled, err := s.hasEnabledSchedule(tx, 0)
 			if err != nil {
@@ -214,48 +209,219 @@ func (s *WorkScheduleService) Create(in CreateWorkScheduleInput) (schedulingmode
 				return ErrWorkScheduleAlreadyEnabled
 			}
 		}
-		if err := tx.Create(&sch).Error; err != nil {
+		var err error
+		schedule, err = scanWorkSchedule(tx.QueryRow(
+			`INSERT INTO clinic_work_schedule (name, start_date, end_date, enabled)
+			 VALUES ($1, $2, $3, $4) RETURNING `+workScheduleColumns,
+			in.Name, in.StartDate, in.EndDate, in.Enabled,
+		))
+		if err != nil {
 			if database.IsUniqueViolation(err) {
 				return ErrWorkScheduleNameTaken
 			}
 			return fmt.Errorf("create work schedule: %w", err)
 		}
-		if err := s.createWeekdaysInTx(tx, sch.ID, in.Weekdays); err != nil {
-			return err
-		}
-		return nil
+		return s.createWeekdaysInTx(tx, schedule.ID, in.Weekdays)
 	})
 	if err != nil {
 		return schedulingmodel.ClinicWorkSchedule{}, err
 	}
-	return sch, nil
+	return schedule, nil
 }
 
 func (s *WorkScheduleService) GetByID(id uint) (schedulingmodel.ClinicWorkSchedule, error) {
-	var sch schedulingmodel.ClinicWorkSchedule
-	if err := s.db.
-		Preload("Weekdays", func(db *gorm.DB) *gorm.DB {
-			return db.Order("weekday ASC")
-		}).
-		Preload("Weekdays.Room.Campus").
-		Preload("Weekdays.Staff").
-		Preload("Weekdays.Staff.Staff").
-		First(&sch, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	schedule, err := s.getByID(s.db, id)
+	if err != nil {
+		return schedulingmodel.ClinicWorkSchedule{}, err
+	}
+	if err := s.loadWorkScheduleGraph(s.db, &schedule); err != nil {
+		return schedulingmodel.ClinicWorkSchedule{}, fmt.Errorf("get work schedule %d: %w", id, err)
+	}
+	return schedule, nil
+}
+
+func (s *WorkScheduleService) getByID(db rowQueryer, id uint) (schedulingmodel.ClinicWorkSchedule, error) {
+	schedule, err := scanWorkSchedule(db.QueryRow(
+		"SELECT "+workScheduleColumns+" FROM clinic_work_schedule WHERE id = $1",
+		id,
+	))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return schedulingmodel.ClinicWorkSchedule{}, ErrWorkScheduleNotFound
 		}
 		return schedulingmodel.ClinicWorkSchedule{}, fmt.Errorf("get work schedule %d: %w", id, err)
 	}
-	return sch, nil
+	return schedule, nil
+}
+
+func (s *WorkScheduleService) loadWorkScheduleGraph(db rowsQueryer, schedule *schedulingmodel.ClinicWorkSchedule) error {
+	rows, err := db.Query(
+		"SELECT "+workScheduleWeekdayColumns+" FROM clinic_work_schedule_weekday WHERE work_schedule_id = $1 ORDER BY weekday ASC",
+		schedule.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("load weekdays: %w", err)
+	}
+	defer rows.Close()
+
+	weekdays := make([]schedulingmodel.ClinicWorkScheduleWeekday, 0)
+	for rows.Next() {
+		weekday, err := scanWorkScheduleWeekday(rows)
+		if err != nil {
+			return fmt.Errorf("scan weekday: %w", err)
+		}
+		weekdays = append(weekdays, weekday)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("load weekdays: %w", err)
+	}
+	if err := s.loadWeekdayRooms(db, weekdays); err != nil {
+		return err
+	}
+	if err := s.loadWeekdayStaff(db, weekdays); err != nil {
+		return err
+	}
+	schedule.Weekdays = weekdays
+	return nil
+}
+
+func (s *WorkScheduleService) loadWeekdayRooms(db rowsQueryer, weekdays []schedulingmodel.ClinicWorkScheduleWeekday) error {
+	roomIDs := make([]uint, 0, len(weekdays))
+	seen := make(map[uint]struct{}, len(weekdays))
+	for _, weekday := range weekdays {
+		if _, ok := seen[weekday.RoomID]; ok {
+			continue
+		}
+		seen[weekday.RoomID] = struct{}{}
+		roomIDs = append(roomIDs, weekday.RoomID)
+	}
+	if len(roomIDs) == 0 {
+		return nil
+	}
+	args := make([]any, len(roomIDs))
+	for i, id := range roomIDs {
+		args[i] = id
+	}
+	rows, err := db.Query(
+		"SELECT "+roomWithCampusColumns+" FROM clinic_room r LEFT JOIN clinic_campus c ON c.id = r.campus_id WHERE r.id IN ("+database.Placeholders(1, len(roomIDs))+")",
+		args...,
+	)
+	if err != nil {
+		return fmt.Errorf("load weekday rooms: %w", err)
+	}
+	defer rows.Close()
+
+	rooms := make(map[uint]roommodel.ClinicRoom, len(roomIDs))
+	for rows.Next() {
+		room, err := scanRoomWithCampus(rows)
+		if err != nil {
+			return fmt.Errorf("scan weekday room: %w", err)
+		}
+		rooms[room.ID] = room
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("load weekday rooms: %w", err)
+	}
+	for i := range weekdays {
+		if room, ok := rooms[weekdays[i].RoomID]; ok {
+			weekdays[i].Room = room
+		}
+	}
+	return nil
+}
+
+func (s *WorkScheduleService) loadWeekdayStaff(db rowsQueryer, weekdays []schedulingmodel.ClinicWorkScheduleWeekday) error {
+	weekdayIDs := make([]uint, len(weekdays))
+	for i, weekday := range weekdays {
+		weekdayIDs[i] = weekday.ID
+	}
+	if len(weekdayIDs) == 0 {
+		return nil
+	}
+	args := make([]any, len(weekdayIDs))
+	for i, id := range weekdayIDs {
+		args[i] = id
+	}
+	rows, err := db.Query(
+		"SELECT "+workScheduleStaffColumns+" FROM clinic_work_schedule_staff WHERE weekday_id IN ("+database.Placeholders(1, len(weekdayIDs))+") ORDER BY id ASC",
+		args...,
+	)
+	if err != nil {
+		return fmt.Errorf("load weekday staff: %w", err)
+	}
+	defer rows.Close()
+
+	byWeekday := make(map[uint][]schedulingmodel.ClinicWorkScheduleStaff, len(weekdays))
+	staffIDs := make([]int, 0)
+	seenStaff := make(map[int]struct{})
+	for rows.Next() {
+		assignment, err := scanWorkScheduleStaff(rows)
+		if err != nil {
+			return fmt.Errorf("scan weekday staff: %w", err)
+		}
+		byWeekday[assignment.WeekdayID] = append(byWeekday[assignment.WeekdayID], assignment)
+		if _, ok := seenStaff[assignment.StaffID]; !ok {
+			seenStaff[assignment.StaffID] = struct{}{}
+			staffIDs = append(staffIDs, assignment.StaffID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("load weekday staff: %w", err)
+	}
+	if len(staffIDs) == 0 {
+		return nil
+	}
+	staff, err := s.loadStaffByIDs(db, staffIDs)
+	if err != nil {
+		return err
+	}
+	for i := range weekdays {
+		assignments := byWeekday[weekdays[i].ID]
+		for j := range assignments {
+			assignments[j].Staff = staff[assignments[j].StaffID]
+		}
+		weekdays[i].Staff = assignments
+	}
+	return nil
+}
+
+func (s *WorkScheduleService) loadStaffByIDs(db rowsQueryer, staffIDs []int) (map[int]staffmodel.ClinicStaff, error) {
+	args := make([]any, len(staffIDs))
+	for i, id := range staffIDs {
+		args[i] = id
+	}
+	rows, err := db.Query(
+		"SELECT "+staffColumns+" FROM clinic_staff WHERE id IN ("+database.Placeholders(1, len(staffIDs))+")",
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("load staff: %w", err)
+	}
+	defer rows.Close()
+	staff := make(map[int]staffmodel.ClinicStaff, len(staffIDs))
+	for rows.Next() {
+		member, err := scanStaff(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan staff: %w", err)
+		}
+		staff[member.ID] = member
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("load staff: %w", err)
+	}
+	return staff, nil
 }
 
 func (s *WorkScheduleService) List(f ListWorkScheduleFilter) ([]schedulingmodel.ClinicWorkSchedule, int64, error) {
-	q := s.db.Model(&schedulingmodel.ClinicWorkSchedule{})
+	where := []string{"1 = 1"}
+	var args []any
 	if f.Enabled != nil {
-		q = q.Where("enabled = ?", *f.Enabled)
+		args = append(args, *f.Enabled)
+		where = append(where, fmt.Sprintf("enabled = $%d", len(args)))
 	}
+	predicate := " WHERE " + strings.Join(where, " AND ")
 	var total int64
-	if err := q.Count(&total).Error; err != nil {
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM clinic_work_schedule"+predicate, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count work schedules: %w", err)
 	}
 	if f.Page < 1 {
@@ -266,36 +432,53 @@ func (s *WorkScheduleService) List(f ListWorkScheduleFilter) ([]schedulingmodel.
 	}
 	offset := (f.Page - 1) * f.PageSize
 
-	var items []schedulingmodel.ClinicWorkSchedule
-	if err := q.
-		Order("id ASC").
-		Offset(offset).
-		Limit(f.PageSize).
-		Find(&items).Error; err != nil {
+	args = append(args, f.PageSize, offset)
+	rows, err := s.db.Query(
+		fmt.Sprintf(
+			"SELECT %s FROM clinic_work_schedule%s ORDER BY id ASC LIMIT $%d OFFSET $%d",
+			workScheduleColumns, predicate, len(args)-1, len(args),
+		),
+		args...,
+	)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list work schedules: %w", err)
+	}
+	defer rows.Close()
+	items := make([]schedulingmodel.ClinicWorkSchedule, 0)
+	for rows.Next() {
+		schedule, err := scanWorkSchedule(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("scan work schedule: %w", err)
+		}
+		items = append(items, schedule)
+	}
+	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("list work schedules: %w", err)
 	}
 	return items, total, nil
 }
 
 func (s *WorkScheduleService) Update(id uint, in UpdateWorkScheduleInput) (schedulingmodel.ClinicWorkSchedule, error) {
-	var sch schedulingmodel.ClinicWorkSchedule
-	if err := s.db.First(&sch, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return schedulingmodel.ClinicWorkSchedule{}, ErrWorkScheduleNotFound
-		}
-		return schedulingmodel.ClinicWorkSchedule{}, fmt.Errorf("get work schedule %d for update: %w", id, err)
+	schedule, err := s.getByID(s.db, id)
+	if err != nil {
+		return schedulingmodel.ClinicWorkSchedule{}, err
 	}
 
-	err := s.db.Transaction(func(tx *gorm.DB) error {
-		updates := map[string]any{}
+	err = database.WithTx(context.Background(), s.db.DB, func(tx *sql.Tx) error {
+		var updates []string
+		var args []any
+		add := func(column string, value any) {
+			args = append(args, value)
+			updates = append(updates, fmt.Sprintf("%s = $%d", column, len(args)))
+		}
 		if in.Name != nil {
-			updates["name"] = *in.Name
+			add("name", *in.Name)
 		}
 		if in.StartDate != nil {
-			updates["start_date"] = *in.StartDate
+			add("start_date", *in.StartDate)
 		}
 		if in.EndDate != nil {
-			updates["end_date"] = *in.EndDate
+			add("end_date", *in.EndDate)
 		}
 		if in.Enabled != nil {
 			if *in.Enabled {
@@ -307,54 +490,75 @@ func (s *WorkScheduleService) Update(id uint, in UpdateWorkScheduleInput) (sched
 					return ErrWorkScheduleAlreadyEnabled
 				}
 			}
-			updates["enabled"] = *in.Enabled
+			add("enabled", *in.Enabled)
 		}
 
-		if in.StartDate != nil && in.EndDate != nil {
-			if in.StartDate.After(*in.EndDate) {
-				return ErrWorkScheduleInvalidDateRange
-			}
+		if in.StartDate != nil && in.EndDate != nil && in.StartDate.After(*in.EndDate) {
+			return ErrWorkScheduleInvalidDateRange
 		}
-		if in.StartDate != nil && in.EndDate == nil {
-			if in.StartDate.After(sch.EndDate) {
-				return ErrWorkScheduleInvalidDateRange
-			}
+		if in.StartDate != nil && in.EndDate == nil && in.StartDate.After(schedule.EndDate) {
+			return ErrWorkScheduleInvalidDateRange
 		}
-		if in.StartDate == nil && in.EndDate != nil {
-			if sch.StartDate.After(*in.EndDate) {
-				return ErrWorkScheduleInvalidDateRange
-			}
+		if in.StartDate == nil && in.EndDate != nil && schedule.StartDate.After(*in.EndDate) {
+			return ErrWorkScheduleInvalidDateRange
 		}
 
+		if in.Name != nil {
+			var duplicate bool
+			if err := tx.QueryRow(
+				"SELECT EXISTS (SELECT 1 FROM clinic_work_schedule WHERE name = $1 AND id != $2)",
+				*in.Name, id,
+			).Scan(&duplicate); err != nil {
+				return fmt.Errorf("check name duplicate: %w", err)
+			}
+			if duplicate {
+				return ErrWorkScheduleNameTaken
+			}
+		}
 		if len(updates) > 0 {
-			if name, ok := updates["name"]; ok {
-				var dup int64
-				if err := tx.Model(&schedulingmodel.ClinicWorkSchedule{}).
-					Where("name = ? AND id != ?", name, id).
-					Count(&dup).Error; err != nil {
-					return fmt.Errorf("check name duplicate: %w", err)
-				}
-				if dup > 0 {
-					return ErrWorkScheduleNameTaken
-				}
-			}
-			if err := tx.Model(&sch).Updates(updates).Error; err != nil {
+			args = append(args, id)
+			if _, err := tx.Exec(
+				"UPDATE clinic_work_schedule SET "+strings.Join(updates, ", ")+" WHERE id = $"+fmt.Sprint(len(args)),
+				args...,
+			); err != nil {
 				return fmt.Errorf("update work schedule %d: %w", id, err)
 			}
 		}
 
 		if in.Weekdays != nil {
-			var existingWDs []schedulingmodel.ClinicWorkScheduleWeekday
-			if err := tx.Where("work_schedule_id = ?", id).Find(&existingWDs).Error; err != nil {
+			var ids []uint
+			rows, err := tx.Query("SELECT id FROM clinic_work_schedule_weekday WHERE work_schedule_id = $1", id)
+			if err != nil {
 				return fmt.Errorf("find existing weekdays: %w", err)
 			}
-			for _, wd := range existingWDs {
-				if err := tx.Where("weekday_id = ?", wd.ID).Delete(&schedulingmodel.ClinicWorkScheduleStaff{}).Error; err != nil {
+			for rows.Next() {
+				var weekdayID uint
+				if err := rows.Scan(&weekdayID); err != nil {
+					rows.Close()
+					return fmt.Errorf("scan existing weekday: %w", err)
+				}
+				ids = append(ids, weekdayID)
+			}
+			if err := rows.Close(); err != nil {
+				return fmt.Errorf("find existing weekdays: %w", err)
+			}
+			if err := rows.Err(); err != nil {
+				return fmt.Errorf("find existing weekdays: %w", err)
+			}
+			if len(ids) > 0 {
+				assignArgs := make([]any, len(ids))
+				for i, weekdayID := range ids {
+					assignArgs[i] = weekdayID
+				}
+				if _, err := tx.Exec(
+					"DELETE FROM clinic_work_schedule_staff WHERE weekday_id IN ("+database.Placeholders(1, len(ids))+")",
+					assignArgs...,
+				); err != nil {
 					return fmt.Errorf("delete staff assignments: %w", err)
 				}
-				if err := tx.Delete(&wd).Error; err != nil {
-					return fmt.Errorf("delete weekday: %w", err)
-				}
+			}
+			if _, err := tx.Exec("DELETE FROM clinic_work_schedule_weekday WHERE work_schedule_id = $1", id); err != nil {
+				return fmt.Errorf("delete weekdays: %w", err)
 			}
 			if err := s.createWeekdaysInTx(tx, id, in.Weekdays); err != nil {
 				return err
@@ -366,41 +570,57 @@ func (s *WorkScheduleService) Update(id uint, in UpdateWorkScheduleInput) (sched
 		return schedulingmodel.ClinicWorkSchedule{}, err
 	}
 
-	if err := s.db.
-		Preload("Weekdays", func(db *gorm.DB) *gorm.DB {
-			return db.Order("weekday ASC")
-		}).
-		Preload("Weekdays.Room.Campus").
-		Preload("Weekdays.Staff").
-		Preload("Weekdays.Staff.Staff").
-		First(&sch, id).Error; err != nil {
+	schedule, err = s.getByID(s.db, id)
+	if err != nil {
 		return schedulingmodel.ClinicWorkSchedule{}, fmt.Errorf("reload work schedule %d: %w", id, err)
 	}
-	return sch, nil
+	if err := s.loadWorkScheduleGraph(s.db, &schedule); err != nil {
+		return schedulingmodel.ClinicWorkSchedule{}, fmt.Errorf("reload work schedule %d: %w", id, err)
+	}
+	return schedule, nil
 }
 
 func (s *WorkScheduleService) Delete(id uint) error {
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		var sch schedulingmodel.ClinicWorkSchedule
-		if err := tx.First(&sch, id).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrWorkScheduleNotFound
-			}
-			return fmt.Errorf("get work schedule %d for delete: %w", id, err)
+	return database.WithTx(context.Background(), s.db.DB, func(tx *sql.Tx) error {
+		_, err := s.getByID(tx, id)
+		if err != nil {
+			return err
 		}
-		var wds []schedulingmodel.ClinicWorkScheduleWeekday
-		if err := tx.Where("work_schedule_id = ?", id).Find(&wds).Error; err != nil {
+		rows, err := tx.Query("SELECT id FROM clinic_work_schedule_weekday WHERE work_schedule_id = $1", id)
+		if err != nil {
 			return fmt.Errorf("find weekdays: %w", err)
 		}
-		for _, wd := range wds {
-			if err := tx.Where("weekday_id = ?", wd.ID).Delete(&schedulingmodel.ClinicWorkScheduleStaff{}).Error; err != nil {
+		var ids []uint
+		for rows.Next() {
+			var weekdayID uint
+			if err := rows.Scan(&weekdayID); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan weekday: %w", err)
+			}
+			ids = append(ids, weekdayID)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("find weekdays: %w", err)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("find weekdays: %w", err)
+		}
+		if len(ids) > 0 {
+			args := make([]any, len(ids))
+			for i, weekdayID := range ids {
+				args[i] = weekdayID
+			}
+			if _, err := tx.Exec(
+				"DELETE FROM clinic_work_schedule_staff WHERE weekday_id IN ("+database.Placeholders(1, len(ids))+")",
+				args...,
+			); err != nil {
 				return fmt.Errorf("delete staff: %w", err)
 			}
 		}
-		if err := tx.Where("work_schedule_id = ?", id).Delete(&schedulingmodel.ClinicWorkScheduleWeekday{}).Error; err != nil {
+		if _, err := tx.Exec("DELETE FROM clinic_work_schedule_weekday WHERE work_schedule_id = $1", id); err != nil {
 			return fmt.Errorf("delete weekdays: %w", err)
 		}
-		if err := tx.Delete(&sch).Error; err != nil {
+		if _, err := tx.Exec("DELETE FROM clinic_work_schedule WHERE id = $1", id); err != nil {
 			return fmt.Errorf("delete work schedule: %w", err)
 		}
 		return nil
@@ -408,139 +628,160 @@ func (s *WorkScheduleService) Delete(id uint) error {
 }
 
 func (s *WorkScheduleService) AddStaff(scheduleID uint, in StaffAssignmentInput) (schedulingmodel.ClinicWorkScheduleStaff, error) {
-	var sch schedulingmodel.ClinicWorkSchedule
-	if err := s.db.First(&sch, scheduleID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return schedulingmodel.ClinicWorkScheduleStaff{}, ErrWorkScheduleNotFound
-		}
-		return schedulingmodel.ClinicWorkScheduleStaff{}, fmt.Errorf("find schedule: %w", err)
-	}
-
-	// Validate staff exists.
-	var staffCount int64
-	if err := s.db.Model(&staffmodel.ClinicStaff{}).Where("id = ?", in.StaffID).Count(&staffCount).Error; err != nil {
-		return schedulingmodel.ClinicWorkScheduleStaff{}, fmt.Errorf("check staff: %w", err)
-	}
-	if staffCount == 0 {
-		return schedulingmodel.ClinicWorkScheduleStaff{}, ErrWorkScheduleStaffNotFound
-	}
-
-	// Validate staff is in the schedule's work year.
-	staffSvc := staffservice.NewStaffService(s.db)
-	ok, err := staffSvc.IsValidForDate(in.StaffID, sch.StartDate)
+	schedule, err := s.getByID(s.db, scheduleID)
 	if err != nil {
 		return schedulingmodel.ClinicWorkScheduleStaff{}, err
 	}
-	if !ok {
+
+	var staffExists bool
+	if err := s.db.QueryRow("SELECT EXISTS (SELECT 1 FROM clinic_staff WHERE id = $1)", in.StaffID).Scan(&staffExists); err != nil {
+		return schedulingmodel.ClinicWorkScheduleStaff{}, fmt.Errorf("check staff: %w", err)
+	}
+	if !staffExists {
+		return schedulingmodel.ClinicWorkScheduleStaff{}, ErrWorkScheduleStaffNotFound
+	}
+
+	staffSvc := staffservice.NewStaffService(s.db)
+	valid, err := staffSvc.IsValidForDate(in.StaffID, schedule.StartDate)
+	if err != nil {
+		return schedulingmodel.ClinicWorkScheduleStaff{}, err
+	}
+	if !valid {
 		return schedulingmodel.ClinicWorkScheduleStaff{}, ErrWorkScheduleStaffNotInWorkYear
 	}
 
-	// Resolve the weekday slot.
-	var wdID uint
+	var weekdayID uint
 	if in.WeekdayID > 0 {
-		var wd schedulingmodel.ClinicWorkScheduleWeekday
-		if err := s.db.Where("id = ? AND work_schedule_id = ?", in.WeekdayID, scheduleID).First(&wd).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
+		weekday, err := scanWorkScheduleWeekday(s.db.QueryRow(
+			"SELECT "+workScheduleWeekdayColumns+" FROM clinic_work_schedule_weekday WHERE id = $1 AND work_schedule_id = $2",
+			in.WeekdayID, scheduleID,
+		))
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
 				return schedulingmodel.ClinicWorkScheduleStaff{}, ErrWorkScheduleWeekdayNotFound
 			}
 			return schedulingmodel.ClinicWorkScheduleStaff{}, fmt.Errorf("find weekday: %w", err)
 		}
-		wdID = wd.ID
+		weekdayID = weekday.ID
 	} else if in.RoomID > 0 {
 		if in.Weekday < 0 || in.Weekday > 6 {
 			return schedulingmodel.ClinicWorkScheduleStaff{}, ErrWorkScheduleInvalidWeekday
 		}
-		var wd schedulingmodel.ClinicWorkScheduleWeekday
-		err := s.db.Where("work_schedule_id = ? AND room_id = ? AND weekday = ?", scheduleID, in.RoomID, in.Weekday).
-			First(&wd).Error
-		if err != nil {
-			if !errors.Is(err, gorm.ErrRecordNotFound) {
-				return schedulingmodel.ClinicWorkScheduleStaff{}, fmt.Errorf("find weekday: %w", err)
-			}
-			// Create a new slot with default times.
+		weekday, err := scanWorkScheduleWeekday(s.db.QueryRow(
+			"SELECT "+workScheduleWeekdayColumns+" FROM clinic_work_schedule_weekday WHERE work_schedule_id = $1 AND room_id = $2 AND weekday = $3 ORDER BY id LIMIT 1",
+			scheduleID, in.RoomID, in.Weekday,
+		))
+		if errors.Is(err, sql.ErrNoRows) {
 			startTime, _ := parseTimeOnly("18:30")
 			endTime, _ := parseTimeOnly("21:00")
-			wd = schedulingmodel.ClinicWorkScheduleWeekday{
-				WorkScheduleID: scheduleID,
-				Weekday:        in.Weekday,
-				StartTime:      startTime,
-				EndTime:        endTime,
-				RoomID:         in.RoomID,
-			}
-			if err := s.db.Create(&wd).Error; err != nil {
+			weekday, err = scanWorkScheduleWeekday(s.db.QueryRow(
+				`INSERT INTO clinic_work_schedule_weekday (work_schedule_id, weekday, start_time, end_time, room_id)
+				 VALUES ($1, $2, $3, $4, $5) RETURNING `+workScheduleWeekdayColumns,
+				scheduleID, in.Weekday, startTime, endTime, in.RoomID,
+			))
+			if err != nil {
 				return schedulingmodel.ClinicWorkScheduleStaff{}, fmt.Errorf("create weekday: %w", err)
 			}
+		} else if err != nil {
+			return schedulingmodel.ClinicWorkScheduleStaff{}, fmt.Errorf("find weekday: %w", err)
 		}
-		wdID = wd.ID
+		weekdayID = weekday.ID
 	} else {
 		return schedulingmodel.ClinicWorkScheduleStaff{}, fmt.Errorf("must provide weekday_id or (room_id + weekday)")
 	}
 
-	// Check for existing duplicate assignment.
-	var existing schedulingmodel.ClinicWorkScheduleStaff
-	if err := s.db.Where("weekday_id = ? AND staff_id = ? AND schedule_id = ?", wdID, in.StaffID, scheduleID).
-		Preload("Staff").
-		First(&existing).Error; err == nil {
+	existing, err := scanWorkScheduleStaff(s.db.QueryRow(
+		"SELECT "+workScheduleStaffColumns+" FROM clinic_work_schedule_staff WHERE weekday_id = $1 AND staff_id = $2 AND schedule_id = $3 ORDER BY id LIMIT 1",
+		weekdayID, in.StaffID, scheduleID,
+	))
+	if err == nil {
+		if err := s.attachAssignmentStaff(s.db, &existing); err != nil {
+			return schedulingmodel.ClinicWorkScheduleStaff{}, err
+		}
 		return existing, nil
 	}
-
-	assign := schedulingmodel.ClinicWorkScheduleStaff{
-		WeekdayID:  wdID,
-		StaffID:    in.StaffID,
-		ScheduleID: scheduleID,
+	if !errors.Is(err, sql.ErrNoRows) {
+		return schedulingmodel.ClinicWorkScheduleStaff{}, fmt.Errorf("check existing assignment: %w", err)
 	}
-	if err := s.db.Create(&assign).Error; err != nil {
+
+	assignment, err := scanWorkScheduleStaff(s.db.QueryRow(
+		`INSERT INTO clinic_work_schedule_staff (weekday_id, staff_id, schedule_id)
+		 VALUES ($1, $2, $3) RETURNING `+workScheduleStaffColumns,
+		weekdayID, in.StaffID, scheduleID,
+	))
+	if err != nil {
 		return schedulingmodel.ClinicWorkScheduleStaff{}, fmt.Errorf("add staff: %w", err)
 	}
-	if err := s.db.Preload("Staff").First(&assign, assign.ID).Error; err != nil {
+	if err := s.attachAssignmentStaff(s.db, &assignment); err != nil {
 		return schedulingmodel.ClinicWorkScheduleStaff{}, fmt.Errorf("reload assignment: %w", err)
 	}
-	return assign, nil
+	return assignment, nil
+}
+
+func (s *WorkScheduleService) attachAssignmentStaff(db rowQueryer, assignment *schedulingmodel.ClinicWorkScheduleStaff) error {
+	staff, err := scanStaff(db.QueryRow(
+		"SELECT "+staffColumns+" FROM clinic_staff WHERE id = $1",
+		assignment.StaffID,
+	))
+	if err != nil {
+		return fmt.Errorf("load assignment staff: %w", err)
+	}
+	assignment.Staff = staff
+	return nil
 }
 
 func (s *WorkScheduleService) ListValidStaff(scheduleID uint) ([]staffservice.StaffListItem, error) {
-	var sch schedulingmodel.ClinicWorkSchedule
-	if err := s.db.First(&sch, scheduleID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	var startDate time.Time
+	if err := s.db.QueryRow("SELECT start_date FROM clinic_work_schedule WHERE id = $1", scheduleID).Scan(&startDate); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrWorkScheduleNotFound
 		}
 		return nil, fmt.Errorf("find schedule: %w", err)
 	}
 	staffSvc := staffservice.NewStaffService(s.db)
-	return staffSvc.ListValidForYear(sch.StartDate.Year())
+	return staffSvc.ListValidForYear(startDate.Year())
 }
 
 func (s *WorkScheduleService) RemoveStaff(scheduleID uint, in StaffAssignmentInput) error {
-	var wd schedulingmodel.ClinicWorkScheduleWeekday
-	if err := s.db.Where("id = ? AND work_schedule_id = ?", in.WeekdayID, scheduleID).First(&wd).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	var weekdayID uint
+	if err := s.db.QueryRow(
+		"SELECT id FROM clinic_work_schedule_weekday WHERE id = $1 AND work_schedule_id = $2",
+		in.WeekdayID, scheduleID,
+	).Scan(&weekdayID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return ErrWorkScheduleWeekdayNotFound
 		}
 		return fmt.Errorf("find weekday: %w", err)
 	}
-	res := s.db.Where("weekday_id = ? AND staff_id = ? AND schedule_id = ?", in.WeekdayID, in.StaffID, scheduleID).
-		Delete(&schedulingmodel.ClinicWorkScheduleStaff{})
-	if err := res.Error; err != nil {
+	res, err := s.db.Exec(
+		"DELETE FROM clinic_work_schedule_staff WHERE weekday_id = $1 AND staff_id = $2 AND schedule_id = $3",
+		in.WeekdayID, in.StaffID, scheduleID,
+	)
+	if err != nil {
 		return fmt.Errorf("remove staff: %w", err)
 	}
-	if res.RowsAffected == 0 {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check removed staff: %w", err)
+	}
+	if n == 0 {
 		return ErrWorkScheduleStaffNotFound
 	}
 	return nil
 }
 
 func (s *WorkScheduleService) UpdateWeekday(scheduleID uint, in UpdateWeekdayInput) (schedulingmodel.ClinicWorkScheduleWeekday, error) {
-	var sch schedulingmodel.ClinicWorkSchedule
-	if err := s.db.First(&sch, scheduleID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	var scheduleIDValue uint
+	if err := s.db.QueryRow("SELECT id FROM clinic_work_schedule WHERE id = $1", scheduleID).Scan(&scheduleIDValue); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return schedulingmodel.ClinicWorkScheduleWeekday{}, ErrWorkScheduleNotFound
 		}
 		return schedulingmodel.ClinicWorkScheduleWeekday{}, fmt.Errorf("get work schedule %d: %w", scheduleID, err)
 	}
 
-	var wd schedulingmodel.ClinicWorkScheduleWeekday
-	err := s.db.Transaction(func(tx *gorm.DB) error {
-		pw, err := s.validateWeekdayInTx(tx, WeekdayInput{
+	var weekday schedulingmodel.ClinicWorkScheduleWeekday
+	err := database.WithTx(context.Background(), s.db.DB, func(tx *sql.Tx) error {
+		parsed, err := s.validateWeekdayInTx(tx, WeekdayInput{
 			Weekday:   in.Weekday,
 			StartTime: in.StartTime,
 			EndTime:   in.EndTime,
@@ -551,25 +792,27 @@ func (s *WorkScheduleService) UpdateWeekday(scheduleID uint, in UpdateWeekdayInp
 			return err
 		}
 
-		err = tx.Where("work_schedule_id = ? AND room_id = ? AND weekday = ?", scheduleID, in.RoomID, in.Weekday).
-			First(&wd).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			wd = schedulingmodel.ClinicWorkScheduleWeekday{
-				WorkScheduleID: scheduleID,
-				RoomID:         in.RoomID,
-				Weekday:        in.Weekday,
-				StartTime:      pw.startTime,
-				EndTime:        pw.endTime,
-			}
-			if err := tx.Create(&wd).Error; err != nil {
+		weekday, err = scanWorkScheduleWeekday(tx.QueryRow(
+			"SELECT "+workScheduleWeekdayColumns+" FROM clinic_work_schedule_weekday WHERE work_schedule_id = $1 AND room_id = $2 AND weekday = $3 ORDER BY id LIMIT 1",
+			scheduleID, in.RoomID, in.Weekday,
+		))
+		if errors.Is(err, sql.ErrNoRows) {
+			weekday, err = scanWorkScheduleWeekday(tx.QueryRow(
+				`INSERT INTO clinic_work_schedule_weekday (work_schedule_id, weekday, start_time, end_time, room_id)
+				 VALUES ($1, $2, $3, $4, $5) RETURNING `+workScheduleWeekdayColumns,
+				scheduleID, in.Weekday, parsed.startTime, parsed.endTime, in.RoomID,
+			))
+			if err != nil {
 				return fmt.Errorf("create weekday: %w", err)
 			}
 		} else if err != nil {
 			return fmt.Errorf("find weekday: %w", err)
 		} else {
-			wd.StartTime = pw.startTime
-			wd.EndTime = pw.endTime
-			if err := tx.Save(&wd).Error; err != nil {
+			weekday, err = scanWorkScheduleWeekday(tx.QueryRow(
+				"UPDATE clinic_work_schedule_weekday SET start_time = $1, end_time = $2 WHERE id = $3 RETURNING "+workScheduleWeekdayColumns,
+				parsed.startTime, parsed.endTime, weekday.ID,
+			))
+			if err != nil {
 				return fmt.Errorf("update weekday: %w", err)
 			}
 		}
@@ -578,7 +821,7 @@ func (s *WorkScheduleService) UpdateWeekday(scheduleID uint, in UpdateWeekdayInp
 	if err != nil {
 		return schedulingmodel.ClinicWorkScheduleWeekday{}, err
 	}
-	return wd, nil
+	return weekday, nil
 }
 
 func (s *WorkScheduleService) ServiceAvailability(from, to time.Time, roomIDs []uint) ([]ServiceAvailabilityItem, error) {
@@ -586,45 +829,61 @@ func (s *WorkScheduleService) ServiceAvailability(from, to time.Time, roomIDs []
 		return []ServiceAvailabilityItem{}, nil
 	}
 
-	var schedule schedulingmodel.ClinicWorkSchedule
-	if err := s.db.Where("enabled = ?", true).
-		Preload("Weekdays", func(db *gorm.DB) *gorm.DB {
-			return db.Where("room_id IN ?", roomIDs).Preload("Staff")
-		}).
-		First(&schedule).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrWorkScheduleNotFound
-		}
+	schedule, err := scanWorkSchedule(s.db.QueryRow(
+		"SELECT "+workScheduleColumns+" FROM clinic_work_schedule WHERE enabled = $1 ORDER BY id LIMIT 1",
+		true,
+	))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrWorkScheduleNotFound
+	}
+	if err != nil {
 		return nil, fmt.Errorf("find enabled schedule: %w", err)
 	}
 
+	args := make([]any, 0, len(roomIDs)+1)
+	args = append(args, schedule.ID)
+	for _, id := range roomIDs {
+		args = append(args, id)
+	}
+	rows, err := s.db.Query(
+		"SELECT wd.room_id, wd.weekday FROM clinic_work_schedule_weekday wd JOIN clinic_work_schedule_staff staff ON staff.weekday_id = wd.id WHERE wd.work_schedule_id = $1 AND wd.room_id IN ("+database.Placeholders(2, len(roomIDs))+")",
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("load schedule availability: %w", err)
+	}
+	defer rows.Close()
+
 	staffMap := make(map[uint]map[int]bool)
-	for _, wd := range schedule.Weekdays {
-		if len(wd.Staff) == 0 {
-			continue
+	for rows.Next() {
+		var roomID uint
+		var weekday int
+		if err := rows.Scan(&roomID, &weekday); err != nil {
+			return nil, fmt.Errorf("scan schedule availability: %w", err)
 		}
-		if _, ok := staffMap[wd.RoomID]; !ok {
-			staffMap[wd.RoomID] = make(map[int]bool)
+		if _, ok := staffMap[roomID]; !ok {
+			staffMap[roomID] = make(map[int]bool)
 		}
-		staffMap[wd.RoomID][wd.Weekday] = true
+		staffMap[roomID][weekday] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("load schedule availability: %w", err)
 	}
 
 	fromDate := time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, time.UTC)
 	toDate := time.Date(to.Year(), to.Month(), to.Day(), 0, 0, 0, 0, time.UTC)
-
 	startDate := time.Date(schedule.StartDate.Year(), schedule.StartDate.Month(), schedule.StartDate.Day(), 0, 0, 0, 0, time.UTC)
 	endDate := time.Date(schedule.EndDate.Year(), schedule.EndDate.Month(), schedule.EndDate.Day(), 0, 0, 0, 0, time.UTC)
 
-	var items []ServiceAvailabilityItem
-	for d := fromDate; !d.After(toDate); d = d.AddDate(0, 0, 1) {
-		inPeriod := !d.Before(startDate) && !d.After(endDate)
-		weekday := int(d.Weekday())
+	items := make([]ServiceAvailabilityItem, 0)
+	for date := fromDate; !date.After(toDate); date = date.AddDate(0, 0, 1) {
+		inPeriod := !date.Before(startDate) && !date.After(endDate)
+		weekday := int(date.Weekday())
 		for _, roomID := range roomIDs {
-			available := inPeriod && staffMap[roomID][weekday]
 			items = append(items, ServiceAvailabilityItem{
 				RoomID:    roomID,
-				Date:      d.Format("2006-01-02"),
-				Available: available,
+				Date:      date.Format("2006-01-02"),
+				Available: inPeriod && staffMap[roomID][weekday],
 			})
 		}
 	}
@@ -632,18 +891,151 @@ func (s *WorkScheduleService) ServiceAvailability(from, to time.Time, roomIDs []
 }
 
 func (s *WorkScheduleService) ListStaff(scheduleID uint) ([]schedulingmodel.ClinicWorkScheduleStaff, error) {
-	if _, err := s.GetByID(scheduleID); err != nil {
+	exists, err := s.scheduleExists(scheduleID)
+	if err != nil {
 		return nil, err
 	}
-	var result []schedulingmodel.ClinicWorkScheduleStaff
-	if err := s.db.
-		Where("schedule_id = ?", scheduleID).
-		Preload("Weekday").
-		Preload("Weekday.Room").
-		Preload("Staff").
-		Order("id ASC").
-		Find(&result).Error; err != nil {
+	if !exists {
+		return nil, ErrWorkScheduleNotFound
+	}
+	rows, err := s.db.Query(
+		"SELECT "+workScheduleStaffColumns+" FROM clinic_work_schedule_staff WHERE schedule_id = $1 ORDER BY id ASC",
+		scheduleID,
+	)
+	if err != nil {
 		return nil, fmt.Errorf("list staff: %w", err)
 	}
-	return result, nil
+	defer rows.Close()
+
+	assignments := make([]schedulingmodel.ClinicWorkScheduleStaff, 0)
+	for rows.Next() {
+		assignment, err := scanWorkScheduleStaff(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan staff assignment: %w", err)
+		}
+		assignments = append(assignments, assignment)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list staff: %w", err)
+	}
+	if err := s.loadAssignmentRelations(assignments); err != nil {
+		return nil, err
+	}
+	return assignments, nil
+}
+
+func (s *WorkScheduleService) scheduleExists(scheduleID uint) (bool, error) {
+	var exists bool
+	if err := s.db.QueryRow(
+		"SELECT EXISTS (SELECT 1 FROM clinic_work_schedule WHERE id = $1)",
+		scheduleID,
+	).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check work schedule %d: %w", scheduleID, err)
+	}
+	return exists, nil
+}
+
+func (s *WorkScheduleService) loadAssignmentRelations(assignments []schedulingmodel.ClinicWorkScheduleStaff) error {
+	if len(assignments) == 0 {
+		return nil
+	}
+	weekdayIDs := make([]uint, 0, len(assignments))
+	seenWeekdays := make(map[uint]struct{}, len(assignments))
+	staffIDs := make([]int, 0, len(assignments))
+	seenStaff := make(map[int]struct{}, len(assignments))
+	for _, assignment := range assignments {
+		if _, ok := seenWeekdays[assignment.WeekdayID]; !ok {
+			seenWeekdays[assignment.WeekdayID] = struct{}{}
+			weekdayIDs = append(weekdayIDs, assignment.WeekdayID)
+		}
+		if _, ok := seenStaff[assignment.StaffID]; !ok {
+			seenStaff[assignment.StaffID] = struct{}{}
+			staffIDs = append(staffIDs, assignment.StaffID)
+		}
+	}
+
+	weekdayArgs := make([]any, len(weekdayIDs))
+	for i, id := range weekdayIDs {
+		weekdayArgs[i] = id
+	}
+	weekdayRows, err := s.db.Query(
+		"SELECT "+workScheduleWeekdayColumns+" FROM clinic_work_schedule_weekday WHERE id IN ("+database.Placeholders(1, len(weekdayIDs))+")",
+		weekdayArgs...,
+	)
+	if err != nil {
+		return fmt.Errorf("load assignment weekdays: %w", err)
+	}
+	weekdays := make(map[uint]schedulingmodel.ClinicWorkScheduleWeekday, len(weekdayIDs))
+	for weekdayRows.Next() {
+		weekday, err := scanWorkScheduleWeekday(weekdayRows)
+		if err != nil {
+			weekdayRows.Close()
+			return fmt.Errorf("scan assignment weekday: %w", err)
+		}
+		weekdays[weekday.ID] = weekday
+	}
+	if err := weekdayRows.Close(); err != nil {
+		return fmt.Errorf("load assignment weekdays: %w", err)
+	}
+	if err := weekdayRows.Err(); err != nil {
+		return fmt.Errorf("load assignment weekdays: %w", err)
+	}
+
+	roomIDs := make([]uint, 0, len(weekdays))
+	seenRooms := make(map[uint]struct{}, len(weekdays))
+	for _, weekday := range weekdays {
+		if _, ok := seenRooms[weekday.RoomID]; ok {
+			continue
+		}
+		seenRooms[weekday.RoomID] = struct{}{}
+		roomIDs = append(roomIDs, weekday.RoomID)
+	}
+	rooms, err := s.loadRooms(roomIDs)
+	if err != nil {
+		return err
+	}
+	for id, weekday := range weekdays {
+		weekday.Room = rooms[weekday.RoomID]
+		weekdays[id] = weekday
+	}
+
+	staff, err := s.loadStaffByIDs(s.db, staffIDs)
+	if err != nil {
+		return err
+	}
+	for i := range assignments {
+		assignments[i].Weekday = weekdays[assignments[i].WeekdayID]
+		assignments[i].Staff = staff[assignments[i].StaffID]
+	}
+	return nil
+}
+
+func (s *WorkScheduleService) loadRooms(roomIDs []uint) (map[uint]roommodel.ClinicRoom, error) {
+	if len(roomIDs) == 0 {
+		return map[uint]roommodel.ClinicRoom{}, nil
+	}
+	args := make([]any, len(roomIDs))
+	for i, id := range roomIDs {
+		args[i] = id
+	}
+	rows, err := s.db.Query(
+		"SELECT "+roomColumns+" FROM clinic_room WHERE id IN ("+database.Placeholders(1, len(roomIDs))+")",
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("load rooms: %w", err)
+	}
+	defer rows.Close()
+	rooms := make(map[uint]roommodel.ClinicRoom, len(roomIDs))
+	for rows.Next() {
+		room, err := scanRoom(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan room: %w", err)
+		}
+		rooms[room.ID] = room
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("load rooms: %w", err)
+	}
+	return rooms, nil
 }

@@ -2,12 +2,13 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
 
 	"clinic-backend/internal/calendar"
-	recordmodel "clinic-backend/internal/record/model"
+	"clinic-backend/internal/database"
 	roommodel "clinic-backend/internal/room/model"
 	schedulingservice "clinic-backend/internal/scheduling/service"
 )
@@ -28,30 +29,37 @@ func (s *RoomService) PreferredRoom(ctx context.Context, campus roommodel.Clinic
 	if !campus.SelectionPolicy.Valid() {
 		return nil, ErrCampusInvalidPolicy
 	}
-	db := s.db.WithContext(ctx)
-	counts := db.Model(&recordmodel.ClinicRecord{}).
-		Select("room, COUNT(*) AS ticket_count").
-		Where("appointment_time = ? AND status NOT IN ?", date, schedulingservice.TicketedCountExcludeStatuses(date, today)).Group("room")
-	q := db.Table("clinic_room AS r").Select("r.id").
-		Joins("JOIN clinic_service_date AS d ON d.room_id = r.id AND d.date = ?", date).
-		Joins("LEFT JOIN (?) AS tickets ON tickets.room = r.id", counts).
-		Where("r.campus_id = ? AND r.enabled = ?", campus.ID, true).
-		Where("COALESCE(tickets.ticket_count, 0) < d.capacity")
+	excluded := schedulingservice.TicketedCountExcludeStatuses(date, today)
+	args := []any{date}
+	for _, status := range excluded {
+		args = append(args, status)
+	}
+	query := `SELECT r.id FROM clinic_room r
+		JOIN clinic_service_date d ON d.room_id = r.id AND d.date = $1
+		LEFT JOIN (SELECT room, COUNT(*) AS ticket_count FROM clinic_record
+		WHERE appointment_time = $1 AND status NOT IN (` + database.Placeholders(2, len(excluded)) + `) GROUP BY room) tickets ON tickets.room = r.id`
+	args = append(args, campus.ID, true)
+	query += fmt.Sprintf(" WHERE r.campus_id = $%d AND r.enabled = $%d AND COALESCE(tickets.ticket_count, 0) < d.capacity", len(args)-1, len(args))
 	if f.Name != "" {
-		q = q.Where("r.name LIKE ?", "%"+f.Name+"%")
+		args = append(args, "%"+f.Name+"%")
+		query += fmt.Sprintf(" AND r.name LIKE $%d", len(args))
 	}
 	if f.Type != nil {
-		q = q.Where("r.type = ?", *f.Type)
+		args = append(args, *f.Type)
+		query += fmt.Sprintf(" AND r.type = $%d", len(args))
 	}
+	query += " ORDER BY "
 	if campus.SelectionPolicy == roommodel.SelectionPolicyBalanced {
-		q = q.Order("COALESCE(tickets.ticket_count, 0) ASC")
+		query += "COALESCE(tickets.ticket_count, 0) ASC, "
 	}
-	var candidates []struct{ ID uint }
-	if err := q.Order("r.id ASC").Limit(1).Find(&candidates).Error; err != nil {
-		return nil, fmt.Errorf("select preferred room for campus %d: %w", campus.ID, err)
-	}
-	if len(candidates) == 0 {
+	query += "r.id ASC LIMIT 1"
+	var id uint
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-	return &candidates[0].ID, nil
+	if err != nil {
+		return nil, fmt.Errorf("select preferred room for campus %d: %w", campus.ID, err)
+	}
+	return &id, nil
 }

@@ -24,6 +24,15 @@ import (
 	"gorm.io/gorm"
 )
 
+func newAnnouncementService(t *testing.T, db *gorm.DB) *announcement.AnnouncementService {
+	t.Helper()
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get SQL database: %v", err)
+	}
+	return announcement.NewAnnouncementService(sqlDB)
+}
+
 func setupLegacyHandlerRouter(t *testing.T) (*gin.Engine, *gorm.DB, *recordservice.TicketService) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -46,10 +55,10 @@ func setupLegacyHandlerRouter(t *testing.T) (*gin.Engine, *gorm.DB, *recordservi
 		t.Fatalf("migrate: %v", err)
 	}
 
-	ticketSvc := recordservice.NewTicketService(db, nil)
-	serviceDateSvc := schedulingservice.NewServiceDateService(db, nil)
-	roomSvc := roomservice.NewRoomService(db)
-	announceSvc := announcement.NewAnnouncementService(db)
+	ticketSvc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
+	serviceDateSvc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
+	roomSvc := roomservice.NewRoomService(testutil.RawDB(t, db))
+	announceSvc := newAnnouncementService(t, db)
 	legacyH := legacy.NewLegacyHandler(ticketSvc, serviceDateSvc, roomSvc, announceSvc)
 
 	r := gin.New()
@@ -81,7 +90,7 @@ func setupLegacyHandlerRouter(t *testing.T) (*gin.Engine, *gorm.DB, *recordservi
 
 func TestLegacy_TOS_Success(t *testing.T) {
 	r, db, _ := setupLegacyHandlerRouter(t)
-	svc := announcement.NewAnnouncementService(db)
+	svc := newAnnouncementService(t, db)
 	_, err := svc.Create(announcement.CreateAnnouncementInput{
 		Title:      "Terms",
 		Content:    "hello tos",
@@ -531,10 +540,10 @@ func TestLegacy_Dates_AlwaysShiftsToUTC8(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	ticketSvc := recordservice.NewTicketService(db, time.UTC)
-	serviceDateSvc := schedulingservice.NewServiceDateService(db, time.UTC)
-	roomSvc := roomservice.NewRoomService(db)
-	announceSvc := announcement.NewAnnouncementService(db)
+	ticketSvc := recordservice.NewTicketService(testutil.RawDB(t, db), time.UTC)
+	serviceDateSvc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), time.UTC)
+	roomSvc := roomservice.NewRoomService(testutil.RawDB(t, db))
+	announceSvc := newAnnouncementService(t, db)
 	legacyH := legacy.NewLegacyHandler(ticketSvc, serviceDateSvc, roomSvc, announceSvc)
 
 	r := gin.New()
@@ -666,7 +675,7 @@ func TestLegacy_DatesAll_IncludesPast(t *testing.T) {
 
 func TestLegacy_Announcements_Array(t *testing.T) {
 	r, db, _ := setupLegacyHandlerRouter(t)
-	svc := announcement.NewAnnouncementService(db)
+	svc := newAnnouncementService(t, db)
 	_, err := svc.Create(announcement.CreateAnnouncementInput{
 		Title:      "Notice",
 		Content:    "body",

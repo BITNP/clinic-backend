@@ -40,7 +40,7 @@ func setupWorkScheduleHandlerRouter(t *testing.T) (*gin.Engine, *schedulingservi
 	); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
 	}
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 	h := schedulinghandler.NewWorkScheduleHandler(svc)
 
 	r := gin.New()

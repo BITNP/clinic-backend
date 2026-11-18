@@ -1,13 +1,14 @@
 package service
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"clinic-backend/internal/database"
 	roommodel "clinic-backend/internal/room/model"
-
-	"gorm.io/gorm"
 )
 
 // ErrCampusInvalidPolicy indicates an unsupported selection policy.
@@ -24,11 +25,23 @@ var ErrCampusInUse = errors.New("campus has rooms and cannot be deleted")
 
 // CampusService contains the business logic for clinic campus CRUD.
 type CampusService struct {
-	db *gorm.DB
+	db *database.DB
 }
 
-func NewCampusService(db *gorm.DB) *CampusService {
+func NewCampusService(db *database.DB) *CampusService {
 	return &CampusService{db: db}
+}
+
+const campusColumns = "id, name, selection_policy"
+
+func joinAnd(parts []string) string {
+	return strings.Join(parts, " AND ")
+}
+
+func scanCampus(row interface{ Scan(...any) error }) (roommodel.ClinicCampus, error) {
+	var c roommodel.ClinicCampus
+	err := row.Scan(&c.ID, &c.Name, &c.SelectionPolicy)
+	return c, err
 }
 
 // CreateCampusInput carries the fields a caller may set on creation.
@@ -58,8 +71,11 @@ func (s *CampusService) Create(in CreateCampusInput) (roommodel.ClinicCampus, er
 	if !policy.Valid() {
 		return roommodel.ClinicCampus{}, ErrCampusInvalidPolicy
 	}
-	c := roommodel.ClinicCampus{Name: in.Name, SelectionPolicy: policy}
-	if err := s.db.Create(&c).Error; err != nil {
+	c, err := scanCampus(s.db.QueryRow(
+		"INSERT INTO clinic_campus (name, selection_policy) VALUES ($1, $2) RETURNING "+campusColumns,
+		in.Name, policy,
+	))
+	if err != nil {
 		if database.IsUniqueViolation(err) {
 			return roommodel.ClinicCampus{}, ErrCampusNameTaken
 		}
@@ -69,9 +85,12 @@ func (s *CampusService) Create(in CreateCampusInput) (roommodel.ClinicCampus, er
 }
 
 func (s *CampusService) GetByID(id uint) (roommodel.ClinicCampus, error) {
-	var c roommodel.ClinicCampus
-	if err := s.db.First(&c, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	c, err := scanCampus(s.db.QueryRow(
+		"SELECT "+campusColumns+" FROM clinic_campus WHERE id = $1",
+		id,
+	))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return roommodel.ClinicCampus{}, ErrCampusNotFound
 		}
 		return roommodel.ClinicCampus{}, fmt.Errorf("get campus %d: %w", id, err)
@@ -80,13 +99,16 @@ func (s *CampusService) GetByID(id uint) (roommodel.ClinicCampus, error) {
 }
 
 func (s *CampusService) List(f ListCampusFilter) ([]roommodel.ClinicCampus, int64, error) {
-	q := s.db.Model(&roommodel.ClinicCampus{})
+	where := []string{"1 = 1"}
+	var args []any
 	if f.Name != "" {
-		q = q.Where("name LIKE ?", "%"+f.Name+"%")
+		args = append(args, "%"+f.Name+"%")
+		where = append(where, fmt.Sprintf("name LIKE $%d", len(args)))
 	}
+	predicate := " WHERE " + joinAnd(where)
 
 	var total int64
-	if err := q.Count(&total).Error; err != nil {
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM clinic_campus"+predicate, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count campuses: %w", err)
 	}
 
@@ -98,12 +120,25 @@ func (s *CampusService) List(f ListCampusFilter) ([]roommodel.ClinicCampus, int6
 	}
 	offset := (f.Page - 1) * f.PageSize
 
-	var items []roommodel.ClinicCampus
-	if err := q.
-		Order("id ASC").
-		Offset(offset).
-		Limit(f.PageSize).
-		Find(&items).Error; err != nil {
+	args = append(args, f.PageSize, offset)
+	query := fmt.Sprintf(
+		"SELECT %s FROM clinic_campus%s ORDER BY id ASC LIMIT $%d OFFSET $%d",
+		campusColumns, predicate, len(args)-1, len(args),
+	)
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list campuses: %w", err)
+	}
+	defer rows.Close()
+	items := make([]roommodel.ClinicCampus, 0)
+	for rows.Next() {
+		c, err := scanCampus(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("scan campus: %w", err)
+		}
+		items = append(items, c)
+	}
+	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("list campuses: %w", err)
 	}
 	return items, total, nil
@@ -111,35 +146,44 @@ func (s *CampusService) List(f ListCampusFilter) ([]roommodel.ClinicCampus, int6
 
 func (s *CampusService) Update(id uint, in UpdateCampusInput) (roommodel.ClinicCampus, error) {
 	var c roommodel.ClinicCampus
-	err := s.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.First(&c, id).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
+	err := database.WithTx(context.Background(), s.db.DB, func(tx *sql.Tx) error {
+		var err error
+		c, err = scanCampus(tx.QueryRow(
+			"SELECT "+campusColumns+" FROM clinic_campus WHERE id = $1",
+			id,
+		))
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
 				return ErrCampusNotFound
 			}
 			return fmt.Errorf("get campus %d for update: %w", id, err)
 		}
 
-		updates := map[string]any{}
+		var updates []string
+		var args []any
 		if in.SelectionPolicy != nil {
 			if !in.SelectionPolicy.Valid() {
 				return ErrCampusInvalidPolicy
 			}
-			updates["selection_policy"] = *in.SelectionPolicy
+			args = append(args, *in.SelectionPolicy)
+			updates = append(updates, fmt.Sprintf("selection_policy = $%d", len(args)))
 		}
 		if in.Name != nil {
-			updates["name"] = *in.Name
+			args = append(args, *in.Name)
+			updates = append(updates, fmt.Sprintf("name = $%d", len(args)))
 		}
-		if len(updates) == 0 {
-			return nil
-		}
-		if err := tx.Model(&c).Updates(updates).Error; err != nil {
-			if database.IsUniqueViolation(err) {
-				return ErrCampusNameTaken
+		if len(updates) > 0 {
+			args = append(args, id)
+			c, err = scanCampus(tx.QueryRow(
+				fmt.Sprintf("UPDATE clinic_campus SET %s WHERE id = $%d RETURNING %s", strings.Join(updates, ", "), len(args), campusColumns),
+				args...,
+			))
+			if err != nil {
+				if database.IsUniqueViolation(err) {
+					return ErrCampusNameTaken
+				}
+				return fmt.Errorf("update campus %d: %w", id, err)
 			}
-			return fmt.Errorf("update campus %d: %w", id, err)
-		}
-		if err := tx.First(&c, id).Error; err != nil {
-			return fmt.Errorf("reload campus %d: %w", id, err)
 		}
 		return nil
 	})
@@ -150,25 +194,23 @@ func (s *CampusService) Update(id uint, in UpdateCampusInput) (roommodel.ClinicC
 }
 
 func (s *CampusService) Delete(id uint) error {
-	var c roommodel.ClinicCampus
-	if err := s.db.First(&c, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrCampusNotFound
+	return database.WithTx(context.Background(), s.db.DB, func(tx *sql.Tx) error {
+		var existingID uint
+		if err := tx.QueryRow("SELECT id FROM clinic_campus WHERE id = $1", id).Scan(&existingID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrCampusNotFound
+			}
+			return fmt.Errorf("get campus %d for delete: %w", id, err)
 		}
-		return fmt.Errorf("get campus %d for delete: %w", id, err)
-	}
 
-	return s.db.Transaction(func(tx *gorm.DB) error {
 		var rooms int64
-		if err := tx.Model(&roommodel.ClinicRoom{}).
-			Where("campus_id = ?", id).
-			Count(&rooms).Error; err != nil {
+		if err := tx.QueryRow("SELECT COUNT(*) FROM clinic_room WHERE campus_id = $1", id).Scan(&rooms); err != nil {
 			return fmt.Errorf("count rooms for campus %d: %w", id, err)
 		}
 		if rooms > 0 {
 			return ErrCampusInUse
 		}
-		if err := tx.Delete(&c).Error; err != nil {
+		if _, err := tx.Exec("DELETE FROM clinic_campus WHERE id = $1", id); err != nil {
 			return fmt.Errorf("delete campus %d: %w", id, err)
 		}
 		return nil

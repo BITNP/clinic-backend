@@ -2,14 +2,14 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
 	"time"
 
+	"clinic-backend/internal/database"
 	recordmodel "clinic-backend/internal/record/model"
-
-	"gorm.io/gorm"
 )
 
 // recordAction appends a completed action to the acting staff member's stack.
@@ -26,45 +26,57 @@ func (s *AdminRecordService) recordAction(ctx context.Context, entry RecordActio
 
 // snapshotTx captures every piece of mutable state that a record action may
 // overwrite, so the action can later be reverted by restoring it.
-func (s *AdminRecordService) snapshotTx(tx *gorm.DB, rec recordmodel.ClinicRecord) (RecordSnapshot, error) {
+func (s *AdminRecordService) snapshotTx(tx *sql.Tx, rec recordmodel.ClinicRecord) (RecordSnapshot, error) {
 	snap := RecordSnapshot{Status: rec.Status}
 	if rec.ApproverID != nil {
-		v := *rec.ApproverID
-		snap.ApproverID = &v
+		value := *rec.ApproverID
+		snap.ApproverID = &value
 	}
 
-	var arrival recordmodel.ClinicRecordArrival
-	if err := tx.Where("record_id = ?", rec.ID).First(&arrival).Error; err == nil {
-		t := arrival.ArriveTime
-		snap.ArriveTime = &t
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+	arrival, err := scanRecordArrival(tx.QueryRow(
+		"SELECT "+recordArrivalColumns+" FROM clinic_record_arrival WHERE record_id = $1",
+		rec.ID,
+	))
+	if err == nil {
+		value := arrival.ArriveTime
+		snap.ArriveTime = &value
+	} else if !errors.Is(err, sql.ErrNoRows) {
 		return snap, fmt.Errorf("snapshot arrival for record %d: %w", rec.ID, err)
 	}
 
-	var worker recordmodel.ClinicRecordWorker
-	if err := tx.Where("record_id = ?", rec.ID).First(&worker).Error; err == nil {
+	worker, err := scanRecordWorker(tx.QueryRow(
+		"SELECT "+recordWorkerColumns+" FROM clinic_record_worker WHERE record_id = $1",
+		rec.ID,
+	))
+	if err == nil {
 		snap.Worker = &WorkerSnapshot{
 			WorkerID:   worker.WorkerID,
 			WorkerDesc: worker.WorkerDesc,
 			FinishTime: worker.FinishTime,
 		}
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+	} else if !errors.Is(err, sql.ErrNoRows) {
 		return snap, fmt.Errorf("snapshot worker for record %d: %w", rec.ID, err)
 	}
 
-	var rejection recordmodel.ClinicRecordRejection
-	if err := tx.Where("record_id = ?", rec.ID).First(&rejection).Error; err == nil {
-		r := rejection.RejectReason
-		snap.RejectReason = &r
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+	rejection, err := scanRecordRejection(tx.QueryRow(
+		"SELECT "+recordRejectionColumns+" FROM clinic_record_rejection WHERE record_id = $1",
+		rec.ID,
+	))
+	if err == nil {
+		value := rejection.RejectReason
+		snap.RejectReason = &value
+	} else if !errors.Is(err, sql.ErrNoRows) {
 		return snap, fmt.Errorf("snapshot rejection for record %d: %w", rec.ID, err)
 	}
 
-	var referral recordmodel.ClinicRecordReferral
-	if err := tx.Where("record_id = ?", rec.ID).First(&referral).Error; err == nil {
-		r := referral.ReferralReason
-		snap.ReferralReason = &r
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+	referral, err := scanRecordReferral(tx.QueryRow(
+		"SELECT "+recordReferralColumns+" FROM clinic_record_referral WHERE record_id = $1",
+		rec.ID,
+	))
+	if err == nil {
+		value := referral.ReferralReason
+		snap.ReferralReason = &value
+	} else if !errors.Is(err, sql.ErrNoRows) {
 		return snap, fmt.Errorf("snapshot referral for record %d: %w", rec.ID, err)
 	}
 
@@ -113,7 +125,7 @@ func applyRevertible(w RecordWindow, rec recordmodel.ClinicRecord, window time.D
 	if !createdAt.IsZero() {
 		v.LastActionAt = new(createdAt.UTC().Format(time.RFC3339))
 	}
-	if rec.ActionSeq != w.Latest.ActionSeq {
+	if rec.ActionSeq != w.Latest.ActionSeq || rec.ActionToken != w.Latest.ActionToken {
 		return
 	}
 	until := createdAt.Add(window)
@@ -141,27 +153,29 @@ func (s *AdminRecordService) Revert(ctx context.Context, actorID int, id uint) (
 		return AdminRecordView{}, ErrRevertWindowExpired
 	}
 
-	var rec recordmodel.ClinicRecord
-	var v AdminRecordView
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.First(&rec, id).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return ErrRecordNotFound
-			}
+	var record recordmodel.ClinicRecord
+	var view AdminRecordView
+	err = database.WithTx(ctx, s.db.DB, func(tx *sql.Tx) error {
+		var err error
+		record, err = loadRecordForUpdate(ctx, tx, s.db.Driver, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrRecordNotFound
+		}
+		if err != nil {
 			return fmt.Errorf("get record %d for revert: %w", id, err)
 		}
-		if rec.ActionSeq != entry.ActionSeq {
+		if record.ActionSeq != entry.ActionSeq || record.ActionToken != entry.ActionToken {
 			return fmt.Errorf("revert record %d: %w", id, ErrRevertSuperseded)
 		}
-		if err := s.restoreSnapshotTx(tx, &rec, entry.Prev, entry.PrevSeq); err != nil {
+		if err := s.restoreSnapshotTx(tx, &record, entry.Prev, entry.PrevSeq, entry.PrevToken); err != nil {
 			return err
 		}
-		if err := tx.First(&rec, id).Error; err != nil {
+		record, err = loadRecord(tx, id)
+		if err != nil {
 			return fmt.Errorf("reload record %d after revert: %w", id, err)
 		}
-		var buildErr error
-		v, buildErr = s.buildViewTx(tx, rec)
-		return buildErr
+		view, err = s.buildViewTx(tx, record)
+		return err
 	})
 	if err != nil {
 		return AdminRecordView{}, err
@@ -169,25 +183,23 @@ func (s *AdminRecordService) Revert(ctx context.Context, actorID int, id uint) (
 	if err := s.actions.Consume(ctx, entry); err != nil {
 		log.Printf("revert record %d: consume action: %v", id, err)
 	}
-	if err := s.applyRevertibleOne(ctx, actorID, rec, &v); err != nil {
+	if err := s.applyRevertibleOne(ctx, actorID, record, &view); err != nil {
 		return AdminRecordView{}, err
 	}
-	return v, nil
+	return view, nil
 }
 
 // restoreSnapshotTx writes a snapshot back onto a record and its side tables.
-func (s *AdminRecordService) restoreSnapshotTx(tx *gorm.DB, rec *recordmodel.ClinicRecord, snap RecordSnapshot, prevSeq uint) error {
-	updates := map[string]any{
-		"status":      snap.Status,
-		"approver_id": snap.ApproverID,
-		"action_seq":  prevSeq,
-	}
-	if err := tx.Model(rec).Updates(updates).Error; err != nil {
+func (s *AdminRecordService) restoreSnapshotTx(tx *sql.Tx, rec *recordmodel.ClinicRecord, snap RecordSnapshot, prevSeq uint, prevToken string) error {
+	if _, err := tx.Exec(
+		"UPDATE clinic_record SET status = $1, approver_id = $2, action_seq = $3, action_token = $4 WHERE id = $5",
+		snap.Status, nullableUint(snap.ApproverID), prevSeq, prevToken, rec.ID,
+	); err != nil {
 		return fmt.Errorf("restore record %d: %w", rec.ID, err)
 	}
 
 	if snap.ArriveTime == nil {
-		if err := tx.Where("record_id = ?", rec.ID).Delete(&recordmodel.ClinicRecordArrival{}).Error; err != nil {
+		if _, err := tx.Exec("DELETE FROM clinic_record_arrival WHERE record_id = $1", rec.ID); err != nil {
 			return fmt.Errorf("restore record %d arrival: %w", rec.ID, err)
 		}
 	} else if err := upsertArrivalTx(tx, rec.ID, *snap.ArriveTime); err != nil {
@@ -195,7 +207,7 @@ func (s *AdminRecordService) restoreSnapshotTx(tx *gorm.DB, rec *recordmodel.Cli
 	}
 
 	if snap.Worker == nil {
-		if err := tx.Where("record_id = ?", rec.ID).Delete(&recordmodel.ClinicRecordWorker{}).Error; err != nil {
+		if _, err := tx.Exec("DELETE FROM clinic_record_worker WHERE record_id = $1", rec.ID); err != nil {
 			return fmt.Errorf("restore record %d worker: %w", rec.ID, err)
 		}
 	} else if err := upsertWorkerTx(tx, rec.ID, *snap.Worker); err != nil {
@@ -203,7 +215,7 @@ func (s *AdminRecordService) restoreSnapshotTx(tx *gorm.DB, rec *recordmodel.Cli
 	}
 
 	if snap.RejectReason == nil {
-		if err := tx.Where("record_id = ?", rec.ID).Delete(&recordmodel.ClinicRecordRejection{}).Error; err != nil {
+		if _, err := tx.Exec("DELETE FROM clinic_record_rejection WHERE record_id = $1", rec.ID); err != nil {
 			return fmt.Errorf("restore record %d rejection: %w", rec.ID, err)
 		}
 	} else if err := upsertRejectionTx(tx, rec.ID, *snap.RejectReason); err != nil {
@@ -211,7 +223,7 @@ func (s *AdminRecordService) restoreSnapshotTx(tx *gorm.DB, rec *recordmodel.Cli
 	}
 
 	if snap.ReferralReason == nil {
-		if err := tx.Where("record_id = ?", rec.ID).Delete(&recordmodel.ClinicRecordReferral{}).Error; err != nil {
+		if _, err := tx.Exec("DELETE FROM clinic_record_referral WHERE record_id = $1", rec.ID); err != nil {
 			return fmt.Errorf("restore record %d referral: %w", rec.ID, err)
 		}
 	} else if err := upsertReferralTx(tx, rec.ID, *snap.ReferralReason); err != nil {
@@ -221,79 +233,46 @@ func (s *AdminRecordService) restoreSnapshotTx(tx *gorm.DB, rec *recordmodel.Cli
 	return nil
 }
 
-func upsertArrivalTx(tx *gorm.DB, recordID uint, arriveTime time.Time) error {
-	var arrival recordmodel.ClinicRecordArrival
-	if err := tx.Where("record_id = ?", recordID).First(&arrival).Error; err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("get record %d arrival: %w", recordID, err)
-		}
-		if err := tx.Create(&recordmodel.ClinicRecordArrival{RecordID: recordID, ArriveTime: arriveTime}).Error; err != nil {
-			return fmt.Errorf("create record %d arrival: %w", recordID, err)
-		}
-		return nil
-	}
-	if err := tx.Model(&arrival).Update("arrive_time", arriveTime).Error; err != nil {
-		return fmt.Errorf("update record %d arrival: %w", recordID, err)
+func upsertArrivalTx(tx *sql.Tx, recordID uint, arriveTime time.Time) error {
+	if _, err := tx.Exec(
+		`INSERT INTO clinic_record_arrival (record_id, arrive_time) VALUES ($1, $2)
+		 ON CONFLICT (record_id) DO UPDATE SET arrive_time = excluded.arrive_time`,
+		recordID, arriveTime,
+	); err != nil {
+		return fmt.Errorf("upsert record %d arrival: %w", recordID, err)
 	}
 	return nil
 }
 
-func upsertWorkerTx(tx *gorm.DB, recordID uint, snap WorkerSnapshot) error {
-	var worker recordmodel.ClinicRecordWorker
-	if err := tx.Where("record_id = ?", recordID).First(&worker).Error; err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("get record %d worker: %w", recordID, err)
-		}
-		if err := tx.Create(&recordmodel.ClinicRecordWorker{
-			RecordID:   recordID,
-			WorkerID:   snap.WorkerID,
-			WorkerDesc: snap.WorkerDesc,
-			FinishTime: snap.FinishTime,
-		}).Error; err != nil {
-			return fmt.Errorf("create record %d worker: %w", recordID, err)
-		}
-		return nil
-	}
-	if err := tx.Model(&worker).Updates(map[string]any{
-		"worker":      snap.WorkerID,
-		"worker_desc": snap.WorkerDesc,
-		"finish_time": snap.FinishTime,
-	}).Error; err != nil {
-		return fmt.Errorf("update record %d worker: %w", recordID, err)
+func upsertWorkerTx(tx *sql.Tx, recordID uint, snap WorkerSnapshot) error {
+	if _, err := tx.Exec(
+		`INSERT INTO clinic_record_worker (record_id, worker, worker_desc, finish_time) VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (record_id) DO UPDATE SET worker = excluded.worker, worker_desc = excluded.worker_desc, finish_time = excluded.finish_time`,
+		recordID, snap.WorkerID, snap.WorkerDesc, snap.FinishTime,
+	); err != nil {
+		return fmt.Errorf("upsert record %d worker: %w", recordID, err)
 	}
 	return nil
 }
 
-func upsertRejectionTx(tx *gorm.DB, recordID uint, reason string) error {
-	var rejection recordmodel.ClinicRecordRejection
-	if err := tx.Where("record_id = ?", recordID).First(&rejection).Error; err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("get record %d rejection: %w", recordID, err)
-		}
-		if err := tx.Create(&recordmodel.ClinicRecordRejection{RecordID: recordID, RejectReason: reason}).Error; err != nil {
-			return fmt.Errorf("create record %d rejection: %w", recordID, err)
-		}
-		return nil
-	}
-	if err := tx.Model(&rejection).Update("reject_reason", reason).Error; err != nil {
-		return fmt.Errorf("update record %d rejection: %w", recordID, err)
+func upsertRejectionTx(tx *sql.Tx, recordID uint, reason string) error {
+	if _, err := tx.Exec(
+		`INSERT INTO clinic_record_rejection (record_id, reject_reason) VALUES ($1, $2)
+		 ON CONFLICT (record_id) DO UPDATE SET reject_reason = excluded.reject_reason`,
+		recordID, reason,
+	); err != nil {
+		return fmt.Errorf("upsert record %d rejection: %w", recordID, err)
 	}
 	return nil
 }
 
-func upsertReferralTx(tx *gorm.DB, recordID uint, reason string) error {
-	var referral recordmodel.ClinicRecordReferral
-	if err := tx.Where("record_id = ?", recordID).First(&referral).Error; err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("get record %d referral: %w", recordID, err)
-		}
-		if err := tx.Create(&recordmodel.ClinicRecordReferral{RecordID: recordID, ReferralReason: reason}).Error; err != nil {
-			return fmt.Errorf("create record %d referral: %w", recordID, err)
-		}
-		return nil
-	}
-	if err := tx.Model(&referral).Update("referral_reason", reason).Error; err != nil {
-		return fmt.Errorf("update record %d referral: %w", recordID, err)
+func upsertReferralTx(tx *sql.Tx, recordID uint, reason string) error {
+	if _, err := tx.Exec(
+		`INSERT INTO clinic_record_referral (record_id, referral_reason) VALUES ($1, $2)
+		 ON CONFLICT (record_id) DO UPDATE SET referral_reason = excluded.referral_reason`,
+		recordID, reason,
+	); err != nil {
+		return fmt.Errorf("upsert record %d referral: %w", recordID, err)
 	}
 	return nil
 }

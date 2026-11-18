@@ -10,7 +10,7 @@ import (
 
 func TestCampusService_Create(t *testing.T) {
 	db := setupRoomServiceDB(t)
-	svc := roomservice.NewCampusService(db)
+	svc := newCampusService(t, db)
 
 	campus, err := svc.Create(roomservice.CreateCampusInput{Name: "Main Campus"})
 	if err != nil {
@@ -26,7 +26,7 @@ func TestCampusService_Create(t *testing.T) {
 
 func TestCampusService_Create_DuplicateName(t *testing.T) {
 	db := setupRoomServiceDB(t)
-	svc := roomservice.NewCampusService(db)
+	svc := newCampusService(t, db)
 
 	if _, err := svc.Create(roomservice.CreateCampusInput{Name: "A"}); err != nil {
 		t.Fatalf("first create: %v", err)
@@ -38,7 +38,7 @@ func TestCampusService_Create_DuplicateName(t *testing.T) {
 
 func TestCampusService_GetByID_NotFound(t *testing.T) {
 	db := setupRoomServiceDB(t)
-	svc := roomservice.NewCampusService(db)
+	svc := newCampusService(t, db)
 
 	if _, err := svc.GetByID(999); !errors.Is(err, roomservice.ErrCampusNotFound) {
 		t.Fatalf("expected ErrCampusNotFound, got %v", err)
@@ -47,7 +47,7 @@ func TestCampusService_GetByID_NotFound(t *testing.T) {
 
 func TestCampusService_List_FilterAndPaging(t *testing.T) {
 	db := setupRoomServiceDB(t)
-	svc := roomservice.NewCampusService(db)
+	svc := newCampusService(t, db)
 
 	for _, name := range []string{"Alpha", "Beta", "Alpine", "Gamma", "Delta"} {
 		if _, err := svc.Create(roomservice.CreateCampusInput{Name: name}); err != nil {
@@ -94,7 +94,7 @@ func TestCampusService_List_FilterAndPaging(t *testing.T) {
 
 func TestCampusService_Update_Partial(t *testing.T) {
 	db := setupRoomServiceDB(t)
-	svc := roomservice.NewCampusService(db)
+	svc := newCampusService(t, db)
 
 	campus, err := svc.Create(roomservice.CreateCampusInput{Name: "Old"})
 	if err != nil {
@@ -111,7 +111,7 @@ func TestCampusService_Update_Partial(t *testing.T) {
 
 func TestCampusService_Update_DuplicateName(t *testing.T) {
 	db := setupRoomServiceDB(t)
-	svc := roomservice.NewCampusService(db)
+	svc := newCampusService(t, db)
 
 	if _, err := svc.Create(roomservice.CreateCampusInput{Name: "A"}); err != nil {
 		t.Fatalf("create A: %v", err)
@@ -127,7 +127,7 @@ func TestCampusService_Update_DuplicateName(t *testing.T) {
 
 func TestCampusService_Delete(t *testing.T) {
 	db := setupRoomServiceDB(t)
-	svc := roomservice.NewCampusService(db)
+	svc := newCampusService(t, db)
 
 	campus, err := svc.Create(roomservice.CreateCampusInput{Name: "Empty"})
 	if err != nil {
@@ -143,7 +143,7 @@ func TestCampusService_Delete(t *testing.T) {
 
 func TestCampusService_Delete_InUse(t *testing.T) {
 	db := setupRoomServiceDB(t)
-	svc := roomservice.NewCampusService(db)
+	svc := newCampusService(t, db)
 
 	campus, err := svc.Create(roomservice.CreateCampusInput{Name: "In Use"})
 	if err != nil {

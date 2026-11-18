@@ -29,7 +29,7 @@ func setupServiceDateHandlerRouter(t *testing.T) (*gin.Engine, *schedulingservic
 	}
 	testutil.MustCreateRoom(t, db, 1)
 	testutil.MustCreateRoom(t, db, 2)
-	svc := schedulingservice.NewServiceDateService(db, nil)
+	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
 	h := schedulinghandler.NewServiceDateHandler(svc)
 
 	r := gin.New()
@@ -420,7 +420,7 @@ func TestServiceDateHandler_ClientList_AvailableOnly(t *testing.T) {
 		t.Fatalf("failed to migrate: %v", err)
 	}
 	testutil.MustCreateRoom(t, db, 1)
-	svc := schedulingservice.NewServiceDateService(db, nil)
+	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
 	h := schedulinghandler.NewServiceDateHandler(svc)
 	r := gin.New()
 	r.GET("/api/service-dates", h.List)

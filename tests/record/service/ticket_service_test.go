@@ -44,7 +44,7 @@ func setupTicketTestDB(t *testing.T) *gorm.DB {
 func TestTicketService_Create_HappyPath(t *testing.T) {
 	db := setupTicketTestDB(t)
 	testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
-	svc := recordservice.NewTicketService(db, nil)
+	svc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 
 	rec, err := svc.Create(recordservice.CreateTicketInput{
 		User:            "1120221234",
@@ -133,7 +133,7 @@ func TestTicketService_Create_ValidationBranches(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			db := setupTicketTestDB(t)
 			tc.seed(t, db)
-			svc := recordservice.NewTicketService(db, nil)
+			svc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 			_, err := svc.Create(tc.input)
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("expected %v, got %v", tc.wantErr, err)
@@ -145,7 +145,7 @@ func TestTicketService_Create_ValidationBranches(t *testing.T) {
 func TestTicketService_Create_TodayInTimezone(t *testing.T) {
 	db := setupTicketTestDB(t)
 	loc := time.FixedZone("UTC+8", 8*60*60)
-	svc := recordservice.NewTicketService(db, loc)
+	svc := recordservice.NewTicketService(testutil.RawDB(t, db), loc)
 
 	// Simulate a service date created for today's local date in UTC+8.
 	now := time.Now().In(loc)
@@ -193,7 +193,7 @@ func TestTicketService_Create_CapacityExcludesRejected(t *testing.T) {
 	if err := db.Create(&rejected).Error; err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	svc := recordservice.NewTicketService(db, nil)
+	svc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 	_, err := svc.Create(recordservice.CreateTicketInput{
 		User: "u", Realname: "r", PhoneNum: "p", Campus: "中关村",
 		AppointmentTime: testutil.FutureTruncatedDate(7), Description: "d",
@@ -217,7 +217,7 @@ func TestTicketService_Create_CapacityExcludesClosedOnFuture(t *testing.T) {
 			t.Fatalf("seed %s: %v", st, err)
 		}
 	}
-	svc := recordservice.NewTicketService(db, nil)
+	svc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 	if _, err := svc.Create(recordservice.CreateTicketInput{
 		User: "u", Realname: "r", PhoneNum: "p", Campus: "中关村",
 		AppointmentTime: testutil.FutureTruncatedDate(7), Description: "d",
@@ -229,7 +229,7 @@ func TestTicketService_Create_CapacityExcludesClosedOnFuture(t *testing.T) {
 func TestTicketService_Create_CapacityCountsCompletedOnToday(t *testing.T) {
 	db := setupTicketTestDB(t)
 	loc := time.FixedZone("UTC+8", 8*60*60)
-	svc := recordservice.NewTicketService(db, loc)
+	svc := recordservice.NewTicketService(testutil.RawDB(t, db), loc)
 
 	now := time.Now().In(loc)
 	todayLocal := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
@@ -254,7 +254,7 @@ func TestTicketService_Create_CapacityCountsCompletedOnToday(t *testing.T) {
 func TestTicketService_Working(t *testing.T) {
 	db := setupTicketTestDB(t)
 	roomID := testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
-	svc := recordservice.NewTicketService(db, nil)
+	svc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 
 	if rec, err := svc.Working("u"); err != nil || rec != nil {
 		t.Fatalf("expected nil/no-err, got rec=%v err=%v", rec, err)
@@ -297,7 +297,7 @@ func TestTicketService_Working(t *testing.T) {
 func TestTicketService_List_HidesExpiredWorking(t *testing.T) {
 	db := setupTicketTestDB(t)
 	roomID := testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(-1), 5)
-	svc := recordservice.NewTicketService(db, nil)
+	svc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 
 	// A pending record whose appointment_time is in the past — should be hidden.
 	expired := recordmodel.ClinicRecord{User: "u", Realname: "r", PhoneNum: "p", Status: recordmodel.RecordStatusPending, AppointmentTime: testutil.FutureTruncatedDate(-1), QuestionDesc: "x", RoomID: roomID}
@@ -322,7 +322,7 @@ func TestTicketService_List_HidesExpiredWorking(t *testing.T) {
 func TestTicketService_Finished_OnlyClosedStatuses(t *testing.T) {
 	db := setupTicketTestDB(t)
 	roomID := testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
-	svc := recordservice.NewTicketService(db, nil)
+	svc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 
 	closed := []recordmodel.RecordStatus{recordmodel.RecordStatusRejected, recordmodel.RecordStatusCompleted, recordmodel.RecordStatusReferred, recordmodel.RecordStatusNoShow}
 	open := []recordmodel.RecordStatus{recordmodel.RecordStatusPending, recordmodel.RecordStatusConfirmed, recordmodel.RecordStatusArrived, recordmodel.RecordStatusInProgress}
@@ -355,7 +355,7 @@ func TestTicketService_GetForUser_Ownership(t *testing.T) {
 	if err := db.Create(&r).Error; err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	svc := recordservice.NewTicketService(db, nil)
+	svc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 	if _, err := svc.GetForUser(r.ID, "alice"); err != nil {
 		t.Errorf("owner get: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestTicketService_Delete(t *testing.T) {
 	t.Run("ok when service date exists", func(t *testing.T) {
 		db := setupTicketTestDB(t)
 		roomID := testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
-		svc := recordservice.NewTicketService(db, nil)
+		svc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 		rec, err := svc.Create(recordservice.CreateTicketInput{
 			User: "u", Realname: "r", PhoneNum: "p", Campus: "中关村",
 			AppointmentTime: testutil.FutureTruncatedDate(7), Description: "d",
@@ -398,7 +398,7 @@ func TestTicketService_Delete(t *testing.T) {
 	t.Run("400 when service date row removed", func(t *testing.T) {
 		db := setupTicketTestDB(t)
 		roomID := testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
-		svc := recordservice.NewTicketService(db, nil)
+		svc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 		rec, err := svc.Create(recordservice.CreateTicketInput{
 			User: "u", Realname: "r", PhoneNum: "p", Campus: "中关村",
 			AppointmentTime: testutil.FutureTruncatedDate(7), Description: "d",
@@ -419,7 +419,7 @@ func TestTicketService_Delete(t *testing.T) {
 func TestTicketService_DeleteRemovesPhotos(t *testing.T) {
 	db := setupTicketTestDB(t)
 	testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
-	ticketSvc := recordservice.NewTicketService(db, nil)
+	ticketSvc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 	rec, err := ticketSvc.Create(recordservice.CreateTicketInput{
 		User: "u", Realname: "r", PhoneNum: "p", Campus: "中关村",
 		AppointmentTime: testutil.FutureTruncatedDate(7), Description: "d",
@@ -429,7 +429,7 @@ func TestTicketService_DeleteRemovesPhotos(t *testing.T) {
 	}
 
 	store := newFakePhotoStorage()
-	photoSvc, err := recordservice.NewPhotoService(db, store, 9, 1024)
+	photoSvc, err := recordservice.NewPhotoService(testutil.RawDB(t, db), store, 9, 1024)
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -467,7 +467,7 @@ func TestTicketService_DeleteRemovesPhotos(t *testing.T) {
 func TestTicketService_DeleteWithoutPhotos(t *testing.T) {
 	db := setupTicketTestDB(t)
 	testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
-	ticketSvc := recordservice.NewTicketService(db, nil)
+	ticketSvc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 	rec, err := ticketSvc.Create(recordservice.CreateTicketInput{
 		User: "u", Realname: "r", PhoneNum: "p", Campus: "中关村",
 		AppointmentTime: testutil.FutureTruncatedDate(7), Description: "d",
@@ -476,7 +476,7 @@ func TestTicketService_DeleteWithoutPhotos(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	photoSvc, err := recordservice.NewPhotoService(db, newFakePhotoStorage(), 9, 1024)
+	photoSvc, err := recordservice.NewPhotoService(testutil.RawDB(t, db), newFakePhotoStorage(), 9, 1024)
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -500,7 +500,7 @@ func TestTicketService_DeleteWithoutPhotos(t *testing.T) {
 func TestTicketService_DeleteToleratesStorageCleanupFailure(t *testing.T) {
 	db := setupTicketTestDB(t)
 	testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
-	ticketSvc := recordservice.NewTicketService(db, nil)
+	ticketSvc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 	rec, err := ticketSvc.Create(recordservice.CreateTicketInput{
 		User: "u", Realname: "r", PhoneNum: "p", Campus: "中关村",
 		AppointmentTime: testutil.FutureTruncatedDate(7), Description: "d",
@@ -510,7 +510,7 @@ func TestTicketService_DeleteToleratesStorageCleanupFailure(t *testing.T) {
 	}
 
 	store := newFakePhotoStorage()
-	photoSvc, err := recordservice.NewPhotoService(db, store, 9, 1024)
+	photoSvc, err := recordservice.NewPhotoService(testutil.RawDB(t, db), store, 9, 1024)
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -541,7 +541,7 @@ func TestTicketService_DeleteToleratesStorageCleanupFailure(t *testing.T) {
 func TestTicketService_DeleteToleratesPhotoRowCleanupFailure(t *testing.T) {
 	db := setupTicketTestDB(t)
 	testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
-	ticketSvc := recordservice.NewTicketService(db, nil)
+	ticketSvc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 	rec, err := ticketSvc.Create(recordservice.CreateTicketInput{
 		User: "u", Realname: "r", PhoneNum: "p", Campus: "中关村",
 		AppointmentTime: testutil.FutureTruncatedDate(7), Description: "d",
@@ -551,7 +551,7 @@ func TestTicketService_DeleteToleratesPhotoRowCleanupFailure(t *testing.T) {
 	}
 
 	store := newFakePhotoStorage()
-	photoSvc, err := recordservice.NewPhotoService(db, store, 9, 1024)
+	photoSvc, err := recordservice.NewPhotoService(testutil.RawDB(t, db), store, 9, 1024)
 	if err != nil {
 		t.Fatalf("NewPhotoService: %v", err)
 	}
@@ -586,7 +586,7 @@ func containsString(values []string, want string) bool {
 func TestTicketService_View_Shape(t *testing.T) {
 	db := setupTicketTestDB(t)
 	roomID := testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
-	svc := recordservice.NewTicketService(db, nil)
+	svc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 	rec, err := svc.Create(recordservice.CreateTicketInput{
 		User: "1120221234", Realname: "张三", PhoneNum: "13800138000", Campus: "中关村",
 		AppointmentTime: testutil.FutureTruncatedDate(7), Description: "笔电不开机",

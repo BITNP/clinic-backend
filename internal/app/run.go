@@ -77,9 +77,9 @@ func Run() {
 		}
 	}
 
-	db := openDatabase()
+	db, rawDB := openDatabase()
 
-	photoSvc, err := recordservice.NewPhotoService(db, storageSvc, photoCfg.MaxCount, photoCfg.MaxSizeBytes)
+	photoSvc, err := recordservice.NewPhotoService(rawDB, storageSvc, photoCfg.MaxCount, photoCfg.MaxSizeBytes)
 	if err != nil {
 		closeDatabase(db)
 		log.Fatalf("photo service: %v", err)
@@ -127,7 +127,7 @@ func Run() {
 	}
 	syncH := changes.NewSyncHandler(syncSvc, syncPollInterval)
 
-	recordTagSvc := taggingservice.NewRecordTagService(db)
+	recordTagSvc := taggingservice.NewRecordTagService(rawDB)
 	if _, err := recordTagSvc.SeedDefault(); err != nil {
 		log.Fatalf("failed to seed default record tag: %v", err)
 	}
@@ -177,7 +177,7 @@ func Run() {
 		if err != nil {
 			log.Fatalf("failed to build record tagger pool: %v", err)
 		}
-		recordTagger = taggingservice.NewRecordTagger(recordPool, db, recordTagSvc)
+		recordTagger = taggingservice.NewRecordTagger(recordPool, rawDB, recordTagSvc)
 		recordTagger.SetWorkers(recordPool.Size())
 		recordTagger.SetSyncService(syncSvc)
 
@@ -195,19 +195,23 @@ func Run() {
 		log.Println("tagger disabled: set TAGGER_LLM_API_KEY to enable")
 	}
 
-	announcementSvc := announcement.NewAnnouncementService(db)
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatalf("get SQL database: %v", err)
+	}
+	announcementSvc := announcement.NewAnnouncementService(sqlDB)
 	announcementH := announcement.NewAnnouncementHandler(announcementSvc)
 
 	serviceDateLoc := envLocation("CLINIC_TIMEZONE", time.FixedZone("UTC+8", 8*60*60))
-	serviceDateSvc := schedulingservice.NewServiceDateService(db, serviceDateLoc)
+	serviceDateSvc := schedulingservice.NewServiceDateService(rawDB, serviceDateLoc)
 	serviceDateH := schedulinghandler.NewServiceDateHandler(serviceDateSvc)
 
-	roomSvc := roomservice.NewRoomService(db, serviceDateLoc)
+	roomSvc := roomservice.NewRoomService(rawDB, serviceDateLoc)
 	roomH := roomhandler.NewRoomHandler(roomSvc)
-	campusSvc := roomservice.NewCampusService(db)
+	campusSvc := roomservice.NewCampusService(rawDB)
 	campusH := roomhandler.NewCampusHandler(campusSvc, roomSvc)
 
-	ticketSvc := recordservice.NewTicketService(db, serviceDateLoc)
+	ticketSvc := recordservice.NewTicketService(rawDB, serviceDateLoc)
 	ticketSvc.SetDefaultTagID(recordTagSvc.DefaultID())
 	ticketSvc.SetPhotoService(photoSvc)
 	if recordTagger != nil {
@@ -216,13 +220,13 @@ func Run() {
 	ticketH := recordhandler.NewTicketHandler(ticketSvc)
 	legacyH := legacy.NewLegacyHandler(ticketSvc, serviceDateSvc, roomSvc, announcementSvc)
 
-	staffSvc := staffservice.NewStaffService(db)
+	staffSvc := staffservice.NewStaffService(rawDB)
 	staffH := staffhandler.NewStaffHandler(staffSvc)
 
 	sessionTTL := envDuration("SESSION_TTL", 336*time.Hour)
-	sessionSvc := authservice.NewSessionService(db, sessionTTL)
+	sessionSvc := authservice.NewSessionService(sqlDB, sessionTTL)
 
-	adminRecordSvc := recordservice.NewAdminRecordService(db)
+	adminRecordSvc := recordservice.NewAdminRecordService(rawDB)
 	adminRecordSvc.SetRecordTagService(recordTagSvc)
 	recordActionSvc := recordservice.NewRecordActionService(
 		recordservice.NewRedisRecordActionStore(redisClient),
@@ -231,7 +235,7 @@ func Run() {
 	adminRecordSvc.SetRecordActionService(recordActionSvc)
 	adminRecordH := recordhandler.NewAdminRecordHandler(adminRecordSvc)
 
-	workScheduleSvc := schedulingservice.NewWorkScheduleService(db)
+	workScheduleSvc := schedulingservice.NewWorkScheduleService(rawDB)
 	workScheduleH := schedulinghandler.NewWorkScheduleHandler(workScheduleSvc)
 
 	userH := authhandler.NewUserHandler()
@@ -316,8 +320,8 @@ func Run() {
 
 	var reminderDone <-chan struct{}
 	if reminderCfg.Enabled {
-		discovery := &schedulingservice.ReminderDiscovery{DB: db, Location: serviceDateLoc, LeadTimes: reminderCfg.LeadTimes}
-		delivery := &schedulingservice.ReminderDelivery{DB: db, Discovery: discovery, Client: &http.Client{Timeout: reminderCfg.Gateway.Timeout}, BaseURL: reminderCfg.Gateway.BaseURL, Account: reminderCfg.Gateway.Account, Token: reminderCfg.Gateway.AccountToken, Template: reminderCfg.MessageTemplate, Lease: reminderCfg.Gateway.Timeout + 45*time.Second}
+		discovery := &schedulingservice.ReminderDiscovery{DB: rawDB, Location: serviceDateLoc, LeadTimes: reminderCfg.LeadTimes}
+		delivery := &schedulingservice.ReminderDelivery{DB: rawDB, Discovery: discovery, Client: &http.Client{Timeout: reminderCfg.Gateway.Timeout}, BaseURL: reminderCfg.Gateway.BaseURL, Account: reminderCfg.Gateway.Account, Token: reminderCfg.Gateway.AccountToken, Template: reminderCfg.MessageTemplate, Lease: reminderCfg.Gateway.Timeout + 45*time.Second}
 		worker := &schedulingservice.ReminderWorker{Discovery: discovery, Delivery: delivery}
 		done := make(chan struct{})
 		reminderDone = done

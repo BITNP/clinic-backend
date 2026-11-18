@@ -11,6 +11,7 @@ import (
 	recordmodel "clinic-backend/internal/record/model"
 	recordservice "clinic-backend/internal/record/service"
 	roommodel "clinic-backend/internal/room/model"
+	"clinic-backend/internal/testutil"
 
 	"gorm.io/gorm"
 )
@@ -18,6 +19,28 @@ import (
 // fakeActionStore is an in-memory services.RecordActionStore for tests.
 type fakeActionStore struct {
 	entries map[int][]recordservice.RecordActionEntry
+}
+
+type fixedOrderActionStore struct {
+	*fakeActionStore
+	entries []recordservice.RecordActionEntry
+}
+
+func (f *fixedOrderActionStore) Window(_ context.Context, _ int, _ time.Time) ([]recordservice.RecordActionEntry, error) {
+	return append([]recordservice.RecordActionEntry(nil), f.entries...), nil
+}
+
+func TestRecordActionsOrderedWithinSameMillisecond(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	store := &fixedOrderActionStore{fakeActionStore: newFakeActionStore(), entries: []recordservice.RecordActionEntry{
+		{RecordID: 1, ActionSeq: 1, CreatedAt: now.Add(100 * time.Microsecond)},
+		{RecordID: 1, ActionSeq: 2, CreatedAt: now.Add(900 * time.Microsecond)},
+	}}
+	svc := recordservice.NewRecordActionService(store, time.Minute)
+	windows, err := svc.Windows(context.Background(), 1, now.Add(time.Second))
+	if err != nil || windows[1].Latest.ActionSeq != 2 || windows[1].Count != 2 {
+		t.Fatalf("latest action: %+v, %v", windows[1], err)
+	}
 }
 
 func newFakeActionStore() *fakeActionStore {
@@ -46,7 +69,7 @@ func (f *fakeActionStore) Window(_ context.Context, actorID int, cutoff time.Tim
 func (f *fakeActionStore) Remove(_ context.Context, actorID int, entry recordservice.RecordActionEntry) error {
 	kept := f.entries[actorID][:0]
 	for _, e := range f.entries[actorID] {
-		if e.RecordID == entry.RecordID && e.ActionSeq == entry.ActionSeq && e.ActorID == entry.ActorID {
+		if e.RecordID == entry.RecordID && e.ActionSeq == entry.ActionSeq && e.ActorID == entry.ActorID && e.ActionToken == entry.ActionToken {
 			continue
 		}
 		kept = append(kept, e)
@@ -55,8 +78,8 @@ func (f *fakeActionStore) Remove(_ context.Context, actorID int, entry recordser
 	return nil
 }
 
-func newActionRecordService(db *gorm.DB, store *fakeActionStore) *recordservice.AdminRecordService {
-	svc := recordservice.NewAdminRecordService(db)
+func newActionRecordService(t *testing.T, db *gorm.DB, store *fakeActionStore) *recordservice.AdminRecordService {
+	svc := recordservice.NewAdminRecordService(testutil.RawDB(t, db))
 	svc.SetRecordActionService(recordservice.NewRecordActionService(store, 5*time.Minute))
 	return svc
 }
@@ -100,7 +123,7 @@ func TestRevertConfirmRestoresPending(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	v, err := svc.MarkConfirmed(context.Background(), rec.ID, 7)
 	if err != nil {
@@ -131,7 +154,7 @@ func TestRevertRejectRemovesRejection(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	if _, err := svc.MarkRejected(context.Background(), rec.ID, "bad", 7); err != nil {
 		t.Fatalf("reject: %v", err)
@@ -159,7 +182,7 @@ func TestRevertArriveRemovesArrival(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusConfirmed, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	if _, err := svc.MarkArrived(context.Background(), 7, rec.ID); err != nil {
 		t.Fatalf("arrive: %v", err)
@@ -187,7 +210,7 @@ func TestRevertInProgressRestoresWorker(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusArrived, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	if _, err := svc.MarkInProgress(context.Background(), 7, rec.ID); err != nil {
 		t.Fatalf("in-progress: %v", err)
@@ -218,7 +241,7 @@ func TestRevertCompleteClearsFinishTime(t *testing.T) {
 	if err := db.Create(&recordmodel.ClinicRecordWorker{RecordID: rec.ID, WorkerID: 7}).Error; err != nil {
 		t.Fatalf("seed worker: %v", err)
 	}
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	if _, err := svc.MarkCompleted(context.Background(), 7, rec.ID); err != nil {
 		t.Fatalf("complete: %v", err)
@@ -242,7 +265,7 @@ func TestRevertReferRemovesReferral(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	if _, err := svc.MarkReferred(context.Background(), rec.ID, "return", 7); err != nil {
 		t.Fatalf("refer: %v", err)
@@ -265,7 +288,7 @@ func TestRevertUpdateRestoresWorkerDesc(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	desc := "fixed it"
 	if _, err := svc.Update(context.Background(), 7, rec.ID, recordservice.UpdateAdminRecordInput{WorkerDesc: &desc}); err != nil {
@@ -289,7 +312,7 @@ func TestRevertStrictLIFO(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	if _, err := svc.MarkConfirmed(context.Background(), rec.ID, 7); err != nil {
 		t.Fatalf("confirm: %v", err)
@@ -322,7 +345,7 @@ func TestRevertSupersededByAnotherActor(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	if _, err := svc.MarkConfirmed(context.Background(), rec.ID, 1); err != nil {
 		t.Fatalf("confirm: %v", err)
@@ -339,11 +362,94 @@ func TestRevertSupersededByAnotherActor(t *testing.T) {
 	}
 }
 
+func TestRevertRejectsStaleActionWithReusedSequence(t *testing.T) {
+	db := setupAdminRecordTestDB(t)
+	room := seedActionRoom(t, db)
+	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
+	store := newFakeActionStore()
+	svc := newActionRecordService(t, db, store)
+	ctx := context.Background()
+	if _, err := svc.MarkConfirmed(ctx, rec.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	stale := store.entries[1][0]
+	if stale.ActionToken == "" {
+		t.Fatal("action token is empty")
+	}
+	if _, err := svc.Revert(ctx, 1, rec.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.MarkConfirmed(ctx, rec.ID, 2); err != nil {
+		t.Fatal(err)
+	}
+	current := reloadActionRecord(t, db, rec.ID)
+	if current.ActionSeq != stale.ActionSeq || current.ActionToken == stale.ActionToken {
+		t.Fatalf("expected reused sequence and distinct token: record=%+v stale=%+v", current, stale)
+	}
+	store.entries[1] = append(store.entries[1], stale)
+	view, err := svc.GetByID(ctx, 1, rec.ID)
+	if err != nil || view.Revertible {
+		t.Fatalf("stale action marked revertible: %+v, %v", view, err)
+	}
+	if _, err := svc.Revert(ctx, 1, rec.ID); !errors.Is(err, recordservice.ErrRevertSuperseded) {
+		t.Fatalf("stale revert: %v", err)
+	}
+	if got := reloadActionRecord(t, db, rec.ID); got.Status != recordmodel.RecordStatusConfirmed || got.ActionToken != current.ActionToken {
+		t.Fatalf("newer action was overwritten: %+v", got)
+	}
+}
+
+func TestRevertLegacyActionWithoutToken(t *testing.T) {
+	db := setupAdminRecordTestDB(t)
+	room := seedActionRoom(t, db)
+	rec := seedActionRecord(t, db, recordmodel.RecordStatusConfirmed, room.ID)
+	if err := db.Model(&rec).Update("action_seq", 1).Error; err != nil {
+		t.Fatal(err)
+	}
+	store := newFakeActionStore()
+	store.entries[1] = []recordservice.RecordActionEntry{{RecordID: rec.ID, ActorID: 1, ActionSeq: 1, CreatedAt: time.Now().UTC(), Prev: recordservice.RecordSnapshot{Status: recordmodel.RecordStatusPending}}}
+	svc := newActionRecordService(t, db, store)
+	view, err := svc.Revert(context.Background(), 1, rec.ID)
+	if err != nil || view.Status != string(recordmodel.RecordStatusPending) {
+		t.Fatalf("revert legacy action: %+v, %v", view, err)
+	}
+}
+
+func TestLegacyActionJSONRemainsRemovable(t *testing.T) {
+	// Redis removes the exact encoded member, so decoding and re-encoding an
+	// old entry must not add fields or otherwise change its representation.
+	legacy := `{"record_id":3,"actor_id":1,"action":"confirm","prev_seq":0,"action_seq":1,"created_at":"2026-01-01T00:00:00Z","prev":{"status":"pending","approver_id":null}}`
+	var entry recordservice.RecordActionEntry
+	if err := json.Unmarshal([]byte(legacy), &entry); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(entry)
+	if err != nil || string(encoded) != legacy {
+		t.Fatalf("legacy Redis member changed: %s, %v", encoded, err)
+	}
+}
+
+func TestActionTokenMigrationPreservesExistingRecords(t *testing.T) {
+	db := setupAdminRecordTestDB(t)
+	room := seedActionRoom(t, db)
+	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
+	if err := db.Exec("ALTER TABLE clinic_record DROP COLUMN action_token").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&recordmodel.ClinicRecord{}); err != nil {
+		t.Fatal(err)
+	}
+	got := reloadActionRecord(t, db, rec.ID)
+	if got.ActionToken != "" || got.Status != rec.Status || got.User != rec.User {
+		t.Fatalf("record after token migration: %+v", got)
+	}
+}
+
 func TestRevertUnavailableWhenNoAction(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	if _, err := svc.Revert(context.Background(), 7, rec.ID); !errors.Is(err, recordservice.ErrRevertUnavailable) {
 		t.Fatalf("expected unavailable, got %v", err)
@@ -355,7 +461,7 @@ func TestRevertExpiredWindowIsPruned(t *testing.T) {
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
 	store := newFakeActionStore()
-	svc := newActionRecordService(db, store)
+	svc := newActionRecordService(t, db, store)
 
 	// A journaled action whose window has already lapsed.
 	if err := store.Push(context.Background(), 7, recordservice.RecordActionEntry{
@@ -379,7 +485,7 @@ func TestRevertInvalidatedBySystemCleanup(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 
 	// Make the appointment past so the nightly cleanup closes the record.
 	if err := db.Model(&recordmodel.ClinicRecord{}).
@@ -441,7 +547,7 @@ func TestRevertibleFieldsPerViewer(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
-	svc := newActionRecordService(db, newFakeActionStore())
+	svc := newActionRecordService(t, db, newFakeActionStore())
 	ctx := context.Background()
 
 	if _, err := svc.MarkConfirmed(ctx, rec.ID, 7); err != nil {

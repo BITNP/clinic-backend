@@ -13,7 +13,7 @@ import (
 
 func TestRecordTagService_SeedCatalog(t *testing.T) {
 	db := testutil.SetupTagTestDB(t)
-	svc := taggingservice.NewRecordTagService(db)
+	svc := taggingservice.NewRecordTagService(testutil.RawDB(t, db))
 
 	def, err := svc.SeedDefault()
 	if err != nil {
@@ -86,7 +86,7 @@ func TestRecordTagService_SeedCatalog(t *testing.T) {
 }
 
 func TestRecordTagService_Prompt(t *testing.T) {
-	svc := taggingservice.NewRecordTagService(testutil.SetupTagTestDB(t))
+	svc := taggingservice.NewRecordTagService(testutil.RawDB(t, testutil.SetupTagTestDB(t)))
 
 	prompt := svc.Prompt()
 	if prompt == "" {
@@ -101,7 +101,7 @@ func TestRecordTagService_Prompt(t *testing.T) {
 
 func TestRecordTagService_SeedAndLoad(t *testing.T) {
 	db := testutil.SetupTagTestDB(t)
-	svc := taggingservice.NewRecordTagService(db)
+	svc := taggingservice.NewRecordTagService(testutil.RawDB(t, db))
 
 	def, err := svc.SeedDefault()
 	if err != nil {
@@ -136,7 +136,7 @@ func TestRecordTagService_SeedAndLoad(t *testing.T) {
 
 func TestRecordTagService_BackfillRecords(t *testing.T) {
 	db := testutil.SetupTagTestDB(t)
-	svc := taggingservice.NewRecordTagService(db)
+	svc := taggingservice.NewRecordTagService(testutil.RawDB(t, db))
 
 	def, err := svc.SeedDefault()
 	if err != nil {
@@ -191,5 +191,26 @@ func TestRecordTagService_BackfillRecords(t *testing.T) {
 	}
 	if gotT.TagID != other.ID {
 		t.Errorf("expected tagged record unchanged (%d), got %d", other.ID, gotT.TagID)
+	}
+}
+
+func TestRecordTagService_Load_NullableTextFields(t *testing.T) {
+	db := testutil.SetupTagTestDB(t)
+	svc := taggingservice.NewRecordTagService(testutil.RawDB(t, db))
+	if err := db.Exec(
+		`INSERT INTO clinic_record_tag (title, description, apply_rule) VALUES (?, NULL, NULL)`,
+		"nullable-tag",
+	).Error; err != nil {
+		t.Fatalf("seed nullable tag: %v", err)
+	}
+	if err := svc.Load(); err != nil {
+		t.Fatalf("load tags: %v", err)
+	}
+	tag, ok := svc.ByTitle("nullable-tag")
+	if !ok {
+		t.Fatal("expected nullable tag to load")
+	}
+	if tag.Description != "" || tag.ApplyRule != "" {
+		t.Errorf("nullable fields = %q, %q; want empty strings", tag.Description, tag.ApplyRule)
 	}
 }

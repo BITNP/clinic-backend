@@ -8,6 +8,7 @@ import (
 
 	"clinic-backend/internal/announcement"
 	authmodel "clinic-backend/internal/auth/model"
+	databasepkg "clinic-backend/internal/database"
 	recordmodel "clinic-backend/internal/record/model"
 	roommodel "clinic-backend/internal/room/model"
 	schedulingmodel "clinic-backend/internal/scheduling/model"
@@ -20,7 +21,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-func openDatabase() *gorm.DB {
+func openDatabase() (*gorm.DB, *databasepkg.DB) {
 	driver := envString("CLINIC_DB_DRIVER", "sqlite")
 	dsn := envString("CLINIC_DB_DSN", "clinic.db")
 
@@ -36,10 +37,10 @@ func openDatabase() *gorm.DB {
 	default:
 		log.Fatalf("invalid CLINIC_DB_DRIVER %q: must be sqlite or postgres", driver)
 	}
-	// The application uses gorm.ErrRecordNotFound as a normal control-flow
-	// signal when probing optional side tables, so silence those logs while
-	// keeping real errors and slow-query warnings. Colorful is disabled to
-	// avoid ANSI escapes in journald/syslog.
+	// GORM remains for schema migration and bootstrap only. Module services
+	// use database/sql, so keep migration logs quiet while retaining real
+	// errors and slow-query warnings. Colorful is disabled to avoid ANSI
+	// escapes in journald/syslog.
 	db, err := gorm.Open(dialector, &gorm.Config{
 		Logger: logger.New(
 			log.New(os.Stdout, "\r\n", log.LstdFlags),
@@ -102,5 +103,13 @@ func openDatabase() *gorm.DB {
 		log.Fatalf("failed to create enabled-schedule unique index: %v", err)
 	}
 
-	return db
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatalf("failed to get SQL database: %v", err)
+	}
+	rawDriver := databasepkg.DriverSQLite
+	if driver == "postgres" {
+		rawDriver = databasepkg.DriverPostgres
+	}
+	return db, databasepkg.Wrap(sqlDB, rawDriver)
 }

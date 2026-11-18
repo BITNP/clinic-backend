@@ -1,16 +1,17 @@
 package service
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"clinic-backend/internal/calendar"
+	"clinic-backend/internal/database"
 	recordmodel "clinic-backend/internal/record/model"
-	roommodel "clinic-backend/internal/room/model"
 	schedulingmodel "clinic-backend/internal/scheduling/model"
-
-	"gorm.io/gorm"
 )
 
 // ErrServiceDateNotFound is returned when no service date matches the given id.
@@ -25,13 +26,13 @@ var ErrServiceDateRoomNotFound = errors.New("room does not exist")
 
 // ServiceDateService contains the business logic for service date CRUD.
 type ServiceDateService struct {
-	db  *gorm.DB
+	db  *database.DB
 	loc *time.Location
 }
 
 // NewServiceDateService creates a new ServiceDateService.
 // If loc is nil, UTC+8 is used as the default timezone.
-func NewServiceDateService(db *gorm.DB, loc *time.Location) *ServiceDateService {
+func NewServiceDateService(db *database.DB, loc *time.Location) *ServiceDateService {
 	if loc == nil {
 		loc = calendar.DefaultServiceDateLocation()
 	}
@@ -81,7 +82,7 @@ func (s *ServiceDateService) Create(in CreateServiceDateInput) (schedulingmodel.
 	if err := s.assertRoomExists(in.RoomID); err != nil {
 		return schedulingmodel.ClinicServiceDate{}, err
 	}
-	d := schedulingmodel.ClinicServiceDate{
+	date := schedulingmodel.ClinicServiceDate{
 		Capacity:  in.Capacity,
 		RoomID:    &in.RoomID,
 		Date:      calendar.DateInLocation(in.Date, s.loc),
@@ -89,35 +90,43 @@ func (s *ServiceDateService) Create(in CreateServiceDateInput) (schedulingmodel.
 		EndTime:   in.EndTime,
 		Title:     in.Title,
 	}
-	if err := s.db.Create(&d).Error; err != nil {
+	date, err := scanServiceDate(s.db.QueryRow(
+		`INSERT INTO clinic_service_date (capacity, room_id, date, start_time, end_time, title)
+		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING `+serviceDateColumns,
+		date.Capacity, *date.RoomID, date.Date, date.StartTime, date.EndTime, date.Title,
+	))
+	if err != nil {
 		return schedulingmodel.ClinicServiceDate{}, fmt.Errorf("create service date: %w", err)
 	}
-	return d, nil
+	return date, nil
 }
 
 func (s *ServiceDateService) GetByID(id uint) (schedulingmodel.ClinicServiceDate, error) {
-	var d schedulingmodel.ClinicServiceDate
-	if err := s.db.First(&d, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	date, err := scanServiceDate(s.db.QueryRow(
+		"SELECT "+serviceDateColumns+" FROM clinic_service_date WHERE id = $1",
+		id,
+	))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return schedulingmodel.ClinicServiceDate{}, ErrServiceDateNotFound
 		}
 		return schedulingmodel.ClinicServiceDate{}, fmt.Errorf("get service date %d: %w", id, err)
 	}
-	booked, err := s.bookedCount(d.RoomID, d.Date, calendar.DateInLocation(time.Now(), s.loc))
+	booked, err := s.bookedCount(date.RoomID, date.Date, calendar.DateInLocation(time.Now(), s.loc))
 	if err != nil {
 		return schedulingmodel.ClinicServiceDate{}, err
 	}
-	d.Count = booked
-	return d, nil
+	date.Count = booked
+	return date, nil
 }
 
 // assertRoomExists verifies the given room exists, returning ErrServiceDateRoomNotFound otherwise.
 func (s *ServiceDateService) assertRoomExists(roomID uint) error {
-	var n int64
-	if err := s.db.Model(&roommodel.ClinicRoom{}).Where("id = ?", roomID).Count(&n).Error; err != nil {
+	var exists bool
+	if err := s.db.QueryRow("SELECT EXISTS (SELECT 1 FROM clinic_room WHERE id = $1)", roomID).Scan(&exists); err != nil {
 		return fmt.Errorf("check room %d: %w", roomID, err)
 	}
-	if n == 0 {
+	if !exists {
 		return fmt.Errorf("room %d: %w", roomID, ErrServiceDateRoomNotFound)
 	}
 	return nil
@@ -127,25 +136,33 @@ func (s *ServiceDateService) assertRoomExists(roomID uint) error {
 // ErrServiceDateNotFound if none exists. Used by the ticket flow to verify the
 // clinic is open on a requested appointment day.
 func (s *ServiceDateService) GetByDateAndRoom(roomID uint, date time.Time) (schedulingmodel.ClinicServiceDate, error) {
-	var d schedulingmodel.ClinicServiceDate
-	if err := s.db.Where("room_id = ? AND date = ?", roomID, calendar.DateInLocation(date, s.loc)).First(&d).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	serviceDate, err := scanServiceDate(s.db.QueryRow(
+		"SELECT "+serviceDateColumns+" FROM clinic_service_date WHERE room_id = $1 AND date = $2 ORDER BY id LIMIT 1",
+		roomID, calendar.DateInLocation(date, s.loc),
+	))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return schedulingmodel.ClinicServiceDate{}, ErrServiceDateNotFound
 		}
 		return schedulingmodel.ClinicServiceDate{}, fmt.Errorf("get service date room=%d date=%s: %w", roomID, date.Format("2006-01-02"), err)
 	}
-	return d, nil
+	return serviceDate, nil
+}
+
+type rowQueryer interface {
+	QueryRow(query string, args ...any) *sql.Row
 }
 
 // recordsExistFor returns true if any repair record references the given room+date.
-func (s *ServiceDateService) recordsExistFor(tx *gorm.DB, roomID uint, date time.Time) (bool, error) {
-	var n int64
-	q := tx.Model(&recordmodel.ClinicRecord{}).
-		Where("room = ? AND appointment_time = ?", roomID, calendar.DateInLocation(date, s.loc))
-	if err := q.Count(&n).Error; err != nil {
+func (s *ServiceDateService) recordsExistFor(db rowQueryer, roomID uint, date time.Time) (bool, error) {
+	var exists bool
+	if err := db.QueryRow(
+		"SELECT EXISTS (SELECT 1 FROM clinic_record WHERE room = $1 AND appointment_time = $2)",
+		roomID, calendar.DateInLocation(date, s.loc),
+	).Scan(&exists); err != nil {
 		return false, fmt.Errorf("count records for service date: %w", err)
 	}
-	return n > 0, nil
+	return exists, nil
 }
 
 // ticketedCountExcludeStatuses returns the statuses that do not count toward a
@@ -166,43 +183,145 @@ func TicketedCountExcludeStatuses(day, today time.Time) []recordmodel.RecordStat
 }
 
 // bookedCount returns the number of ticketed records for the given room+date,
-// excluding statuses per ticketedCountExcludeStatuses based on whether the day
+// excluding statuses per TicketedCountExcludeStatuses based on whether the day
 // is today/earlier or still ahead.
 func (s *ServiceDateService) bookedCount(roomID *uint, date time.Time, today time.Time) (int64, error) {
 	day := calendar.DateInLocation(date, s.loc)
-	var n int64
-	q := s.db.Model(&recordmodel.ClinicRecord{}).
-		Where("room = ? AND appointment_time = ? AND status NOT IN ?",
-			roomID, day, TicketedCountExcludeStatuses(day, today))
-	if err := q.Count(&n).Error; err != nil {
+	excluded := TicketedCountExcludeStatuses(day, today)
+	args := make([]any, 0, len(excluded)+2)
+	args = append(args, roomID, day)
+	for _, status := range excluded {
+		args = append(args, status)
+	}
+	query := fmt.Sprintf(
+		"SELECT COUNT(*) FROM clinic_record WHERE room = $1 AND appointment_time = $2 AND status NOT IN (%s)",
+		database.Placeholders(3, len(excluded)),
+	)
+	var count int64
+	if err := s.db.QueryRow(query, args...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count booked: %w", err)
 	}
-	return n, nil
+	return count, nil
+}
+
+type serviceDateRoomKey struct {
+	roomID uint
+	date   time.Time
+}
+
+// bookedCounts loads booking counts for a page of service dates in one grouped
+// query. Records from rejected, referred, and no-show tickets are excluded
+// first; completed tickets are subtracted only for future dates.
+func (s *ServiceDateService) bookedCounts(dates []schedulingmodel.ClinicServiceDate, today time.Time) (map[serviceDateRoomKey]int64, error) {
+	wanted := make(map[serviceDateRoomKey]struct{}, len(dates))
+	roomIDs := make([]uint, 0, len(dates))
+	days := make([]time.Time, 0, len(dates))
+	seenRooms := make(map[uint]struct{}, len(dates))
+	seenDays := make(map[time.Time]struct{}, len(dates))
+	for _, date := range dates {
+		if date.RoomID == nil {
+			continue
+		}
+		day := calendar.DateInLocation(date.Date, s.loc)
+		key := serviceDateRoomKey{roomID: *date.RoomID, date: day}
+		wanted[key] = struct{}{}
+		if _, ok := seenRooms[key.roomID]; !ok {
+			seenRooms[key.roomID] = struct{}{}
+			roomIDs = append(roomIDs, key.roomID)
+		}
+		if _, ok := seenDays[key.date]; !ok {
+			seenDays[key.date] = struct{}{}
+			days = append(days, key.date)
+		}
+	}
+	counts := make(map[serviceDateRoomKey]int64, len(wanted))
+	if len(wanted) == 0 {
+		return counts, nil
+	}
+
+	args := []any{
+		recordmodel.RecordStatusCompleted,
+		recordmodel.RecordStatusRejected,
+		recordmodel.RecordStatusReferred,
+		recordmodel.RecordStatusNoShow,
+	}
+	roomStart := len(args) + 1
+	for _, roomID := range roomIDs {
+		args = append(args, roomID)
+	}
+	dayStart := len(args) + 1
+	for _, day := range days {
+		args = append(args, day)
+	}
+	query := fmt.Sprintf(
+		`SELECT room, appointment_time, COUNT(*), SUM(CASE WHEN status = $1 THEN 1 ELSE 0 END)
+		 FROM clinic_record
+		 WHERE status NOT IN ($2, $3, $4)
+		   AND room IN (%s)
+		   AND appointment_time IN (%s)
+		 GROUP BY room, appointment_time`,
+		database.Placeholders(roomStart, len(roomIDs)),
+		database.Placeholders(dayStart, len(days)),
+	)
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("count booked for service dates: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var roomID uint
+		var day time.Time
+		var total, completed int64
+		if err := rows.Scan(&roomID, &day, &total, &completed); err != nil {
+			return nil, fmt.Errorf("scan booked count: %w", err)
+		}
+		key := serviceDateRoomKey{roomID: roomID, date: calendar.DateInLocation(day, s.loc)}
+		if _, ok := wanted[key]; !ok {
+			continue
+		}
+		if key.date.After(today) {
+			total -= completed
+		}
+		counts[key] = total
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("count booked for service dates: %w", err)
+	}
+	return counts, nil
 }
 
 func (s *ServiceDateService) List(f ListServiceDateFilter) ([]schedulingmodel.ClinicServiceDate, int64, error) {
-	q := s.db.Model(&schedulingmodel.ClinicServiceDate{})
+	where := []string{"1 = 1"}
+	var args []any
 	if len(f.RoomIDs) > 0 {
-		q = q.Where("room_id IN ?", f.RoomIDs)
+		for _, roomID := range f.RoomIDs {
+			args = append(args, roomID)
+		}
+		where = append(where, "room_id IN ("+database.Placeholders(1, len(f.RoomIDs))+")")
 	} else if f.RoomID != nil {
-		q = q.Where("room_id = ?", *f.RoomID)
+		args = append(args, *f.RoomID)
+		where = append(where, fmt.Sprintf("room_id = $%d", len(args)))
 	}
 	if !f.FromDate.IsZero() {
-		q = q.Where("date >= ?", calendar.DateInLocation(f.FromDate, s.loc))
+		args = append(args, calendar.DateInLocation(f.FromDate, s.loc))
+		where = append(where, fmt.Sprintf("date >= $%d", len(args)))
 	}
 	if !f.ToDate.IsZero() {
-		q = q.Where("date <= ?", calendar.DateInLocation(f.ToDate, s.loc))
+		args = append(args, calendar.DateInLocation(f.ToDate, s.loc))
+		where = append(where, fmt.Sprintf("date <= $%d", len(args)))
 	}
 	loc := s.loc
 	if f.TodayLoc != nil {
 		loc = f.TodayLoc
 	}
 	if f.ActiveOnly {
-		q = q.Where("date >= ?", calendar.DateInLocation(time.Now(), loc))
+		args = append(args, calendar.DateInLocation(time.Now(), loc))
+		where = append(where, fmt.Sprintf("date >= $%d", len(args)))
 	}
+	predicate := " WHERE " + strings.Join(where, " AND ")
 
 	var total int64
-	if err := q.Count(&total).Error; err != nil {
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM clinic_service_date"+predicate, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count service dates: %w", err)
 	}
 
@@ -214,75 +333,102 @@ func (s *ServiceDateService) List(f ListServiceDateFilter) ([]schedulingmodel.Cl
 	}
 	offset := (f.Page - 1) * f.PageSize
 
-	var items []schedulingmodel.ClinicServiceDate
-	if err := q.
-		Order("date ASC, start_time ASC").
-		Offset(offset).
-		Limit(f.PageSize).
-		Find(&items).Error; err != nil {
+	args = append(args, f.PageSize, offset)
+	query := fmt.Sprintf(
+		"SELECT %s FROM clinic_service_date%s ORDER BY date ASC, start_time ASC LIMIT $%d OFFSET $%d",
+		serviceDateColumns, predicate, len(args)-1, len(args),
+	)
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list service dates: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]schedulingmodel.ClinicServiceDate, 0)
+	for rows.Next() {
+		date, err := scanServiceDate(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("scan service date: %w", err)
+		}
+		items = append(items, date)
+	}
+	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("list service dates: %w", err)
 	}
 
-	filtered := items[:0]
 	today := calendar.DateInLocation(time.Now(), loc)
-	for _, d := range items {
-		booked, err := s.bookedCount(d.RoomID, d.Date, today)
-		if err != nil {
-			return nil, 0, fmt.Errorf("count booked for service date %d: %w", d.ID, err)
+	counts, err := s.bookedCounts(items, today)
+	if err != nil {
+		return nil, 0, err
+	}
+	filtered := items[:0]
+	for _, date := range items {
+		var booked int64
+		if date.RoomID != nil {
+			booked = counts[serviceDateRoomKey{
+				roomID: *date.RoomID,
+				date:   calendar.DateInLocation(date.Date, s.loc),
+			}]
 		}
-		d.Count = booked
-		if !f.HasCapacity || booked < int64(d.Capacity) {
-			filtered = append(filtered, d)
+		date.Count = booked
+		if !f.HasCapacity || booked < int64(date.Capacity) {
+			filtered = append(filtered, date)
 		}
 	}
-	items = filtered
-	return items, total, nil
+	return filtered, total, nil
 }
 
 func (s *ServiceDateService) Update(id uint, in UpdateServiceDateInput) (schedulingmodel.ClinicServiceDate, error) {
-	var d schedulingmodel.ClinicServiceDate
-	if err := s.db.First(&d, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	date, err := scanServiceDate(s.db.QueryRow(
+		"SELECT "+serviceDateColumns+" FROM clinic_service_date WHERE id = $1",
+		id,
+	))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return schedulingmodel.ClinicServiceDate{}, ErrServiceDateNotFound
 		}
 		return schedulingmodel.ClinicServiceDate{}, fmt.Errorf("get service date %d for update: %w", id, err)
 	}
 
-	originalRoomID := *d.RoomID
-	originalDate := calendar.DateInLocation(d.Date, s.loc)
+	originalRoomID := date.RoomID
+	originalDate := calendar.DateInLocation(date.Date, s.loc)
 	effectiveRoomID := originalRoomID
 	effectiveDate := originalDate
 	if in.RoomID != nil {
 		if err := s.assertRoomExists(*in.RoomID); err != nil {
 			return schedulingmodel.ClinicServiceDate{}, err
 		}
-		effectiveRoomID = *in.RoomID
+		effectiveRoomID = in.RoomID
 	}
 	if in.Date != nil {
 		effectiveDate = calendar.DateInLocation(*in.Date, s.loc)
 	}
 
-	roomChanged := effectiveRoomID != originalRoomID
+	roomChanged := in.RoomID != nil && (originalRoomID == nil || *effectiveRoomID != *originalRoomID)
 	dateChanged := !effectiveDate.Equal(originalDate)
 	if roomChanged || dateChanged {
-		inUse, err := s.recordsExistFor(s.db, originalRoomID, originalDate)
-		if err != nil {
-			return schedulingmodel.ClinicServiceDate{}, err
+		if originalRoomID != nil {
+			inUse, err := s.recordsExistFor(s.db, *originalRoomID, originalDate)
+			if err != nil {
+				return schedulingmodel.ClinicServiceDate{}, err
+			}
+			if inUse {
+				return schedulingmodel.ClinicServiceDate{}, ErrServiceDateInUse
+			}
 		}
-		if inUse {
-			return schedulingmodel.ClinicServiceDate{}, ErrServiceDateInUse
-		}
-		inUse, err = s.recordsExistFor(s.db, effectiveRoomID, effectiveDate)
-		if err != nil {
-			return schedulingmodel.ClinicServiceDate{}, err
-		}
-		if inUse {
-			return schedulingmodel.ClinicServiceDate{}, ErrServiceDateInUse
+		if effectiveRoomID != nil {
+			inUse, err := s.recordsExistFor(s.db, *effectiveRoomID, effectiveDate)
+			if err != nil {
+				return schedulingmodel.ClinicServiceDate{}, err
+			}
+			if inUse {
+				return schedulingmodel.ClinicServiceDate{}, ErrServiceDateInUse
+			}
 		}
 	}
 
 	if in.Capacity != nil {
-		booked, err := s.bookedCount(&effectiveRoomID, effectiveDate, calendar.DateInLocation(time.Now(), s.loc))
+		booked, err := s.bookedCount(effectiveRoomID, effectiveDate, calendar.DateInLocation(time.Now(), s.loc))
 		if err != nil {
 			return schedulingmodel.ClinicServiceDate{}, err
 		}
@@ -291,56 +437,68 @@ func (s *ServiceDateService) Update(id uint, in UpdateServiceDateInput) (schedul
 		}
 	}
 
-	updates := map[string]any{}
+	var updates []string
+	var args []any
+	add := func(column string, value any) {
+		args = append(args, value)
+		updates = append(updates, fmt.Sprintf("%s = $%d", column, len(args)))
+	}
 	if in.Capacity != nil {
-		updates["capacity"] = *in.Capacity
+		add("capacity", *in.Capacity)
 	}
 	if in.RoomID != nil {
-		updates["room_id"] = *in.RoomID
+		add("room_id", *in.RoomID)
 	}
 	if in.Date != nil {
-		updates["date"] = calendar.DateInLocation(*in.Date, s.loc)
+		add("date", calendar.DateInLocation(*in.Date, s.loc))
 	}
 	if in.StartTime != nil {
-		updates["start_time"] = *in.StartTime
+		add("start_time", *in.StartTime)
 	}
 	if in.EndTime != nil {
-		updates["end_time"] = *in.EndTime
+		add("end_time", *in.EndTime)
 	}
 	if in.Title != nil {
-		updates["title"] = *in.Title
+		add("title", *in.Title)
 	}
 
-	if len(updates) > 0 {
-		if err := s.db.Model(&d).Updates(updates).Error; err != nil {
-			return schedulingmodel.ClinicServiceDate{}, fmt.Errorf("update service date %d: %w", id, err)
-		}
+	if len(updates) == 0 {
+		return date, nil
 	}
-
-	if err := s.db.First(&d, id).Error; err != nil {
-		return schedulingmodel.ClinicServiceDate{}, fmt.Errorf("reload service date %d: %w", id, err)
+	args = append(args, id)
+	date, err = scanServiceDate(s.db.QueryRow(
+		"UPDATE clinic_service_date SET "+strings.Join(updates, ", ")+" WHERE id = $"+fmt.Sprint(len(args))+" RETURNING "+serviceDateColumns,
+		args...,
+	))
+	if err != nil {
+		return schedulingmodel.ClinicServiceDate{}, fmt.Errorf("update service date %d: %w", id, err)
 	}
-	return d, nil
+	return date, nil
 }
 
 func (s *ServiceDateService) Delete(id uint) error {
-	var d schedulingmodel.ClinicServiceDate
-	if err := s.db.First(&d, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	date, err := scanServiceDate(s.db.QueryRow(
+		"SELECT "+serviceDateColumns+" FROM clinic_service_date WHERE id = $1",
+		id,
+	))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return ErrServiceDateNotFound
 		}
 		return fmt.Errorf("get service date %d for delete: %w", id, err)
 	}
 
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		inUse, err := s.recordsExistFor(tx, *d.RoomID, d.Date)
-		if err != nil {
-			return err
+	return database.WithTx(context.Background(), s.db.DB, func(tx *sql.Tx) error {
+		if date.RoomID != nil {
+			inUse, err := s.recordsExistFor(tx, *date.RoomID, date.Date)
+			if err != nil {
+				return err
+			}
+			if inUse {
+				return ErrServiceDateInUse
+			}
 		}
-		if inUse {
-			return ErrServiceDateInUse
-		}
-		if err := tx.Delete(&d).Error; err != nil {
+		if _, err := tx.Exec("DELETE FROM clinic_service_date WHERE id = $1", id); err != nil {
 			return fmt.Errorf("delete service date %d: %w", id, err)
 		}
 		return nil

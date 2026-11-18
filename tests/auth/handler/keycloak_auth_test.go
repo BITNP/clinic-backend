@@ -16,6 +16,7 @@ import (
 	authservice "clinic-backend/internal/auth/service"
 	staffmodel "clinic-backend/internal/staff/model"
 	staffservice "clinic-backend/internal/staff/service"
+	"clinic-backend/internal/testutil"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -39,7 +40,7 @@ func setupKeycloakTest(t *testing.T) (*rsa.PrivateKey, string, *staffservice.Sta
 	if err := db.AutoMigrate(&staffmodel.ClinicStaff{}, &staffmodel.ClinicStaffWorkyear{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	staffSvc := staffservice.NewStaffService(db)
+	staffSvc := staffservice.NewStaffService(testutil.RawDB(t, db))
 
 	return key, "fake-kid", staffSvc, db
 }
@@ -259,7 +260,7 @@ func TestCombinedAuth_BearerToken(t *testing.T) {
 	fake := httptest.NewServer(jwksHandler(key, kid))
 	defer fake.Close()
 
-	sessionSvc := authservice.NewSessionService(mustOpenEmptyDB(t), time.Hour)
+	sessionSvc := authservice.NewSessionService(sessionSQLDB(t, mustOpenEmptyDB(t)), time.Hour)
 	kcAuth := authhandler.NewKeycloakAuthenticator(fake.URL+"/realms/fake", "clinic-backend", staffSvc)
 
 	r := gin.New()
@@ -297,7 +298,7 @@ func TestCombinedAuth_BearerNotConfigured(t *testing.T) {
 	fake := httptest.NewServer(jwksHandler(key, kid))
 	defer fake.Close()
 
-	sessionSvc := authservice.NewSessionService(mustOpenEmptyDB(t), time.Hour)
+	sessionSvc := authservice.NewSessionService(sessionSQLDB(t, mustOpenEmptyDB(t)), time.Hour)
 	kcAuth := authhandler.NewKeycloakAuthenticator("", "", staffSvc)
 
 	r := gin.New()

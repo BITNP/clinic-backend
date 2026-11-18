@@ -40,7 +40,7 @@ func setupTicketHandlerRouter(t *testing.T) (*gin.Engine, *gorm.DB, *recordservi
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	svc := recordservice.NewTicketService(db, nil)
+	svc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
 	h := recordhandler.NewTicketHandler(svc)
 
 	r := gin.New()

@@ -29,7 +29,7 @@ func setupRoomHandlerRouter(t *testing.T) (*gin.Engine, *roomservice.RoomService
 	if err := db.Create(&roommodel.ClinicCampus{Name: "Test Campus"}).Error; err != nil {
 		t.Fatalf("seed campus: %v", err)
 	}
-	svc := roomservice.NewRoomService(db)
+	svc := roomservice.NewRoomService(testutil.RawDB(t, db))
 	h := roomhandler.NewRoomHandler(svc)
 
 	r := gin.New()

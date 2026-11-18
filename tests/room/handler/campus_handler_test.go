@@ -30,8 +30,8 @@ func setupCampusHandlerRouter(t *testing.T) (*gin.Engine, *roomservice.CampusSer
 		t.Fatalf("migrate: %v", err)
 	}
 
-	campusSvc := roomservice.NewCampusService(db)
-	roomSvc := roomservice.NewRoomService(db)
+	campusSvc := roomservice.NewCampusService(testutil.RawDB(t, db))
+	roomSvc := roomservice.NewRoomService(testutil.RawDB(t, db))
 	h := roomhandler.NewCampusHandler(campusSvc, roomSvc)
 
 	r := gin.New()
@@ -305,7 +305,7 @@ func TestCampusHandler_ClientRecommendation(t *testing.T) {
 	if err := db.AutoMigrate(&schedulingmodel.ClinicServiceDate{}, &recordmodel.ClinicRecord{}); err != nil {
 		t.Fatal(err)
 	}
-	h := roomhandler.NewCampusHandler(svc, roomservice.NewRoomService(db))
+	h := roomhandler.NewCampusHandler(svc, roomservice.NewRoomService(testutil.RawDB(t, db)))
 	r.GET("/api/campuses/:id/rooms", h.ListClientRooms)
 	campus, err := svc.Create(roomservice.CreateCampusInput{Name: "main"})
 	if err != nil {

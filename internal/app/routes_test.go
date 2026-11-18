@@ -51,8 +51,8 @@ func TestClientCampusRoutes(t *testing.T) {
 		t.Fatalf("seed rooms: %v", err)
 	}
 
-	campusSvc := roomservice.NewCampusService(db)
-	roomSvc := roomservice.NewRoomService(db)
+	campusSvc := roomservice.NewCampusService(testutil.RawDB(t, db))
+	roomSvc := roomservice.NewRoomService(testutil.RawDB(t, db))
 	router := (routeHandlers{
 		campusH:    roomhandler.NewCampusHandler(campusSvc, roomSvc),
 		roomH:      roomhandler.NewRoomHandler(roomSvc),

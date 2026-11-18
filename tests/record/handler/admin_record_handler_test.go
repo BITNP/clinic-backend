@@ -12,6 +12,7 @@ import (
 	recordservice "clinic-backend/internal/record/service"
 	roommodel "clinic-backend/internal/room/model"
 	staffmodel "clinic-backend/internal/staff/model"
+	"clinic-backend/internal/testutil"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/sqlite"
@@ -65,7 +66,7 @@ func TestAdminRecordHandlerListSearchByRealname(t *testing.T) {
 		}
 	}
 
-	h := recordhandler.NewAdminRecordHandler(recordservice.NewAdminRecordService(db))
+	h := recordhandler.NewAdminRecordHandler(recordservice.NewAdminRecordService(testutil.RawDB(t, db)))
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodGet, "/api/admin/records?realname=张&page=1&pageSize=1", nil)

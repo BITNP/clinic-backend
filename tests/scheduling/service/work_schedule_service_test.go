@@ -38,7 +38,7 @@ func setupWorkScheduleServiceDB(t *testing.T) *gorm.DB {
 
 func TestWorkScheduleService_Create_Success(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 
 	roomID := testutil.SeedRoom(t, db, "Room A")
 	staffIDs := testutil.SeedStaff(t, db, 2)
@@ -68,7 +68,7 @@ func TestWorkScheduleService_Create_Success(t *testing.T) {
 
 func TestWorkScheduleService_GetByID_PreloadsRoomCampus(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 
 	campus := roommodel.ClinicCampus{Name: "Campus"}
 	if err := db.Create(&campus).Error; err != nil {
@@ -111,7 +111,7 @@ func TestWorkScheduleService_GetByID_PreloadsRoomCampus(t *testing.T) {
 
 func TestWorkScheduleService_Create_Enabled_OnlyOne(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 
 	_, err := svc.Create(schedulingservice.CreateWorkScheduleInput{
 		Name:      "First",
@@ -136,7 +136,7 @@ func TestWorkScheduleService_Create_Enabled_OnlyOne(t *testing.T) {
 
 func TestWorkScheduleService_Create_DuplicateName(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 
 	_, err := svc.Create(schedulingservice.CreateWorkScheduleInput{
 		Name:      "Same",
@@ -158,7 +158,7 @@ func TestWorkScheduleService_Create_DuplicateName(t *testing.T) {
 
 func TestWorkScheduleService_Create_InvalidDateRange(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 
 	_, err := svc.Create(schedulingservice.CreateWorkScheduleInput{
 		Name:      "Bad",
@@ -172,7 +172,7 @@ func TestWorkScheduleService_Create_InvalidDateRange(t *testing.T) {
 
 func TestWorkScheduleService_Create_RoomNotFound(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 
 	_, err := svc.Create(schedulingservice.CreateWorkScheduleInput{
 		Name:      "Test",
@@ -189,7 +189,7 @@ func TestWorkScheduleService_Create_RoomNotFound(t *testing.T) {
 
 func TestWorkScheduleService_Create_StaffNotFound(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 	roomID := testutil.SeedRoom(t, db, "R1")
 
 	_, err := svc.Create(schedulingservice.CreateWorkScheduleInput{
@@ -207,7 +207,7 @@ func TestWorkScheduleService_Create_StaffNotFound(t *testing.T) {
 
 func TestWorkScheduleService_GetByID_NotFound(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 
 	_, err := svc.GetByID(999)
 	if !errors.Is(err, schedulingservice.ErrWorkScheduleNotFound) {
@@ -217,7 +217,7 @@ func TestWorkScheduleService_GetByID_NotFound(t *testing.T) {
 
 func TestWorkScheduleService_GetByID_WithNested(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 
 	roomID := testutil.SeedRoom(t, db, "R1")
 	staffID := testutil.SeedOneStaff(t, db)
@@ -256,9 +256,42 @@ func TestWorkScheduleService_GetByID_WithNested(t *testing.T) {
 	}
 }
 
+func TestWorkScheduleService_GetByID_NullableStaffIdentity(t *testing.T) {
+	db := setupWorkScheduleServiceDB(t)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
+	roomID := testutil.SeedRoom(t, db, "R1")
+	if err := db.Exec(
+		`INSERT INTO clinic_staff (id, account_id, realname, email, qq_number, role, version)
+		 VALUES (?, ?, NULL, NULL, '', 'staff', 0)`,
+		61, "cas:nullable",
+	).Error; err != nil {
+		t.Fatalf("seed nullable staff: %v", err)
+	}
+	testutil.SeedStaffWorkYear(t, db, 61, 2026)
+
+	created, err := svc.Create(schedulingservice.CreateWorkScheduleInput{
+		Name:      "Nullable staff",
+		StartDate: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		EndDate:   time.Date(2026, 12, 31, 0, 0, 0, 0, time.UTC),
+		Weekdays: []schedulingservice.WeekdayInput{
+			{Weekday: 1, StartTime: "09:00", EndTime: "12:00", RoomID: roomID, StaffIDs: []int{61}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create schedule: %v", err)
+	}
+	schedule, err := svc.GetByID(created.ID)
+	if err != nil {
+		t.Fatalf("get schedule: %v", err)
+	}
+	if got := schedule.Weekdays[0].Staff[0].Staff; got.Realname != "" || got.Email != "" {
+		t.Errorf("nullable fields = %q, %q; want empty strings", got.Realname, got.Email)
+	}
+}
+
 func TestWorkScheduleService_List_FilterEnabled(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 
 	_, err := svc.Create(schedulingservice.CreateWorkScheduleInput{
 		Name: "A", StartDate: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -295,7 +328,7 @@ func TestWorkScheduleService_List_FilterEnabled(t *testing.T) {
 
 func TestWorkScheduleService_Update_Enable_OnlyOne(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 
 	first, err := svc.Create(schedulingservice.CreateWorkScheduleInput{
 		Name: "First", StartDate: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -333,7 +366,7 @@ func TestWorkScheduleService_Update_Enable_OnlyOne(t *testing.T) {
 
 func TestWorkScheduleService_Update_ReplaceWeekdays(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 	roomID1 := testutil.SeedRoom(t, db, "R1")
 	roomID2 := testutil.SeedRoom(t, db, "R2")
 
@@ -370,7 +403,7 @@ func TestWorkScheduleService_Update_ReplaceWeekdays(t *testing.T) {
 
 func TestWorkScheduleService_Update_NameDuplicate(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 
 	_, err := svc.Create(schedulingservice.CreateWorkScheduleInput{
 		Name: "A", StartDate: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -396,7 +429,7 @@ func TestWorkScheduleService_Update_NameDuplicate(t *testing.T) {
 
 func TestWorkScheduleService_Delete_Success(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 	roomID := testutil.SeedRoom(t, db, "R1")
 
 	created, err := svc.Create(schedulingservice.CreateWorkScheduleInput{
@@ -427,7 +460,7 @@ func TestWorkScheduleService_Delete_Success(t *testing.T) {
 
 func TestWorkScheduleService_Delete_NotFound(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 
 	err := svc.Delete(999)
 	if !errors.Is(err, schedulingservice.ErrWorkScheduleNotFound) {
@@ -437,7 +470,7 @@ func TestWorkScheduleService_Delete_NotFound(t *testing.T) {
 
 func TestWorkScheduleService_AddStaff_Success(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 	roomID := testutil.SeedRoom(t, db, "R1")
 	staffID := testutil.SeedOneStaff(t, db)
 	testutil.SeedStaffWorkYear(t, db, staffID, 2026)
@@ -476,7 +509,7 @@ func TestWorkScheduleService_AddStaff_Success(t *testing.T) {
 
 func TestWorkScheduleService_AddStaff_WeekdayNotFound(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 	roomID := testutil.SeedRoom(t, db, "R1")
 	staffID := testutil.SeedOneStaff(t, db)
 	testutil.SeedStaffWorkYear(t, db, staffID, 2026)
@@ -500,7 +533,7 @@ func TestWorkScheduleService_AddStaff_WeekdayNotFound(t *testing.T) {
 
 func TestWorkScheduleService_RemoveStaff_Success(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 	roomID := testutil.SeedRoom(t, db, "R1")
 	staffID := testutil.SeedOneStaff(t, db)
 
@@ -532,7 +565,7 @@ func TestWorkScheduleService_RemoveStaff_Success(t *testing.T) {
 
 func TestWorkScheduleService_ListStaff(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 	roomID := testutil.SeedRoom(t, db, "R1")
 	staffIDs := testutil.SeedStaff(t, db, 3)
 
@@ -562,9 +595,18 @@ func TestWorkScheduleService_ListStaff(t *testing.T) {
 	}
 }
 
+func TestWorkScheduleService_ListStaff_NotFound(t *testing.T) {
+	db := setupWorkScheduleServiceDB(t)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
+
+	if _, err := svc.ListStaff(999); !errors.Is(err, schedulingservice.ErrWorkScheduleNotFound) {
+		t.Fatalf("expected ErrWorkScheduleNotFound, got %v", err)
+	}
+}
+
 func TestWorkScheduleService_StaffInMultipleSchedules(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 	roomID := testutil.SeedRoom(t, db, "R1")
 	staffID := testutil.SeedOneStaff(t, db)
 
@@ -622,7 +664,7 @@ func TestWorkScheduleService_StaffInMultipleSchedules(t *testing.T) {
 
 func TestWorkScheduleService_AddStaff_AutoCreateWeekday(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 	roomID := testutil.SeedRoom(t, db, "R1")
 	staffID := testutil.SeedOneStaff(t, db)
 	testutil.SeedStaffWorkYear(t, db, staffID, 2026)
@@ -678,7 +720,7 @@ func TestWorkScheduleService_AddStaff_AutoCreateWeekday(t *testing.T) {
 
 func TestWorkScheduleService_AddStaff_StaffNotInWorkYear(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 	roomID := testutil.SeedRoom(t, db, "R1")
 	staffID := testutil.SeedOneStaff(t, db)
 	// Give staff a work year that does NOT match the schedule's 2026.
@@ -709,7 +751,7 @@ func TestWorkScheduleService_AddStaff_StaffNotInWorkYear(t *testing.T) {
 
 func TestWorkScheduleService_ListValidStaff(t *testing.T) {
 	db := setupWorkScheduleServiceDB(t)
-	svc := schedulingservice.NewWorkScheduleService(db)
+	svc := schedulingservice.NewWorkScheduleService(testutil.RawDB(t, db))
 	staffIDs := testutil.SeedStaff(t, db, 3)
 	for _, sid := range staffIDs {
 		testutil.SeedStaffWorkYear(t, db, sid, 2026)

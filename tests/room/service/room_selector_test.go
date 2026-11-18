@@ -53,7 +53,7 @@ func TestPreferredRoom(t *testing.T) {
 					}
 				}
 			}
-			got, err := roomservice.NewRoomService(db).PreferredRoom(context.Background(), campus, today, roomservice.ListRoomFilter{Page: 99, PageSize: 1})
+			got, err := newRoomService(t, db).PreferredRoom(context.Background(), campus, today, roomservice.ListRoomFilter{Page: 99, PageSize: 1})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -75,7 +75,7 @@ func TestPreferredRoomEligibilityAndCounts(t *testing.T) {
 	for _, future := range []bool{false, true} {
 		t.Run(map[bool]string{false: "today", true: "future"}[future], func(t *testing.T) {
 			db := setupRoomServiceDB(t)
-			svc := roomservice.NewRoomService(db)
+			svc := newRoomService(t, db)
 			campus := roommodel.ClinicCampus{Name: "main"}
 			other := roommodel.ClinicCampus{Name: "other"}
 			if err := db.Create(&campus).Error; err != nil {
@@ -160,7 +160,7 @@ func TestPreferredRoomEligibilityAndCounts(t *testing.T) {
 
 func TestCampusSelectionPolicyPersistence(t *testing.T) {
 	db := setupRoomServiceDB(t)
-	svc := roomservice.NewCampusService(db)
+	svc := newCampusService(t, db)
 	campus, err := svc.Create(roomservice.CreateCampusInput{Name: "main"})
 	if err != nil {
 		t.Fatal(err)

@@ -9,9 +9,7 @@ import (
 
 	"clinic-backend/internal/agent/tagger"
 	"clinic-backend/internal/changes"
-	recordmodel "clinic-backend/internal/record/model"
-
-	"gorm.io/gorm"
+	"clinic-backend/internal/database"
 )
 
 const (
@@ -35,7 +33,7 @@ type RecordTagger struct {
 	tagAgent    TagAgent
 	liquidMetal *LiquidMetalTagger
 	tagSvc      *RecordTagService
-	db          *gorm.DB
+	db          *database.DB
 	syncSvc     *changes.SyncService
 	jobs        chan recordTagJob
 	workers     int
@@ -44,7 +42,7 @@ type RecordTagger struct {
 // NewRecordTagger builds a record tagger worker. tagAgent performs the actual
 // tagging; db and tagSvc resolve a matched tag name back to a
 // clinic_record_tag id.
-func NewRecordTagger(tagAgent TagAgent, db *gorm.DB, tagSvc *RecordTagService) *RecordTagger {
+func NewRecordTagger(tagAgent TagAgent, db *database.DB, tagSvc *RecordTagService) *RecordTagger {
 	return &RecordTagger{
 		tagAgent: tagAgent,
 		tagSvc:   tagSvc,
@@ -205,9 +203,11 @@ func (s *RecordTagger) applyRecordTag(ctx context.Context, job recordTagJob) boo
 		log.Printf("tagger: record %d matched unknown tag %q", job.recordID, name)
 		return false
 	}
-	if err := s.db.Model(&recordmodel.ClinicRecord{}).
-		Where("id = ?", job.recordID).
-		Update("tag_id", tag.ID).Error; err != nil {
+	if _, err := s.db.ExecContext(
+		ctx,
+		"UPDATE clinic_record SET tag_id = $1 WHERE id = $2",
+		tag.ID, job.recordID,
+	); err != nil {
 		log.Printf("tagger: update record %d tag_id failed: %v", job.recordID, err)
 		return false
 	}
@@ -229,9 +229,11 @@ func (s *RecordTagger) applyLiquidMetal(ctx context.Context, job recordTagJob) b
 		log.Printf("tagger: liquid metal record %d failed: %v", job.recordID, err)
 		return false
 	}
-	if err := s.db.Model(&recordmodel.ClinicRecord{}).
-		Where("id = ?", job.recordID).
-		Update("liquid_metal_status", LiquidMetalStatusIndex(result.Status)).Error; err != nil {
+	if _, err := s.db.ExecContext(
+		ctx,
+		"UPDATE clinic_record SET liquid_metal_status = $1 WHERE id = $2",
+		LiquidMetalStatusIndex(result.Status), job.recordID,
+	); err != nil {
 		log.Printf("tagger: update record %d liquid_metal_status failed: %v", job.recordID, err)
 		return false
 	}

@@ -2,16 +2,16 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"clinic-backend/internal/calendar"
+	"clinic-backend/internal/database"
 	recordmodel "clinic-backend/internal/record/model"
 	taggingservice "clinic-backend/internal/tagging/service"
-
-	"gorm.io/gorm"
 )
 
 var (
@@ -23,12 +23,12 @@ var (
 )
 
 type AdminRecordService struct {
-	db      *gorm.DB
+	db      *database.DB
 	tagSvc  *taggingservice.RecordTagService
 	actions *RecordActionService
 }
 
-func NewAdminRecordService(db *gorm.DB) *AdminRecordService {
+func NewAdminRecordService(db *database.DB) *AdminRecordService {
 	return &AdminRecordService{db: db}
 }
 
@@ -97,31 +97,38 @@ type AdminRecordView struct {
 }
 
 func (s *AdminRecordService) List(ctx context.Context, actorID int, f ListAdminRecordFilter) ([]AdminRecordView, int64, error) {
-	q := s.db.Model(&recordmodel.ClinicRecord{})
-
+	where := []string{"1 = 1"}
+	var args []any
 	if f.Status != "" {
-		q = q.Where("status = ?", f.Status)
+		args = append(args, f.Status)
+		where = append(where, fmt.Sprintf("status = $%d", len(args)))
 	}
 	if f.RoomID != nil {
-		q = q.Where("room = ?", *f.RoomID)
+		args = append(args, *f.RoomID)
+		where = append(where, fmt.Sprintf("room = $%d", len(args)))
 	}
 	if f.CampusID != nil {
-		q = q.Where("room IN (?)", s.db.Table("clinic_room").Select("id").Where("campus_id = ?", *f.CampusID))
+		args = append(args, *f.CampusID)
+		where = append(where, fmt.Sprintf("room IN (SELECT id FROM clinic_room WHERE campus_id = $%d)", len(args)))
 	}
 	if f.FromDate != nil {
-		q = q.Where("appointment_time >= ?", calendar.DateInLocation(*f.FromDate, nil))
+		args = append(args, calendar.DateInLocation(*f.FromDate, nil))
+		where = append(where, fmt.Sprintf("appointment_time >= $%d", len(args)))
 	}
 	if f.ToDate != nil {
-		q = q.Where("appointment_time <= ?", calendar.DateInLocation(*f.ToDate, nil))
+		args = append(args, calendar.DateInLocation(*f.ToDate, nil))
+		where = append(where, fmt.Sprintf("appointment_time <= $%d", len(args)))
 	}
 	if term := strings.TrimSpace(f.Realname); term != "" {
 		// Escape LIKE metacharacters so the user's text is matched literally.
 		// LOWER() keeps the search case-insensitive on both SQLite and Postgres.
-		q = q.Where(`LOWER(realname) LIKE LOWER(?) ESCAPE '\'`, "%"+escapeLike(term)+"%")
+		args = append(args, "%"+escapeLike(term)+"%")
+		where = append(where, fmt.Sprintf(`LOWER(realname) LIKE LOWER($%d) ESCAPE '\'`, len(args)))
 	}
+	predicate := " WHERE " + strings.Join(where, " AND ")
 
 	var total int64
-	if err := q.Count(&total).Error; err != nil {
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM clinic_record"+predicate, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count records: %w", err)
 	}
 
@@ -135,15 +142,31 @@ func (s *AdminRecordService) List(ctx context.Context, actorID int, f ListAdminR
 		f.PageSize = MaxAdminRecordPageSize
 	}
 	offset := (f.Page - 1) * f.PageSize
+	args = append(args, f.PageSize, offset)
 
-	var records []recordmodel.ClinicRecord
 	// Match the admin sidebar's newest-ID-first order before pagination so
 	// newer tickets cannot be hidden behind older tickets with later appointments.
-	if err := q.
-		Order("id DESC").
-		Offset(offset).
-		Limit(f.PageSize).
-		Find(&records).Error; err != nil {
+	rows, err := s.db.QueryContext(
+		ctx,
+		fmt.Sprintf(
+			"SELECT %s FROM clinic_record%s ORDER BY id DESC LIMIT $%d OFFSET $%d",
+			recordColumns, predicate, len(args)-1, len(args),
+		),
+		args...,
+	)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list records: %w", err)
+	}
+	defer rows.Close()
+	records := make([]recordmodel.ClinicRecord, 0)
+	for rows.Next() {
+		record, err := scanRecord(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("scan record: %w", err)
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("list records: %w", err)
 	}
 
@@ -164,84 +187,94 @@ func escapeLike(s string) string {
 }
 
 func (s *AdminRecordService) GetByID(ctx context.Context, actorID int, id uint) (AdminRecordView, error) {
-	var rec recordmodel.ClinicRecord
-	if err := s.db.First(&rec, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	record, err := loadRecord(s.db, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			return AdminRecordView{}, ErrRecordNotFound
 		}
 		return AdminRecordView{}, fmt.Errorf("get record %d: %w", id, err)
 	}
-	v, err := s.buildView(rec)
+	view, err := s.buildView(record)
 	if err != nil {
 		return AdminRecordView{}, err
 	}
-	if err := s.applyRevertibleOne(ctx, actorID, rec, &v); err != nil {
+	if err := s.applyRevertibleOne(ctx, actorID, record, &view); err != nil {
 		return AdminRecordView{}, err
 	}
-	return v, nil
+	return view, nil
 }
 
 func (s *AdminRecordService) Update(ctx context.Context, actorID int, id uint, in UpdateAdminRecordInput) (AdminRecordView, error) {
-	var rec recordmodel.ClinicRecord
-	if err := s.db.First(&rec, id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return AdminRecordView{}, ErrRecordNotFound
-		}
-		return AdminRecordView{}, fmt.Errorf("get record %d for update: %w", id, err)
-	}
-
-	var v AdminRecordView
+	var record recordmodel.ClinicRecord
+	var view AdminRecordView
 	var entry RecordActionEntry
 	changed := in.WorkerDesc != nil
-	err := s.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.First(&rec, id).Error; err != nil {
-			return fmt.Errorf("reload record %d for update: %w", id, err)
+	err := database.WithTx(ctx, s.db.DB, func(tx *sql.Tx) error {
+		var err error
+		record, err = loadRecordForUpdate(ctx, tx, s.db.Driver, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrRecordNotFound
 		}
-		prevSeq := rec.ActionSeq
-		snap, err := s.snapshotTx(tx, rec)
+		if err != nil {
+			return fmt.Errorf("lock record %d for update: %w", id, err)
+		}
+		prevSeq := record.ActionSeq
+		prevToken := record.ActionToken
+		var token string
+		snap, err := s.snapshotTx(tx, record)
 		if err != nil {
 			return err
 		}
 
 		if in.WorkerDesc != nil {
-			var worker recordmodel.ClinicRecordWorker
-			if err := tx.Where("record_id = ?", rec.ID).First(&worker).Error; err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					worker = recordmodel.ClinicRecordWorker{
-						RecordID:   rec.ID,
-						WorkerDesc: *in.WorkerDesc,
-					}
-					if err := tx.Create(&worker).Error; err != nil {
-						return fmt.Errorf("create record %d worker: %w", id, err)
-					}
-				} else {
-					return fmt.Errorf("get record %d worker: %w", id, err)
+			token, err = newRecordActionToken()
+			if err != nil {
+				return err
+			}
+			worker, err := scanRecordWorker(tx.QueryRow(
+				"SELECT "+recordWorkerColumns+" FROM clinic_record_worker WHERE record_id = $1",
+				record.ID,
+			))
+			if errors.Is(err, sql.ErrNoRows) {
+				if _, err := tx.Exec(
+					"INSERT INTO clinic_record_worker (record_id, worker, worker_desc, finish_time) VALUES ($1, 0, $2, NULL)",
+					record.ID, *in.WorkerDesc,
+				); err != nil {
+					return fmt.Errorf("create record %d worker: %w", id, err)
 				}
+			} else if err != nil {
+				return fmt.Errorf("get record %d worker: %w", id, err)
 			} else {
-				if err := tx.Model(&worker).Update("worker_desc", *in.WorkerDesc).Error; err != nil {
+				if _, err := tx.Exec(
+					"UPDATE clinic_record_worker SET worker_desc = $1 WHERE record_id = $2",
+					*in.WorkerDesc, worker.RecordID,
+				); err != nil {
 					return fmt.Errorf("update record %d worker: %w", id, err)
 				}
 			}
-			if err := tx.Model(&rec).Update("action_seq", gorm.Expr("action_seq + 1")).Error; err != nil {
+			if _, err := tx.Exec("UPDATE clinic_record SET action_seq = action_seq + 1, action_token = $1 WHERE id = $2", token, id); err != nil {
 				return fmt.Errorf("bump record %d action_seq: %w", id, err)
 			}
 		}
 
-		if err := tx.First(&rec, id).Error; err != nil {
+		record, err = loadRecord(tx, id)
+		if err != nil {
 			return fmt.Errorf("reload record %d: %w", id, err)
 		}
 		if changed {
 			entry = RecordActionEntry{
-				RecordID:  rec.ID,
-				ActorID:   actorID,
-				Action:    RecordActionUpdate,
-				PrevSeq:   prevSeq,
-				ActionSeq: rec.ActionSeq,
-				CreatedAt: time.Now().UTC(),
-				Prev:      snap,
+				RecordID:    record.ID,
+				ActorID:     actorID,
+				Action:      RecordActionUpdate,
+				PrevSeq:     prevSeq,
+				ActionSeq:   record.ActionSeq,
+				CreatedAt:   time.Now().UTC(),
+				Prev:        snap,
+				ActionToken: token,
+				PrevToken:   prevToken,
 			}
 		}
-		v, err = s.buildViewTx(tx, rec)
+		view, err = s.buildViewTx(tx, record)
 		return err
 	})
 	if err != nil {
@@ -250,8 +283,8 @@ func (s *AdminRecordService) Update(ctx context.Context, actorID int, id uint, i
 	if changed {
 		s.recordAction(ctx, entry)
 	}
-	if err := s.applyRevertibleOne(ctx, actorID, rec, &v); err != nil {
+	if err := s.applyRevertibleOne(ctx, actorID, record, &view); err != nil {
 		return AdminRecordView{}, err
 	}
-	return v, nil
+	return view, nil
 }
