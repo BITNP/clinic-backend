@@ -74,6 +74,8 @@ func TestCASClient_ValidateTicket_Success(t *testing.T) {
       <cas:qq-number>123456789</cas:qq-number>
       <cas:groups>/management</cas:groups>
       <cas:groups>/clinic</cas:groups>
+      <cas:realm>position-association-vice-chair-clinic</cas:realm>
+      <cas:realm>permission-management-access</cas:realm>
     </cas:attributes>
   </cas:authenticationSuccess>
 </cas:serviceResponse>`)
@@ -96,6 +98,9 @@ func TestCASClient_ValidateTicket_Success(t *testing.T) {
 	}
 	if len(attrs.Groups) != 2 {
 		t.Errorf("groups: got %+v", attrs.Groups)
+	}
+	if len(attrs.Realms) != 2 || attrs.Realms[0] != "position-association-vice-chair-clinic" {
+		t.Errorf("realms: got %+v", attrs.Realms)
 	}
 }
 

@@ -74,8 +74,8 @@ func (a *KeycloakAuthenticator) Authenticate(tokenStr string) (staffmodel.Clinic
 	}
 
 	groups := extractGroups(claims)
-	realm := extractRealm(claims)
-	role := determineKeycloakRole(realm, groups)
+	realms := extractStringClaim(claims, "realm")
+	role := determineKeycloakRole(realms, groups)
 	if role == "" {
 		return staffmodel.ClinicStaff{}, "", errors.New("insufficient realm or group membership")
 	}
@@ -124,26 +124,25 @@ func (a *KeycloakAuthenticator) bumpStaffSync() {
 }
 
 func extractGroups(claims jwt.MapClaims) []string {
-	switch v := claims["groups"].(type) {
-	case []any:
-		groups := make([]string, 0, len(v))
-		for _, g := range v {
-			if s, ok := g.(string); ok {
-				groups = append(groups, s)
-			}
-		}
-		return groups
-	case []string:
-		return v
-	}
-	return nil
+	return extractStringClaim(claims, "groups")
 }
 
-func extractRealm(claims jwt.MapClaims) string {
-	if v, ok := claims["realm"].(string); ok {
-		return strings.TrimSpace(v)
+func extractStringClaim(claims jwt.MapClaims, key string) []string {
+	switch v := claims[key].(type) {
+	case []any:
+		values := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				values = append(values, s)
+			}
+		}
+		return values
+	case []string:
+		return v
+	case string:
+		return []string{v}
 	}
-	return ""
+	return nil
 }
 
 func extractAccountID(claims jwt.MapClaims) string {

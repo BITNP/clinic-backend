@@ -81,9 +81,9 @@ func (h *CASAuthHandler) Login(c *gin.Context) {
 
 	log.Printf("cas login attributes: %v", attrs.Raw)
 
-	role := determineRole(attrs.Groups)
+	role := determineCASRole(attrs.Realms, attrs.Groups)
 	if role == "" {
-		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "insufficient group membership"})
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "insufficient realm or group membership"})
 		return
 	}
 
@@ -93,8 +93,8 @@ func (h *CASAuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	log.Printf("cas login parsed: user=%q realname=%q qq_number=%q groups=%v staff_id=%d stored_qq_number=%q",
-		attrs.User, attrs.Realname, attrs.QQNumber, attrs.Groups, staff.ID, staff.QQNumber)
+	log.Printf("cas login parsed: user=%q realname=%q qq_number=%q groups=%v realms=%v staff_id=%d stored_qq_number=%q",
+		attrs.User, attrs.Realname, attrs.QQNumber, attrs.Groups, attrs.Realms, staff.ID, staff.QQNumber)
 
 	if err := h.cfg.StaffService.UpdateRole(staff.ID, string(role)); err != nil {
 		log.Printf("warning: failed to persist role %s for staff %d: %v", role, staff.ID, err)

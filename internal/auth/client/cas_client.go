@@ -11,12 +11,14 @@ import (
 	"time"
 )
 
-// CASAttributes holds the resolved identity and group claims from a CAS response.
+// CASAttributes holds the resolved identity, group, and realm claims from a CAS
+// response.
 type CASAttributes struct {
 	User     string
 	Realname string
 	QQNumber string
 	Groups   []string
+	Realms   []string
 	Raw      map[string][]string
 }
 
@@ -171,6 +173,13 @@ func parseAttributes(attrs *casAttributes) CASAttributes {
 				g = strings.TrimSpace(g)
 				if g != "" {
 					result.Groups = append(result.Groups, g)
+				}
+			}
+		case "realm":
+			for _, r := range strings.Split(value, ",") {
+				r = strings.TrimSpace(r)
+				if r != "" {
+					result.Realms = append(result.Realms, r)
 				}
 			}
 		}

@@ -221,6 +221,104 @@ func TestCASAuthHandler_LoginCallback_RecordsQQNumber(t *testing.T) {
 	}
 }
 
+func TestCASAuthHandler_LoginCallback_ResolvesRealmRoles(t *testing.T) {
+	tests := []struct {
+		name   string
+		realms []string
+		groups []string
+		want   authhandler.StaffRole
+	}{
+		{
+			name: "superadmin realm takes precedence over admin realm",
+			realms: []string{
+				"position-clinic-advisor",
+				"position-association-vice-chair-clinic",
+			},
+			groups: []string{"/clinic"},
+			want:   authhandler.RoleSuperAdmin,
+		},
+		{
+			name:   "admin realm elevates clinic group",
+			realms: []string{"position-clinic-deputy-head"},
+			groups: []string{"/clinic"},
+			want:   authhandler.RoleAdmin,
+		},
+		{
+			name: "production-like realms preserve legacy group fallback",
+			realms: []string{
+				"create-realm",
+				"default-roles-master",
+				"position-association-vice-chair",
+				"position-association-vice-chair-techdept",
+				"permission-management-access",
+				"admin",
+			},
+			groups: []string{"2026-management", "2024-clinic", "2025-clinic"},
+			want:   authhandler.RoleAdmin,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var attributes strings.Builder
+				for _, group := range tt.groups {
+					_, _ = fmt.Fprintf(&attributes, "<cas:groups>%s</cas:groups>", group)
+				}
+				for _, realm := range tt.realms {
+					_, _ = fmt.Fprintf(&attributes, "<cas:realm>%s</cas:realm>", realm)
+				}
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = fmt.Fprintf(w, `
+<cas:serviceResponse xmlns:cas='http://www.yale.edu/tp/cas'>
+  <cas:authenticationSuccess>
+    <cas:user>student42</cas:user>
+    <cas:attributes>
+      <cas:name>Alice Smith</cas:name>
+      %s
+    </cas:attributes>
+  </cas:authenticationSuccess>
+</cas:serviceResponse>`, attributes.String())
+			}))
+			defer fake.Close()
+
+			r, sessionSvc, db := setupCASAuthRouter(t, fake)
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/login?ticket=ST-123", nil)
+			r.ServeHTTP(w, req)
+			if w.Code != http.StatusFound {
+				t.Fatalf("expected 302, got %d: %s", w.Code, w.Body.String())
+			}
+
+			var staff staffmodel.ClinicStaff
+			if err := db.Where("account_id = ?", "student42").First(&staff).Error; err != nil {
+				t.Fatalf("load staff: %v", err)
+			}
+			if staff.Role != string(tt.want) {
+				t.Errorf("role: got %q, want %q", staff.Role, tt.want)
+			}
+
+			var sessionToken string
+			for _, cookie := range w.Result().Cookies() {
+				if cookie.Name == "sessionid" {
+					sessionToken = cookie.Value
+					break
+				}
+			}
+			if sessionToken == "" {
+				t.Fatal("expected session cookie")
+			}
+			session, err := sessionSvc.Get(sessionToken)
+			if err != nil {
+				t.Fatalf("load session: %v", err)
+			}
+			if session.Role != string(tt.want) {
+				t.Errorf("session role: got %q, want %q", session.Role, tt.want)
+			}
+		})
+	}
+}
+
 func TestCASAuthHandler_LoginCallback_RecordsWorkYear(t *testing.T) {
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/xml")

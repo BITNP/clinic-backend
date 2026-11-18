@@ -227,33 +227,33 @@ func TestKeycloakAuthenticator_AuthenticateRealmRoles(t *testing.T) {
 	tests := []struct {
 		name     string
 		username string
-		realm    string
+		realms   []string
 		groups   []string
 		want     authhandler.StaffRole
 	}{
 		{
 			name:     "association vice chair is superadmin",
 			username: "superadmin-vice-chair",
-			realm:    "position-association-vice-chair-clinic",
+			realms:   []string{"position-clinic-advisor", "position-association-vice-chair-clinic"},
 			groups:   []string{"/management", "/clinic"},
 			want:     authhandler.RoleSuperAdmin,
 		},
 		{
 			name:     "clinic head is superadmin without groups",
 			username: "superadmin-head",
-			realm:    " Position-Clinic-Head ",
+			realms:   []string{" Position-Clinic-Head "},
 			want:     authhandler.RoleSuperAdmin,
 		},
 		{
 			name:     "clinic advisor is admin",
 			username: "admin-advisor",
-			realm:    "position-clinic-advisor",
+			realms:   []string{"position-clinic-advisor"},
 			want:     authhandler.RoleAdmin,
 		},
 		{
 			name:     "clinic deputy head is admin",
 			username: "admin-deputy-head",
-			realm:    "position-clinic-deputy-head",
+			realms:   []string{"position-clinic-deputy-head"},
 			want:     authhandler.RoleAdmin,
 		},
 	}
@@ -262,7 +262,7 @@ func TestKeycloakAuthenticator_AuthenticateRealmRoles(t *testing.T) {
 			token, err := signTestJWTExtra(
 				key, kid, fake.URL+"/realms/fake/", "clinic-backend",
 				tt.username, "Role Test", tt.groups,
-				map[string]any{"realm": tt.realm},
+				map[string]any{"realm": tt.realms},
 			)
 			if err != nil {
 				t.Fatalf("sign jwt: %v", err)
@@ -296,18 +296,18 @@ func TestKeycloakAuthenticator_GroupFallbackIsStaff(t *testing.T) {
 
 	tests := []struct {
 		name   string
-		realm  string
+		realms []string
 		groups []string
 	}{
 		{name: "clinic group", groups: []string{"/clinic"}},
 		{name: "management no longer elevates", groups: []string{"/management", "/clinic"}},
-		{name: "unknown realm does not elevate", realm: "position-other", groups: []string{"/management", "/clinic"}},
+		{name: "unknown realm does not elevate", realms: []string{"position-other"}, groups: []string{"/management", "/clinic"}},
 	}
 	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			extra := map[string]any{}
-			if tt.realm != "" {
-				extra["realm"] = tt.realm
+			if len(tt.realms) > 0 {
+				extra["realm"] = tt.realms
 			}
 			token, err := signTestJWTExtra(
 				key, kid, fake.URL+"/realms/fake/", "clinic-backend",
@@ -338,7 +338,7 @@ func TestKeycloakAuthenticator_RejectNoRealmOrClinicGroup(t *testing.T) {
 	token, err := signTestJWTExtra(
 		key, kid, fake.URL+"/realms/fake/", "clinic-backend",
 		"user01", "User One", []string{"/other"},
-		map[string]any{"realm": "position-other"},
+		map[string]any{"realm": []string{"position-other"}},
 	)
 	if err != nil {
 		t.Fatalf("sign jwt: %v", err)

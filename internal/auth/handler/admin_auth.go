@@ -76,8 +76,7 @@ func hasStaffAccess(role StaffRole) bool {
 	return role == RoleStaff || hasAdminAccess(role)
 }
 
-// determineRole preserves the CAS group-based role rules. Keycloak uses
-// determineKeycloakRole because its tokens can identify the user's realm.
+// determineRole preserves the legacy group-based role rules used as a fallback.
 func determineRole(groups []string) StaffRole {
 	hasManagement := false
 	hasClinic := false
@@ -99,19 +98,44 @@ func determineRole(groups []string) StaffRole {
 	return ""
 }
 
-// determineKeycloakRole maps the Keycloak realm claim to an elevated role
-// before falling back to the clinic group rule.
-func determineKeycloakRole(realm string, groups []string) StaffRole {
-	switch strings.ToLower(strings.TrimSpace(realm)) {
-	case "position-association-vice-chair-clinic", "position-clinic-head":
-		return RoleSuperAdmin
-	case "position-clinic-advisor", "position-clinic-deputy-head":
-		return RoleAdmin
+// determineRealmRole maps any configured realm value to its elevated role.
+// Superadmin roles are checked first so their precedence does not depend on the
+// order Keycloak returns the claims.
+func determineRealmRole(realms []string) StaffRole {
+	for _, realm := range realms {
+		switch strings.ToLower(strings.TrimSpace(realm)) {
+		case "position-association-vice-chair-clinic", "position-clinic-head":
+			return RoleSuperAdmin
+		}
+	}
+	for _, realm := range realms {
+		switch strings.ToLower(strings.TrimSpace(realm)) {
+		case "position-clinic-advisor", "position-clinic-deputy-head":
+			return RoleAdmin
+		}
+	}
+	return ""
+}
+
+// determineKeycloakRole applies realm roles before falling back to the clinic
+// group rule.
+func determineKeycloakRole(realms []string, groups []string) StaffRole {
+	if role := determineRealmRole(realms); role != "" {
+		return role
 	}
 	if hasClinicGroup(groups) {
 		return RoleStaff
 	}
 	return ""
+}
+
+// determineCASRole applies realm roles before preserving the legacy CAS group
+// fallback.
+func determineCASRole(realms []string, groups []string) StaffRole {
+	if role := determineRealmRole(realms); role != "" {
+		return role
+	}
+	return determineRole(groups)
 }
 
 func hasClinicGroup(groups []string) bool {

@@ -44,12 +44,13 @@ X-CSRF-Token: <value of the csrf_token cookie>
 Missing or mismatched CSRF tokens receive `403 Forbidden`. Bearer-token requests
 do not need a CSRF token.
 
-Keycloak bearer roles are resolved from the `realm` claim before groups are
+CAS and Keycloak roles are resolved from their `realm` values before groups are
 checked. The realms `position-association-vice-chair-clinic` and
 `position-clinic-head` map to `superadmin`; `position-clinic-advisor` and
-`position-clinic-deputy-head` map to `admin`. Any other realm falls back to the
-group rule: a group containing `clinic` maps to `staff`. CAS sessions retain
-their existing group-based `staff`/`admin` rules.
+`position-clinic-deputy-head` map to `admin`. Superadmin takes precedence when
+both levels are present. Without a matching realm, CAS retains its existing
+group-based `staff`/`admin` rules, while Keycloak maps any group containing
+`clinic` to `staff`.
 
 Authorization levels are hierarchical:
 
@@ -164,10 +165,10 @@ curl "$BASE/healthz"
 ### `GET /login`
 
 **Description:** Starts or completes CAS login. Without a `ticket` it redirects
-(`302`) to the CAS login URL. With a `ticket` it validates the ticket, maps CAS
-groups to a staff/admin role, upserts the staff row and work years, creates a
-session, sets the `sessionid` (HttpOnly) and `csrf_token` cookies, then
-redirects to `next`. Login also bumps the `staff` change counter.
+(`302`) to the CAS login URL. With a `ticket` it validates the ticket, resolves
+the role from CAS realms with group fallback, upserts the staff row and work
+years, creates a session, sets the `sessionid` (HttpOnly) and `csrf_token`
+cookies, then redirects to `next`. Login also bumps the `staff` change counter.
 
 **Query parameters**
 
@@ -178,7 +179,7 @@ redirects to `next`. Login also bumps the `staff` change counter.
 
 **Response `302 Found`** with a `Location` header (CAS login page, or `next`).
 
-**Error responses:** `403` (invalid ticket, no qualifying groups), `500`
+**Error responses:** `403` (invalid ticket, no qualifying realm or groups), `500`
 (failed to resolve staff or create session), `502` (CAS unreachable), `503`
 (CAS not configured).
 
