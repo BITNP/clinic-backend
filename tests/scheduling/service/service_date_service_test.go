@@ -54,6 +54,42 @@ func TestServiceDateService_GetByID_NotFound(t *testing.T) {
 	}
 }
 
+func TestServiceDateService_NullRoom(t *testing.T) {
+	db := setupServiceDateServiceDB(t)
+	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)
+	day := testutil.FutureDate(5)
+	date := schedulingmodel.ClinicServiceDate{Capacity: 10, Date: day, StartTime: day, EndTime: day.Add(time.Hour), Title: "legacy"}
+	if err := db.Create(&date).Error; err != nil {
+		t.Fatal(err)
+	}
+	capacity := uint(5)
+	updated, err := svc.Update(date.ID, schedulingservice.UpdateServiceDateInput{Capacity: &capacity})
+	if err != nil || updated.RoomID != nil || updated.Capacity != capacity {
+		t.Fatalf("update without room: %+v, %v", updated, err)
+	}
+	testutil.MustCreateRoom(t, db, 1)
+	if err := db.Create(&recordmodel.ClinicRecord{User: "u", Realname: "r", PhoneNum: "p", Status: recordmodel.RecordStatusPending, AppointmentTime: day, QuestionDesc: "x", RoomID: 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+	roomID := uint(1)
+	if _, err := svc.Update(date.ID, schedulingservice.UpdateServiceDateInput{RoomID: &roomID}); !errors.Is(err, schedulingservice.ErrServiceDateInUse) {
+		t.Fatalf("assign occupied room: %v", err)
+	}
+	if err := db.Where("room = ?", roomID).Delete(&recordmodel.ClinicRecord{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	updated, err = svc.Update(date.ID, schedulingservice.UpdateServiceDateInput{RoomID: &roomID})
+	if err != nil || updated.RoomID == nil || *updated.RoomID != roomID {
+		t.Fatalf("assign room: %+v, %v", updated, err)
+	}
+	if err := db.Model(&date).Update("room_id", nil).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Delete(date.ID); err != nil {
+		t.Fatalf("delete without room: %v", err)
+	}
+}
+
 func TestServiceDateService_Create_RoomNotFound(t *testing.T) {
 	db := setupServiceDateServiceDB(t)
 	svc := schedulingservice.NewServiceDateService(testutil.RawDB(t, db), nil)

@@ -390,7 +390,7 @@ func (s *ServiceDateService) Update(id uint, in UpdateServiceDateInput) (schedul
 		return schedulingmodel.ClinicServiceDate{}, fmt.Errorf("get service date %d for update: %w", id, err)
 	}
 
-	originalRoomID := *date.RoomID
+	originalRoomID := date.RoomID
 	originalDate := calendar.DateInLocation(date.Date, s.loc)
 	effectiveRoomID := originalRoomID
 	effectiveDate := originalDate
@@ -398,33 +398,37 @@ func (s *ServiceDateService) Update(id uint, in UpdateServiceDateInput) (schedul
 		if err := s.assertRoomExists(*in.RoomID); err != nil {
 			return schedulingmodel.ClinicServiceDate{}, err
 		}
-		effectiveRoomID = *in.RoomID
+		effectiveRoomID = in.RoomID
 	}
 	if in.Date != nil {
 		effectiveDate = calendar.DateInLocation(*in.Date, s.loc)
 	}
 
-	roomChanged := effectiveRoomID != originalRoomID
+	roomChanged := in.RoomID != nil && (originalRoomID == nil || *effectiveRoomID != *originalRoomID)
 	dateChanged := !effectiveDate.Equal(originalDate)
 	if roomChanged || dateChanged {
-		inUse, err := s.recordsExistFor(s.db, originalRoomID, originalDate)
-		if err != nil {
-			return schedulingmodel.ClinicServiceDate{}, err
+		if originalRoomID != nil {
+			inUse, err := s.recordsExistFor(s.db, *originalRoomID, originalDate)
+			if err != nil {
+				return schedulingmodel.ClinicServiceDate{}, err
+			}
+			if inUse {
+				return schedulingmodel.ClinicServiceDate{}, ErrServiceDateInUse
+			}
 		}
-		if inUse {
-			return schedulingmodel.ClinicServiceDate{}, ErrServiceDateInUse
-		}
-		inUse, err = s.recordsExistFor(s.db, effectiveRoomID, effectiveDate)
-		if err != nil {
-			return schedulingmodel.ClinicServiceDate{}, err
-		}
-		if inUse {
-			return schedulingmodel.ClinicServiceDate{}, ErrServiceDateInUse
+		if effectiveRoomID != nil {
+			inUse, err := s.recordsExistFor(s.db, *effectiveRoomID, effectiveDate)
+			if err != nil {
+				return schedulingmodel.ClinicServiceDate{}, err
+			}
+			if inUse {
+				return schedulingmodel.ClinicServiceDate{}, ErrServiceDateInUse
+			}
 		}
 	}
 
 	if in.Capacity != nil {
-		booked, err := s.bookedCount(&effectiveRoomID, effectiveDate, calendar.DateInLocation(time.Now(), s.loc))
+		booked, err := s.bookedCount(effectiveRoomID, effectiveDate, calendar.DateInLocation(time.Now(), s.loc))
 		if err != nil {
 			return schedulingmodel.ClinicServiceDate{}, err
 		}
@@ -485,12 +489,14 @@ func (s *ServiceDateService) Delete(id uint) error {
 	}
 
 	return database.WithTx(context.Background(), s.db.DB, func(tx *sql.Tx) error {
-		inUse, err := s.recordsExistFor(tx, *date.RoomID, date.Date)
-		if err != nil {
-			return err
-		}
-		if inUse {
-			return ErrServiceDateInUse
+		if date.RoomID != nil {
+			inUse, err := s.recordsExistFor(tx, *date.RoomID, date.Date)
+			if err != nil {
+				return err
+			}
+			if inUse {
+				return ErrServiceDateInUse
+			}
 		}
 		if _, err := tx.Exec("DELETE FROM clinic_service_date WHERE id = $1", id); err != nil {
 			return fmt.Errorf("delete service date %d: %w", id, err)
