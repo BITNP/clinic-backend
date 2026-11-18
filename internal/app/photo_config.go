@@ -12,27 +12,27 @@ const (
 	defaultRecordPhotoMaxSizeBytes = int64(10 * 1024 * 1024)
 )
 
-// photoConfig holds the limits enforced for photos attached to record worker
+// PhotoConfig holds the limits enforced for photos attached to record worker
 // notes.
-type photoConfig struct {
+type PhotoConfig struct {
 	MaxCount     int
 	MaxSizeBytes int64
 }
 
-// loadPhotoConfig reads and validates the record photo limits. Empty values
+// LoadPhotoConfig reads and validates the record photo limits. Empty values
 // use the documented defaults.
-func loadPhotoConfig(getenv func(string) string) (photoConfig, error) {
+func LoadPhotoConfig(getenv func(string) string) (PhotoConfig, error) {
 	maxCount, err := parsePositiveIntSetting(getenv("RECORD_PHOTO_MAX_COUNT"), defaultRecordPhotoMaxCount)
 	if err != nil {
-		return photoConfig{}, fmt.Errorf("invalid RECORD_PHOTO_MAX_COUNT: %w", err)
+		return PhotoConfig{}, fmt.Errorf("invalid RECORD_PHOTO_MAX_COUNT: %w", err)
 	}
 
 	maxSizeBytes, err := parsePositiveInt64Setting(getenv("RECORD_PHOTO_MAX_SIZE_BYTES"), defaultRecordPhotoMaxSizeBytes)
 	if err != nil {
-		return photoConfig{}, fmt.Errorf("invalid RECORD_PHOTO_MAX_SIZE_BYTES: %w", err)
+		return PhotoConfig{}, fmt.Errorf("invalid RECORD_PHOTO_MAX_SIZE_BYTES: %w", err)
 	}
 
-	return photoConfig{
+	return PhotoConfig{
 		MaxCount:     maxCount,
 		MaxSizeBytes: maxSizeBytes,
 	}, nil

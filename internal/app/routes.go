@@ -14,6 +14,53 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// RouterConfig contains the handlers and shared dependencies used to build the
+// HTTP route tree.
+type RouterConfig struct {
+	AnnouncementH *announcement.AnnouncementHandler
+	ServiceDateH  *schedulinghandler.ServiceDateHandler
+	CampusH       *roomhandler.CampusHandler
+	RoomH         *roomhandler.RoomHandler
+	StaffH        *staffhandler.StaffHandler
+	WorkScheduleH *schedulinghandler.WorkScheduleHandler
+	AdminRecordH  *recordhandler.AdminRecordHandler
+	TicketH       *recordhandler.TicketHandler
+	PhotoH        *recordhandler.PhotoHandler
+	LegacyH       *legacy.LegacyHandler
+	CASHandler    *authhandler.CASAuthHandler
+	UserH         *authhandler.UserHandler
+	SyncH         *changes.SyncHandler
+	AdminAuth     gin.HandlerFunc
+	OptionalAuth  gin.HandlerFunc
+	ClientAuth    gin.HandlerFunc
+	SyncSvc       *changes.SyncService
+	RedisClient   *redis.Client
+}
+
+// NewRouter builds the backend HTTP route tree from cfg.
+func NewRouter(cfg RouterConfig) *gin.Engine {
+	return routeHandlers{
+		announcementH: cfg.AnnouncementH,
+		serviceDateH:  cfg.ServiceDateH,
+		campusH:       cfg.CampusH,
+		roomH:         cfg.RoomH,
+		staffH:        cfg.StaffH,
+		workScheduleH: cfg.WorkScheduleH,
+		adminRecordH:  cfg.AdminRecordH,
+		ticketH:       cfg.TicketH,
+		photoH:        cfg.PhotoH,
+		legacyH:       cfg.LegacyH,
+		casHandler:    cfg.CASHandler,
+		userH:         cfg.UserH,
+		syncH:         cfg.SyncH,
+		adminAuth:     cfg.AdminAuth,
+		optionalAuth:  cfg.OptionalAuth,
+		clientAuth:    cfg.ClientAuth,
+		syncSvc:       cfg.SyncSvc,
+		redisClient:   cfg.RedisClient,
+	}.router()
+}
+
 type routeHandlers struct {
 	announcementH *announcement.AnnouncementHandler
 	serviceDateH  *schedulinghandler.ServiceDateHandler

@@ -42,12 +42,12 @@ const (
 
 // Run initializes the backend and serves requests until shutdown.
 func Run() {
-	storageSvc, err := loadStorageService(os.Getenv)
+	storageSvc, err := LoadStorageService(os.Getenv)
 	if err != nil {
 		log.Fatalf("storage configuration: %v", err)
 	}
 
-	photoCfg, err := loadPhotoConfig(os.Getenv)
+	photoCfg, err := LoadPhotoConfig(os.Getenv)
 	if err != nil {
 		log.Fatalf("photo configuration: %v", err)
 	}
@@ -294,26 +294,26 @@ func Run() {
 	adminAuth := authhandler.NewAdminAuthMiddleware(authCfg)
 	optionalAuth := authhandler.NewOptionalAdminAuthMiddleware(authCfg)
 
-	r := (routeHandlers{
-		announcementH: announcementH,
-		serviceDateH:  serviceDateH,
-		campusH:       campusH,
-		roomH:         roomH,
-		staffH:        staffH,
-		workScheduleH: workScheduleH,
-		adminRecordH:  adminRecordH,
-		ticketH:       ticketH,
-		legacyH:       legacyH,
-		casHandler:    casHandler,
-		userH:         userH,
-		syncH:         syncH,
-		adminAuth:     adminAuth,
-		optionalAuth:  optionalAuth,
-		clientAuth:    clientAuth,
-		syncSvc:       syncSvc,
-		redisClient:   redisClient,
-		photoH:        photoH,
-	}).router()
+	r := NewRouter(RouterConfig{
+		AnnouncementH: announcementH,
+		ServiceDateH:  serviceDateH,
+		CampusH:       campusH,
+		RoomH:         roomH,
+		StaffH:        staffH,
+		WorkScheduleH: workScheduleH,
+		AdminRecordH:  adminRecordH,
+		TicketH:       ticketH,
+		LegacyH:       legacyH,
+		CASHandler:    casHandler,
+		UserH:         userH,
+		SyncH:         syncH,
+		AdminAuth:     adminAuth,
+		OptionalAuth:  optionalAuth,
+		ClientAuth:    clientAuth,
+		SyncSvc:       syncSvc,
+		RedisClient:   redisClient,
+		PhotoH:        photoH,
+	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

@@ -1,14 +1,16 @@
-package app
+package app_test
 
 import (
 	"strings"
 	"testing"
+
+	"clinic-backend/internal/app"
 )
 
 func TestLoadPhotoConfig_Defaults(t *testing.T) {
-	cfg, err := loadPhotoConfig(envMap(nil))
+	cfg, err := app.LoadPhotoConfig(envMap(nil))
 	if err != nil {
-		t.Fatalf("loadPhotoConfig() error = %v", err)
+		t.Fatalf("LoadPhotoConfig() error = %v", err)
 	}
 	if cfg.MaxCount != 9 {
 		t.Errorf("MaxCount = %d, want 9", cfg.MaxCount)
@@ -19,12 +21,12 @@ func TestLoadPhotoConfig_Defaults(t *testing.T) {
 }
 
 func TestLoadPhotoConfig_CustomValues(t *testing.T) {
-	cfg, err := loadPhotoConfig(envMap(map[string]string{
+	cfg, err := app.LoadPhotoConfig(envMap(map[string]string{
 		"RECORD_PHOTO_MAX_COUNT":      "4",
 		"RECORD_PHOTO_MAX_SIZE_BYTES": "2048000",
 	}))
 	if err != nil {
-		t.Fatalf("loadPhotoConfig() error = %v", err)
+		t.Fatalf("LoadPhotoConfig() error = %v", err)
 	}
 	if cfg.MaxCount != 4 {
 		t.Errorf("MaxCount = %d, want 4", cfg.MaxCount)
@@ -35,12 +37,12 @@ func TestLoadPhotoConfig_CustomValues(t *testing.T) {
 }
 
 func TestLoadPhotoConfig_TrimsWhitespace(t *testing.T) {
-	cfg, err := loadPhotoConfig(envMap(map[string]string{
+	cfg, err := app.LoadPhotoConfig(envMap(map[string]string{
 		"RECORD_PHOTO_MAX_COUNT":      " 2 ",
 		"RECORD_PHOTO_MAX_SIZE_BYTES": " 1024 ",
 	}))
 	if err != nil {
-		t.Fatalf("loadPhotoConfig() error = %v", err)
+		t.Fatalf("LoadPhotoConfig() error = %v", err)
 	}
 	if cfg.MaxCount != 2 || cfg.MaxSizeBytes != 1024 {
 		t.Fatalf("config = %+v, want count 2 and size 1024", cfg)
@@ -94,7 +96,7 @@ func TestLoadPhotoConfig_InvalidValues(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := loadPhotoConfig(envMap(map[string]string{tt.key: tt.raw}))
+			_, err := app.LoadPhotoConfig(envMap(map[string]string{tt.key: tt.raw}))
 			if err == nil {
 				t.Fatal("expected an error")
 			}
