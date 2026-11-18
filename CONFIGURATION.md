@@ -123,6 +123,27 @@ The gateway queue is in-memory and assumes one gateway instance per sender/QQ
 account. Pending messages are lost on gateway restart. See
 `message-gateway/README.md` and `message-gateway/API.md`.
 
+### DingTalk message center
+
+DingTalk notifications use the V2 message-center API through the reusable
+`internal/notification/client` package. This path is independent of the QQ
+`message-gateway` path and is not used by the current service-date reminder
+worker. Configure it when a DingTalk notification consumer is wired:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `DINGTALK_BASE_URL` | — (required) | Message-center business base URL. HTTP and HTTPS are supported. |
+| `DINGTALK_APP_CODE` | — (required) | Authorized message-center application code, sent as `msg-center-app-code`. |
+| `DINGTALK_APP_KEY` | — (required) | Open-platform application key used by the token API. |
+| `DINGTALK_APP_SECRET` | — (required) | Open-platform application secret used by the token API. |
+| `DINGTALK_TIMEOUT` | `10s` | Per-request HTTP timeout; must be positive. |
+
+The client obtains an open-platform token with the configured key and secret,
+caches it, and requests a replacement on the first DingTalk operation at or
+after 80% of `expires_in`. The V2 API reports `expires_in` in minutes. Calls use
+`open-access-token` and `msg-center-app-code`; they return non-200 API `code`
+values as errors.
+
 ### Health monitor (`clinic-health-monitor`)
 
 `clinic-health-monitor` polls the backend's `/healthz` endpoint and the admin
