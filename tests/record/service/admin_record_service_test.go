@@ -199,6 +199,33 @@ func TestCloseExpiredRecords_Completed(t *testing.T) {
 	}
 }
 
+func TestCloseExpiredRecordsPreservesHistoricalFinishTime(t *testing.T) {
+	db := setupAdminRecordTestDB(t)
+	svc := recordservice.NewAdminRecordService(testutil.RawDB(t, db))
+	cutoff := yesterdayCutoff()
+	oldFinish := cutoff.Add(-48 * time.Hour)
+	for _, status := range []recordmodel.RecordStatus{recordmodel.RecordStatusCompleted, recordmodel.RecordStatusInProgress} {
+		rec := recordmodel.ClinicRecord{User: "u", Realname: "r", PhoneNum: "p", Status: status, AppointmentTime: cutoff.AddDate(0, 0, -1), QuestionDesc: "x", RoomID: 1}
+		if err := db.Create(&rec).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Create(&recordmodel.ClinicRecordWorker{RecordID: rec.ID, WorkerID: 1, FinishTime: oldFinish}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, completed, err := svc.CloseExpiredRecords(context.Background(), cutoff)
+	if err != nil || completed != 1 {
+		t.Fatalf("cleanup: completed=%d, err=%v", completed, err)
+	}
+	var workers []recordmodel.ClinicRecordWorker
+	if err := db.Order("record_id").Find(&workers).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(workers) != 2 || !workers[0].FinishTime.Equal(oldFinish) || workers[1].FinishTime.Equal(oldFinish) {
+		t.Fatalf("unexpected finish times: %+v", workers)
+	}
+}
+
 func TestCloseExpiredRecords_IgnoresTerminal(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	svc := recordservice.NewAdminRecordService(testutil.RawDB(t, db))
