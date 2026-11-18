@@ -1,9 +1,11 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"time"
 
+	"clinic-backend/internal/database"
 	recordmodel "clinic-backend/internal/record/model"
 	roommodel "clinic-backend/internal/room/model"
 	schedulingmodel "clinic-backend/internal/scheduling/model"
@@ -21,7 +23,7 @@ type rowsQueryer interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 }
 
-const recordColumns = `id, "user", realname, phone_num, status, appointment_time, question_desc, room, approver_id, tag_id, liquid_metal_status, action_seq`
+const recordColumns = `id, "user", realname, phone_num, status, appointment_time, question_desc, room, approver_id, tag_id, liquid_metal_status, action_seq, action_token`
 const recordDeviceColumns = "record_id, laptop_model, password"
 const recordWorkerColumns = "record_id, worker, worker_desc, finish_time"
 const recordRejectionColumns = "record_id, reject_reason"
@@ -49,6 +51,7 @@ func scanRecord(row rowScanner) (recordmodel.ClinicRecord, error) {
 		&tagID,
 		&record.LiquidMetalStatusIndex,
 		&record.ActionSeq,
+		&record.ActionToken,
 	)
 	record.User = user.String
 	if approverID.Valid {
@@ -63,6 +66,20 @@ func scanRecord(row rowScanner) (recordmodel.ClinicRecord, error) {
 
 func loadRecord(db rowQueryer, id uint) (recordmodel.ClinicRecord, error) {
 	return scanRecord(db.QueryRow("SELECT "+recordColumns+" FROM clinic_record WHERE id = $1", id))
+}
+
+// loadRecordForUpdate serializes record actions before they inspect snapshots.
+func loadRecordForUpdate(ctx context.Context, tx *sql.Tx, driver database.Driver, id uint) (recordmodel.ClinicRecord, error) {
+	query := "SELECT " + recordColumns + " FROM clinic_record WHERE id = $1"
+	if driver == database.DriverPostgres {
+		query += " FOR UPDATE"
+	} else {
+		// SQLite has no row locks. Acquire its write lock before reading.
+		if _, err := tx.ExecContext(ctx, "UPDATE clinic_record SET id = id WHERE id = $1", id); err != nil {
+			return recordmodel.ClinicRecord{}, err
+		}
+	}
+	return scanRecord(tx.QueryRowContext(ctx, query, id))
 }
 
 func scanRecordDevice(row rowScanner) (recordmodel.ClinicRecordDevice, error) {

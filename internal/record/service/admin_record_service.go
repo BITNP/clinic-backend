@@ -200,30 +200,32 @@ func (s *AdminRecordService) GetByID(ctx context.Context, actorID int, id uint) 
 }
 
 func (s *AdminRecordService) Update(ctx context.Context, actorID int, id uint, in UpdateAdminRecordInput) (AdminRecordView, error) {
-	if _, err := loadRecord(s.db, id); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return AdminRecordView{}, ErrRecordNotFound
-		}
-		return AdminRecordView{}, fmt.Errorf("get record %d for update: %w", id, err)
-	}
-
 	var record recordmodel.ClinicRecord
 	var view AdminRecordView
 	var entry RecordActionEntry
 	changed := in.WorkerDesc != nil
 	err := database.WithTx(ctx, s.db.DB, func(tx *sql.Tx) error {
 		var err error
-		record, err = loadRecord(tx, id)
+		record, err = loadRecordForUpdate(ctx, tx, s.db.Driver, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrRecordNotFound
+		}
 		if err != nil {
-			return fmt.Errorf("reload record %d for update: %w", id, err)
+			return fmt.Errorf("lock record %d for update: %w", id, err)
 		}
 		prevSeq := record.ActionSeq
+		prevToken := record.ActionToken
+		var token string
 		snap, err := s.snapshotTx(tx, record)
 		if err != nil {
 			return err
 		}
 
 		if in.WorkerDesc != nil {
+			token, err = newRecordActionToken()
+			if err != nil {
+				return err
+			}
 			worker, err := scanRecordWorker(tx.QueryRow(
 				"SELECT "+recordWorkerColumns+" FROM clinic_record_worker WHERE record_id = $1",
 				record.ID,
@@ -245,7 +247,7 @@ func (s *AdminRecordService) Update(ctx context.Context, actorID int, id uint, i
 					return fmt.Errorf("update record %d worker: %w", id, err)
 				}
 			}
-			if _, err := tx.Exec("UPDATE clinic_record SET action_seq = action_seq + 1 WHERE id = $1", id); err != nil {
+			if _, err := tx.Exec("UPDATE clinic_record SET action_seq = action_seq + 1, action_token = $1 WHERE id = $2", token, id); err != nil {
 				return fmt.Errorf("bump record %d action_seq: %w", id, err)
 			}
 		}
@@ -256,13 +258,15 @@ func (s *AdminRecordService) Update(ctx context.Context, actorID int, id uint, i
 		}
 		if changed {
 			entry = RecordActionEntry{
-				RecordID:  record.ID,
-				ActorID:   actorID,
-				Action:    RecordActionUpdate,
-				PrevSeq:   prevSeq,
-				ActionSeq: record.ActionSeq,
-				CreatedAt: time.Now().UTC(),
-				Prev:      snap,
+				RecordID:    record.ID,
+				ActorID:     actorID,
+				Action:      RecordActionUpdate,
+				PrevSeq:     prevSeq,
+				ActionSeq:   record.ActionSeq,
+				CreatedAt:   time.Now().UTC(),
+				Prev:        snap,
+				ActionToken: token,
+				PrevToken:   prevToken,
 			}
 		}
 		view, err = s.buildViewTx(tx, record)

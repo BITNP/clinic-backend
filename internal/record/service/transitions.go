@@ -20,45 +20,52 @@ type transitionSpec struct {
 }
 
 func (s *AdminRecordService) runTransition(ctx context.Context, id uint, spec transitionSpec) (AdminRecordView, error) {
-	record, err := loadRecord(s.db, id)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return AdminRecordView{}, ErrRecordNotFound
-		}
-		return AdminRecordView{}, fmt.Errorf("get record %d: %w", id, err)
-	}
-	if !spec.allowed(record.Status) {
-		return AdminRecordView{}, fmt.Errorf("%s record %d: %w (current: %s)", spec.verb, id, ErrRecordInvalidTransition, record.Status)
-	}
-
+	var record recordmodel.ClinicRecord
 	var view AdminRecordView
 	var entry RecordActionEntry
-	err = database.WithTx(ctx, s.db.DB, func(tx *sql.Tx) error {
-		record, err = loadRecord(tx, id)
+	err := database.WithTx(ctx, s.db.DB, func(tx *sql.Tx) error {
+		var err error
+		record, err = loadRecordForUpdate(ctx, tx, s.db.Driver, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrRecordNotFound
+		}
 		if err != nil {
-			return fmt.Errorf("reload record %d: %w", id, err)
+			return fmt.Errorf("lock record %d: %w", id, err)
+		}
+		if !spec.allowed(record.Status) {
+			return fmt.Errorf("%s record %d: %w (current: %s)", spec.verb, id, ErrRecordInvalidTransition, record.Status)
 		}
 		prevSeq := record.ActionSeq
+		prevToken := record.ActionToken
 		snap, err := s.snapshotTx(tx, record)
 		if err != nil {
 			return err
 		}
 		now := time.Now().UTC()
+		token, err := newRecordActionToken()
+		if err != nil {
+			return err
+		}
 		if err := spec.update(tx, record, now); err != nil {
 			return fmt.Errorf("%s record %d: %w", spec.verb, id, err)
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE clinic_record SET action_token = $1 WHERE id = $2", token, id); err != nil {
+			return fmt.Errorf("set record %d action token: %w", id, err)
 		}
 		record, err = loadRecord(tx, id)
 		if err != nil {
 			return fmt.Errorf("reload record %d: %w", id, err)
 		}
 		entry = RecordActionEntry{
-			RecordID:  record.ID,
-			ActorID:   spec.actorID,
-			Action:    spec.action,
-			PrevSeq:   prevSeq,
-			ActionSeq: record.ActionSeq,
-			CreatedAt: now,
-			Prev:      snap,
+			RecordID:    record.ID,
+			ActorID:     spec.actorID,
+			Action:      spec.action,
+			PrevSeq:     prevSeq,
+			ActionSeq:   record.ActionSeq,
+			CreatedAt:   now,
+			Prev:        snap,
+			ActionToken: token,
+			PrevToken:   prevToken,
 		}
 		view, err = s.buildViewTx(tx, record)
 		return err

@@ -35,10 +35,12 @@ type ClinicRecord struct {
 	// liquid-metal verdict. Zero means unknown or not classified yet.
 	LiquidMetalStatusIndex uint `gorm:"not null;default:0;column:liquid_metal_status" json:"liquid_metal_status"`
 	// ActionSeq is bumped on every journaled staff action and on system
-	// transitions. A revert is only allowed while it still matches the
-	// sequence stamped on the action being undone, which prevents undoing an
-	// action that has since been superseded.
+	// transitions. A revert requires both this sequence and ActionToken to
+	// match the journal entry being undone.
 	ActionSeq uint `gorm:"not null;default:0;column:action_seq" json:"-"`
+	// ActionToken uniquely identifies the current reversible action, even when
+	// an undo causes ActionSeq to be reused.
+	ActionToken string `gorm:"size:32;not null;default:'';column:action_token" json:"-"`
 }
 
 // TableName overrides GORM's default pluralized table name.

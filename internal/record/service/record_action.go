@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"sort"
 	"time"
 
 	recordmodel "clinic-backend/internal/record/model"
@@ -54,6 +57,18 @@ type RecordActionEntry struct {
 	ActionSeq uint           `json:"action_seq"`
 	CreatedAt time.Time      `json:"created_at"`
 	Prev      RecordSnapshot `json:"prev"`
+	// Empty tokens preserve compatibility with journal entries written before
+	// action tokens were introduced.
+	ActionToken string `json:"action_token,omitempty"`
+	PrevToken   string `json:"prev_token,omitempty"`
+}
+
+func newRecordActionToken() (string, error) {
+	var token [16]byte
+	if _, err := rand.Read(token[:]); err != nil {
+		return "", fmt.Errorf("generate record action token: %w", err)
+	}
+	return hex.EncodeToString(token[:]), nil
 }
 
 // RecordActionStore is the action-stack backend. The Redis implementation lives
@@ -113,6 +128,14 @@ func (s *RecordActionService) Windows(ctx context.Context, actorID int, now time
 	if err != nil {
 		return nil, fmt.Errorf("read record actions: %w", err)
 	}
+	// Redis scores have millisecond precision; use the full timestamp retained
+	// in each entry to order actions that share a score.
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].CreatedAt.Equal(entries[j].CreatedAt) {
+			return entries[i].ActionSeq > entries[j].ActionSeq
+		}
+		return entries[i].CreatedAt.After(entries[j].CreatedAt)
+	})
 	out := make(map[uint]RecordWindow)
 	for _, e := range entries {
 		w, ok := out[e.RecordID]

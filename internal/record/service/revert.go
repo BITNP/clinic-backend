@@ -125,7 +125,7 @@ func applyRevertible(w RecordWindow, rec recordmodel.ClinicRecord, window time.D
 	if !createdAt.IsZero() {
 		v.LastActionAt = new(createdAt.UTC().Format(time.RFC3339))
 	}
-	if rec.ActionSeq != w.Latest.ActionSeq {
+	if rec.ActionSeq != w.Latest.ActionSeq || rec.ActionToken != w.Latest.ActionToken {
 		return
 	}
 	until := createdAt.Add(window)
@@ -157,17 +157,17 @@ func (s *AdminRecordService) Revert(ctx context.Context, actorID int, id uint) (
 	var view AdminRecordView
 	err = database.WithTx(ctx, s.db.DB, func(tx *sql.Tx) error {
 		var err error
-		record, err = loadRecord(tx, id)
+		record, err = loadRecordForUpdate(ctx, tx, s.db.Driver, id)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrRecordNotFound
 		}
 		if err != nil {
 			return fmt.Errorf("get record %d for revert: %w", id, err)
 		}
-		if record.ActionSeq != entry.ActionSeq {
+		if record.ActionSeq != entry.ActionSeq || record.ActionToken != entry.ActionToken {
 			return fmt.Errorf("revert record %d: %w", id, ErrRevertSuperseded)
 		}
-		if err := s.restoreSnapshotTx(tx, &record, entry.Prev, entry.PrevSeq); err != nil {
+		if err := s.restoreSnapshotTx(tx, &record, entry.Prev, entry.PrevSeq, entry.PrevToken); err != nil {
 			return err
 		}
 		record, err = loadRecord(tx, id)
@@ -190,10 +190,10 @@ func (s *AdminRecordService) Revert(ctx context.Context, actorID int, id uint) (
 }
 
 // restoreSnapshotTx writes a snapshot back onto a record and its side tables.
-func (s *AdminRecordService) restoreSnapshotTx(tx *sql.Tx, rec *recordmodel.ClinicRecord, snap RecordSnapshot, prevSeq uint) error {
+func (s *AdminRecordService) restoreSnapshotTx(tx *sql.Tx, rec *recordmodel.ClinicRecord, snap RecordSnapshot, prevSeq uint, prevToken string) error {
 	if _, err := tx.Exec(
-		"UPDATE clinic_record SET status = $1, approver_id = $2, action_seq = $3 WHERE id = $4",
-		snap.Status, nullableUint(snap.ApproverID), prevSeq, rec.ID,
+		"UPDATE clinic_record SET status = $1, approver_id = $2, action_seq = $3, action_token = $4 WHERE id = $5",
+		snap.Status, nullableUint(snap.ApproverID), prevSeq, prevToken, rec.ID,
 	); err != nil {
 		return fmt.Errorf("restore record %d: %w", rec.ID, err)
 	}
