@@ -198,7 +198,9 @@ do not pass through the QQ message gateway. The backend sends to the record's
 in `CONFIGURATION.md`. Ticket notifications are disabled by default; set
 `DINGTALK_NOTIFY_ENABLED=true` after configuring the message center. Notification
 text and organization-specific fields are configurable through the
-`DINGTALK_TEMPLATE_*` and `DINGTALK_NOTIFICATION_*` settings.
+`DINGTALK_TEMPLATE_*` and `DINGTALK_NOTIFICATION_*` settings. Confirmed tickets
+also receive a persisted pre-shift reminder 30 minutes before their service
+window by default.
 
 The image tags in the commands above come from `.env`; see
 [CONFIGURATION.md](CONFIGURATION.md#production-stack-docker-composeprodyml) for

@@ -139,6 +139,8 @@ DingTalk id when a ticket becomes `confirmed`, `rejected`, `referred`, or
 | `DINGTALK_APP_KEY` | — (required) | Open-platform application key used by the token API. |
 | `DINGTALK_APP_SECRET` | — (required) | Open-platform application secret used by the token API. |
 | `DINGTALK_TIMEOUT` | `10s` | Per-request HTTP timeout; must be positive. |
+| `DINGTALK_REMINDER_LEAD_TIME` | `30m` | How long before the service start a confirmed ticket becomes eligible for its guest reminder. |
+| `DINGTALK_REMINDER_POLL_INTERVAL` | `1m` | How often the worker discovers and delivers due reminder jobs. |
 
 The delivery settings are required only when `DINGTALK_NOTIFY_ENABLED=true`.
 Leaving it `false` means ticket transitions and cleanup remain unchanged while
@@ -158,7 +160,7 @@ empty to use its built-in default. Use `\n` for a line break.
 | `DINGTALK_TEMPLATE_REJECTED` | built-in rejection example | Template for `rejected`. |
 | `DINGTALK_TEMPLATE_REFERRED` | built-in referral example | Template for `referred`. |
 | `DINGTALK_TEMPLATE_NO_SHOW` | built-in no-show example | Template for `no_show`. |
-| `DINGTALK_TEMPLATE_REMINDER` | built-in reminder example | Reserved reminder template; validated at startup but not scheduled. |
+| `DINGTALK_TEMPLATE_REMINDER` | built-in reminder example | Template for confirmed-ticket pre-shift reminders. |
 
 Available template fields:
 
@@ -182,6 +184,13 @@ DINGTALK_NOTIFICATION_TRANSFER_ROOM=求是社区
 DINGTALK_NOTIFICATION_TRANSFER_ADDRESS=疏桐园D地下室D116
 DINGTALK_TEMPLATE_CONFIRMED=【{{.HEDR}}】工单{{.ID}}已通过，请于{{.DATE}}前往{{.ROOM}}。\n地址：{{.LOCA}}
 ```
+
+When notifications are enabled, the backend scans at
+`DINGTALK_REMINDER_POLL_INTERVAL` for confirmed tickets whose service window is
+at most `DINGTALK_REMINDER_LEAD_TIME` away and has not started. It persists one
+reminder job per record and service window, rechecks eligibility before sending,
+and retries transient failures with backoff. Reminder jobs are stored in
+`clinic_record_dingtalk_reminder`, so they survive backend restarts.
 
 The client obtains an open-platform token with the configured key and secret,
 caches it, and requests a replacement on the first DingTalk operation at or
