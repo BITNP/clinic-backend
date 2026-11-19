@@ -12,11 +12,12 @@ import (
 )
 
 type transitionSpec struct {
-	verb    string
-	action  RecordAction
-	actorID int
-	allowed func(recordmodel.RecordStatus) bool
-	update  func(*sql.Tx, recordmodel.ClinicRecord, time.Time) error
+	verb               string
+	action             RecordAction
+	actorID            int
+	notificationReason string
+	allowed            func(recordmodel.RecordStatus) bool
+	update             func(*sql.Tx, recordmodel.ClinicRecord, time.Time) error
 }
 
 func (s *AdminRecordService) runTransition(ctx context.Context, id uint, spec transitionSpec) (AdminRecordView, error) {
@@ -74,6 +75,7 @@ func (s *AdminRecordService) runTransition(ctx context.Context, id uint, spec tr
 		return AdminRecordView{}, err
 	}
 	s.recordAction(ctx, entry)
+	s.notifyTicketStatusChange(ctx, record, spec.notificationReason)
 	if err := s.applyRevertibleOne(ctx, spec.actorID, record, &view); err != nil {
 		return AdminRecordView{}, err
 	}
@@ -193,10 +195,11 @@ func (s *AdminRecordService) MarkCompleted(ctx context.Context, actorID int, id 
 
 func (s *AdminRecordService) MarkRejected(ctx context.Context, id uint, reason string, approverID uint) (AdminRecordView, error) {
 	return s.runTransition(ctx, id, transitionSpec{
-		verb:    "reject",
-		action:  RecordActionReject,
-		actorID: int(approverID),
-		allowed: onlyStatus(recordmodel.RecordStatusPending),
+		verb:               "reject",
+		action:             RecordActionReject,
+		actorID:            int(approverID),
+		notificationReason: reason,
+		allowed:            onlyStatus(recordmodel.RecordStatusPending),
 		update: func(tx *sql.Tx, record recordmodel.ClinicRecord, _ time.Time) error {
 			if err := setRecordStatusTx(tx, record.ID, recordmodel.RecordStatusRejected, &approverID, true); err != nil {
 				return err
@@ -215,9 +218,10 @@ func (s *AdminRecordService) MarkRejected(ctx context.Context, id uint, reason s
 
 func (s *AdminRecordService) MarkReferred(ctx context.Context, id uint, reason string, approverID uint) (AdminRecordView, error) {
 	return s.runTransition(ctx, id, transitionSpec{
-		verb:    "refer",
-		action:  RecordActionRefer,
-		actorID: int(approverID),
+		verb:               "refer",
+		action:             RecordActionRefer,
+		actorID:            int(approverID),
+		notificationReason: reason,
 		allowed: func(status recordmodel.RecordStatus) bool {
 			switch status {
 			case recordmodel.RecordStatusRejected, recordmodel.RecordStatusCompleted, recordmodel.RecordStatusReferred, recordmodel.RecordStatusNoShow:

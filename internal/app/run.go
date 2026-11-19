@@ -22,6 +22,7 @@ import (
 	"clinic-backend/internal/legacy"
 	"clinic-backend/internal/message"
 	"clinic-backend/internal/message/napcat"
+	notificationclient "clinic-backend/internal/notification/client"
 	recordhandler "clinic-backend/internal/record/handler"
 	recordservice "clinic-backend/internal/record/service"
 	roomhandler "clinic-backend/internal/room/handler"
@@ -55,6 +56,21 @@ func Run() {
 	reminderCfg, err := LoadServiceDateReminderConfig(os.Getenv)
 	if err != nil {
 		log.Fatalf("reminder configuration: %v", err)
+	}
+
+	dingtalkCfg, err := LoadDingTalkConfig(os.Getenv)
+	if err != nil {
+		log.Fatalf("dingtalk configuration: %v", err)
+	}
+	dingtalkClient, err := notificationclient.NewDingTalkClient(notificationclient.Config{
+		BaseURL:   dingtalkCfg.BaseURL,
+		AppCode:   dingtalkCfg.AppCode,
+		AppKey:    dingtalkCfg.AppKey,
+		AppSecret: dingtalkCfg.AppSecret,
+		Timeout:   dingtalkCfg.Timeout,
+	})
+	if err != nil {
+		log.Fatalf("dingtalk client: %v", err)
 	}
 
 	msgCfg, err := LoadMessageConfig(os.Getenv)
@@ -233,6 +249,9 @@ func Run() {
 		envDuration("RECORD_ACTION_WINDOW", 5*time.Minute),
 	)
 	adminRecordSvc.SetRecordActionService(recordActionSvc)
+	adminRecordSvc.SetTicketStatusNotifier(
+		recordservice.NewDingTalkTicketNotifier(dingtalkClient, serviceDateLoc),
+	)
 	adminRecordH := recordhandler.NewAdminRecordHandler(adminRecordSvc)
 
 	workScheduleSvc := schedulingservice.NewWorkScheduleService(rawDB)

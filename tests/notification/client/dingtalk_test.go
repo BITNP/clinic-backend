@@ -176,6 +176,108 @@ func TestDingTalkClientSendAndStatus(t *testing.T) {
 	}
 }
 
+func TestDingTalkClientSendAndCheckStatus(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusData string
+		wantErr    string
+	}{
+		{
+			name: "successful delivery",
+			statusData: `{
+				"msgId":"message-1",
+				"status":"send_mq",
+				"detail":[{
+					"platform":"dingTalk",
+					"status":"send_success",
+					"sendSuccessCount":1,
+					"sendFailedCount":0,
+					"noReceiptCount":0,
+					"unauthorizedCount":0
+				}]
+			}`,
+		},
+		{
+			name: "failed delivery",
+			statusData: `{
+				"msgId":"message-1",
+				"status":"send_mq",
+				"detail":[{
+					"platform":"dingTalk",
+					"status":"send_failed",
+					"statusMsg":"发送失败",
+					"errorMsg":"receiver not found",
+					"sendSuccessCount":0,
+					"sendFailedCount":1,
+					"unauthorizedCount":0
+				}]
+			}`,
+			wantErr: "status \"send_failed\"",
+		},
+		{
+			name: "unauthorized receiver",
+			statusData: `{
+				"msgId":"message-1",
+				"status":"send_mq",
+				"detail":[{
+					"platform":"dingTalk",
+					"status":"send_success",
+					"sendSuccessCount":0,
+					"sendFailedCount":0,
+					"unauthorizedCount":1
+				}]
+			}`,
+			wantErr: "unauthorized 1",
+		},
+		{
+			name:       "missing dingtalk detail",
+			statusData: `{"msgId":"message-1","status":"send_mq","detail":[]}`,
+			wantErr:    "missing dingTalk detail",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/prod-api/auth/open/platform/getToken":
+					fmt.Fprint(w, `{"code":200,"data":{"access_token":"token-1","expires_in":10}}`)
+				case "/prod-api/msg-center/api/send/msg":
+					fmt.Fprint(w, `{"code":200,"data":{"msgId":"message-1"}}`)
+				case "/prod-api/msg-center/api/get/result":
+					fmt.Fprintf(w, `{"code":200,"data":%s}`, tt.statusData)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+
+			client, err := notificationclient.NewDingTalkClient(validDingTalkConfig(server.URL))
+			if err != nil {
+				t.Fatal(err)
+			}
+			sent, status, err := client.SendAndCheckStatus(context.Background(), notificationclient.SendRequest{
+				Receivers: "2026001",
+				Title:     "提醒",
+				Content:   "审核工单",
+			})
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("SendAndCheckStatus() error = %v", err)
+				}
+				if sent.MsgID != "message-1" || status.MsgID != "message-1" {
+					t.Fatalf("sent = %+v, status = %+v", sent, status)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestDingTalkClientRefreshesTokenAtEightyPercent(t *testing.T) {
 	start := time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC)
 	now := start

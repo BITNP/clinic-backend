@@ -190,9 +190,12 @@ account's `client_token` from `accounts.json` as the bearer token (the default
 URL is `http://message-gateway:8081` inside Compose). Do not set
 `NAPCAT_BASE_URL`; the legacy in-process manager must remain disabled.
 
-DingTalk messages use the separate V2 message-center client and do not pass
-through the QQ message gateway. Its `DINGTALK_BASE_URL`, `DINGTALK_APP_CODE`,
-and credential settings are documented in `CONFIGURATION.md`.
+Ticket status messages use the separate V2 DingTalk message-center client and
+do not pass through the QQ message gateway. The backend sends to the record's
+`user` DingTalk id when a ticket becomes `confirmed`, `rejected`, `referred`, or
+`no_show`, then verifies the per-platform delivery status. Its
+`DINGTALK_BASE_URL`, `DINGTALK_APP_CODE`, and credential settings are documented
+in `CONFIGURATION.md`.
 
 The image tags in the commands above come from `.env`; see
 [CONFIGURATION.md](CONFIGURATION.md#production-stack-docker-composeprodyml) for

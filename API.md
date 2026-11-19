@@ -830,7 +830,8 @@ Record lifecycle states:
 At the clinic-local midnight (`CLINIC_TIMEZONE`, UTC+8 by default), records
 whose appointment date has passed are closed automatically. `pending` and
 `confirmed` records become `no_show`; `arrived` and `in_progress` records become
-`completed`. An existing arrival timestamp is preserved.
+`completed`. An existing arrival timestamp is preserved. Automatic `no_show`
+transitions send the same best-effort DingTalk notification described below.
 
 Admin record view:
 
@@ -1130,7 +1131,9 @@ curl -X DELETE "$BASE/api/admin/records/7/photos/1" \
 ### `POST /api/admin/records/{id}/confirm`
 
 **Description:** Approves a pending record (`pending` → `confirmed`). Admin only.
-Sets `approver_id`.
+Sets `approver_id` and sends a best-effort DingTalk notification to the record's
+`user` id. The message-center delivery status is checked after submission;
+notification failures are logged and do not roll back the transition.
 
 **Request:** No body.
 
@@ -1149,7 +1152,10 @@ curl -X POST "$BASE/api/admin/records/1/confirm" \
 ### `POST /api/admin/records/{id}/reject`
 
 **Description:** Rejects a pending record (`pending` → `rejected`). Admin only.
-Stores the rejection reason.
+Stores the rejection reason and sends a best-effort DingTalk notification to the
+record's `user` id. The message-center delivery status is checked after
+submission; notification failures are logged and do not roll back the
+transition.
 
 **Request body**
 
@@ -1230,7 +1236,9 @@ curl -X POST "$BASE/api/admin/records/1/complete" \
 **Description:** Refers a record elsewhere. Allowed for any non-final state
 (`pending`, `confirmed`, `arrived`, `in_progress`) → `referred`. Staff or admin.
 Stores the referral reason. A JSON object body is required; `reason` may be
-omitted or empty.
+omitted or empty. Sends a best-effort DingTalk notification to the record's
+`user` id. The message-center delivery status is checked after submission;
+notification failures are logged and do not roll back the transition.
 
 **Request body**
 
@@ -1254,7 +1262,10 @@ curl -X POST "$BASE/api/admin/records/1/refer" \
 ### `POST /api/admin/records/{id}/no-show`
 
 **Description:** Marks a confirmed record as a no-show (`confirmed` →
-`no_show`). Staff or admin.
+`no_show`). Staff or admin. Sends a best-effort DingTalk notification to the
+record's `user` id. The message-center delivery status is checked after
+submission; notification failures are logged and do not roll back the
+transition.
 
 **Request:** No body.
 

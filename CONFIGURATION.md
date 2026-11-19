@@ -127,8 +127,9 @@ account. Pending messages are lost on gateway restart. See
 
 DingTalk notifications use the V2 message-center API through the reusable
 `internal/notification/client` package. This path is independent of the QQ
-`message-gateway` path and is not used by the current service-date reminder
-worker. Configure it when a DingTalk notification consumer is wired:
+`message-gateway` path. The backend uses it to notify the record's `user`
+DingTalk id when a ticket becomes `confirmed`, `rejected`, `referred`, or
+`no_show`. The settings are required:
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -142,7 +143,11 @@ The client obtains an open-platform token with the configured key and secret,
 caches it, and requests a replacement on the first DingTalk operation at or
 after 80% of `expires_in`. The V2 API reports `expires_in` in minutes. Calls use
 `open-access-token` and `msg-center-app-code`; they return non-200 API `code`
-values as errors.
+values as errors. After submission, the client queries the message status and
+requires a successful `dingTalk` detail with at least one successful recipient
+and no failed or unauthorized recipients. Notification delivery is best-effort:
+the ticket state remains committed if sending or status verification fails, and
+the failure is logged.
 
 For local development, `scripts/dev.sh` starts `fake/fake_dingtalk.go` on
 `:9998` when `DINGTALK_BASE_URL` is empty. To run it manually:
@@ -404,7 +409,8 @@ override existing environment variables) and then starts:
 
 The fake DingTalk writes received requests directly to the terminal. If
 `DINGTALK_BASE_URL` points at another host, `dev.sh` uses that service instead
-of starting the fake. Use `--no-dingtalk` to skip the fake entirely.
+of starting the fake. Use `--no-dingtalk` only when all `DINGTALK_*` settings
+already point at a reachable message center.
 
 NapCat is external to the gateway stack. To use the optional sample, start it
 after the gateway network exists:

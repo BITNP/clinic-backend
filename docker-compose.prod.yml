@@ -21,6 +21,7 @@ version: "3"
 #   cp .env.example .env            # then set real secrets:
 #                                   #   CLINIC_API_KEY, APP_BASE_URL,
 #                                   #   CAS_SERVER_URL, CLINIC_DB_DSN,
+#                                   #   DINGTALK_*,
 #                                   #   MAINTAINER_QQ_IDS, MESSAGE_GATEWAY_ACCOUNT_TOKEN,
 #                                   #   RUSTFS_*, S3_*, ...
 #   docker compose -f docker-compose.prod.yml up -d

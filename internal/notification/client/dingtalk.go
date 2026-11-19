@@ -185,6 +185,25 @@ func (c *DingTalkClient) Send(ctx context.Context, input SendRequest) (SendResul
 	return result, nil
 }
 
+// SendAndCheckStatus submits one DingTalk message, then verifies the message
+// center's per-platform delivery result. A queued send response alone is not
+// treated as successful delivery.
+func (c *DingTalkClient) SendAndCheckStatus(ctx context.Context, input SendRequest) (SendResult, MessageStatus, error) {
+	sent, err := c.Send(ctx, input)
+	if err != nil {
+		return SendResult{}, MessageStatus{}, err
+	}
+
+	status, err := c.Status(ctx, sent.MsgID)
+	if err != nil {
+		return sent, MessageStatus{}, fmt.Errorf("check dingtalk message %s delivery: %w", sent.MsgID, err)
+	}
+	if err := checkDingTalkDelivery(sent.MsgID, status); err != nil {
+		return sent, status, err
+	}
+	return sent, status, nil
+}
+
 // Status returns the current state of a previously submitted message.
 func (c *DingTalkClient) Status(ctx context.Context, msgID string) (MessageStatus, error) {
 	msgID = strings.TrimSpace(msgID)
@@ -206,6 +225,34 @@ func (c *DingTalkClient) Status(ctx context.Context, msgID string) (MessageStatu
 		return MessageStatus{}, fmt.Errorf("check dingtalk message status: response missing msgId")
 	}
 	return result, nil
+}
+
+func checkDingTalkDelivery(msgID string, status MessageStatus) error {
+	if status.MsgID != msgID {
+		return fmt.Errorf("check dingtalk message %s delivery: response msgId is %q", msgID, status.MsgID)
+	}
+	for _, detail := range status.Detail {
+		if !strings.EqualFold(strings.TrimSpace(detail.Platform), dingTalkPlatform) {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(detail.Status), "send_success") &&
+			detail.SendSuccessCount > 0 &&
+			detail.SendFailedCount == 0 &&
+			detail.UnauthorizedCount == 0 {
+			return nil
+		}
+		return fmt.Errorf(
+			"check dingtalk message %s delivery: status %q, status message %q, error message %q, success %d, failed %d, unauthorized %d",
+			msgID,
+			detail.Status,
+			detail.StatusMsg,
+			detail.ErrorMsg,
+			detail.SendSuccessCount,
+			detail.SendFailedCount,
+			detail.UnauthorizedCount,
+		)
+	}
+	return fmt.Errorf("check dingtalk message %s delivery: response missing dingTalk detail", msgID)
 }
 
 func (c *DingTalkClient) sendPayload(input SendRequest) (any, error) {
