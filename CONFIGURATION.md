@@ -144,6 +144,22 @@ after 80% of `expires_in`. The V2 API reports `expires_in` in minutes. Calls use
 `open-access-token` and `msg-center-app-code`; they return non-200 API `code`
 values as errors.
 
+For local development, `scripts/dev.sh` starts `fake/fake_dingtalk.go` on
+`:9998` when `DINGTALK_BASE_URL` is empty. To run it manually:
+
+```bash
+go run fake/fake_dingtalk.go
+export DINGTALK_BASE_URL=http://127.0.0.1:9998
+export DINGTALK_APP_CODE=local-dev-app
+export DINGTALK_APP_KEY=local-dev-key
+export DINGTALK_APP_SECRET=local-dev-secret
+```
+
+The fake implements token, send, and delivery-status requests. It prints each
+received method, path, query, headers, and formatted JSON body to stdout, while
+redacting application secrets and access tokens. Sent messages are kept in
+memory so their status can be queried until the process exits.
+
 ### Health monitor (`clinic-health-monitor`)
 
 `clinic-health-monitor` polls the backend's `/healthz` endpoint and the admin
@@ -379,11 +395,16 @@ same-origin from the browser's perspective.
 override existing environment variables) and then starts:
 
 1. the fake CAS server on `:9999`;
-2. Redis on `:6379` (container, falling back to `redis-server`);
-3. RustFS and `rustfs-init` on `:9000` / `:9001` when `S3_ENDPOINT` points at
+2. the fake DingTalk message center on `:9998`;
+3. Redis on `:6379` (container, falling back to `redis-server`);
+4. RustFS and `rustfs-init` on `:9000` / `:9001` when `S3_ENDPOINT` points at
    local storage;
-4. message-gateway, gateway API on `:8081`;
-5. the backend on `:8080`.
+5. message-gateway, gateway API on `:8081`;
+6. the backend on `:8080`.
+
+The fake DingTalk writes received requests directly to the terminal. If
+`DINGTALK_BASE_URL` points at another host, `dev.sh` uses that service instead
+of starting the fake. Use `--no-dingtalk` to skip the fake entirely.
 
 NapCat is external to the gateway stack. To use the optional sample, start it
 after the gateway network exists:
@@ -413,6 +434,7 @@ Defaults applied by `scripts/dev.sh` when the variables are unset:
 | Variable | Default |
 | --- | --- |
 | `CAS_PORT` | `9999` |
+| `DINGTALK_PORT` | `9998` |
 | `REDIS_PORT` | `6379` |
 | `BACKEND_PORT` | `8080` |
 | `REDIS_CONTAINER` | `clinic-dev-redis` |
@@ -423,6 +445,10 @@ Defaults applied by `scripts/dev.sh` when the variables are unset:
 | `REDIS_PASSWORD` | empty |
 | `REDIS_DB` | `0` |
 | `CAS_SERVER_URL` | `http://127.0.0.1:9999` |
+| `DINGTALK_BASE_URL` | `http://127.0.0.1:9998` |
+| `DINGTALK_APP_CODE` | `local-dev-app` |
+| `DINGTALK_APP_KEY` | `local-dev-key` |
+| `DINGTALK_APP_SECRET` | `local-dev-secret` |
 | `APP_BASE_URL` | `http://127.0.0.1:5173` |
 | `CAS_DEFAULT_REDIRECT` | `/` |
 | `SESSION_COOKIE_SAMESITE` | `lax` |
@@ -433,6 +459,13 @@ Manual setup:
 ```bash
 # 1. Start the fake CAS server (gives admin role)
 go run fake/fake_cas.go        # runs on :9999
+
+# 1b. Start the fake DingTalk message center and point the backend at it
+go run fake/fake_dingtalk.go   # runs on :9998
+export DINGTALK_BASE_URL=http://127.0.0.1:9998
+export DINGTALK_APP_CODE=local-dev-app
+export DINGTALK_APP_KEY=local-dev-key
+export DINGTALK_APP_SECRET=local-dev-secret
 
 # 2. Start Redis (required; see docker-compose.yml for the dev service)
 docker run --rm -p 6379:6379 redis:7-alpine

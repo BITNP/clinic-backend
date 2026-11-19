@@ -350,19 +350,19 @@ the backend to the frontend's address. Because the frontend proxies `/api`,
 ## Run locally (development)
 
 `scripts/dev.sh` loads `.env` and starts the fake CAS server, Redis, local
-RustFS (when `S3_ENDPOINT` points at it), `message-gateway`, and the backend.
-NapCat is external to the gateway stack; its optional sample stack is in
-`../message-gateway/docker-compose.napcat.yml`.
+fake DingTalk message center, RustFS (when `S3_ENDPOINT` points at it),
+`message-gateway`, and the backend. NapCat is external to the gateway stack; its
+optional sample stack is in `../message-gateway/docker-compose.napcat.yml`.
 
 ```bash
 scripts/dev.sh
 ```
 
-Use `--no-cas`, `--no-redis`, `--no-storage`, or `--no-message-gateway` when a
-service is already running or storage is managed elsewhere. `--no-napcat` is a
-deprecated alias for `--no-message-gateway`. For testing without a QQ login, add
-`--fake-napcat`; it starts the dev fake OneBot server directly from
-`../message-gateway`. The complete
+Use `--no-cas`, `--no-dingtalk`, `--no-redis`, `--no-storage`, or
+`--no-message-gateway` when a service is already running or storage is managed
+elsewhere. `--no-napcat` is a deprecated alias for `--no-message-gateway`. For
+testing without a QQ login, add `--fake-napcat`; it starts the dev fake OneBot
+server directly from `../message-gateway`. The complete
 local-development settings, defaults, and manual steps are in
 [CONFIGURATION.md](CONFIGURATION.md#local-development).
 
