@@ -62,7 +62,9 @@ func Run() {
 	if err != nil {
 		log.Fatalf("dingtalk configuration: %v", err)
 	}
+	serviceDateLoc := envLocation("CLINIC_TIMEZONE", time.FixedZone("UTC+8", 8*60*60))
 	var dingtalkClient *notificationclient.DingTalkClient
+	var ticketNotifier *recordservice.DingTalkTicketNotifier
 	if dingtalkCfg.Enabled {
 		dingtalkClient, err = notificationclient.NewDingTalkClient(notificationclient.Config{
 			BaseURL:   dingtalkCfg.BaseURL,
@@ -73,6 +75,25 @@ func Run() {
 		})
 		if err != nil {
 			log.Fatalf("dingtalk client: %v", err)
+		}
+		ticketNotifier, err = recordservice.NewDingTalkTicketNotifier(
+			dingtalkClient,
+			serviceDateLoc,
+			recordservice.DingTalkTicketNotifierConfig{
+				Title:             dingtalkCfg.Notification.Title,
+				Header:            dingtalkCfg.Notification.Header,
+				QQAccount:         dingtalkCfg.Notification.QQAccount,
+				TransferRoom:      dingtalkCfg.Notification.TransferRoom,
+				TransferAddress:   dingtalkCfg.Notification.TransferAddress,
+				ConfirmedTemplate: dingtalkCfg.Notification.ConfirmedTemplate,
+				RejectedTemplate:  dingtalkCfg.Notification.RejectedTemplate,
+				ReferredTemplate:  dingtalkCfg.Notification.ReferredTemplate,
+				NoShowTemplate:    dingtalkCfg.Notification.NoShowTemplate,
+				ReminderTemplate:  dingtalkCfg.Notification.ReminderTemplate,
+			},
+		)
+		if err != nil {
+			log.Fatalf("dingtalk notification templates: %v", err)
 		}
 	} else {
 		log.Println("dingtalk ticket notifications disabled")
@@ -223,7 +244,6 @@ func Run() {
 	announcementSvc := announcement.NewAnnouncementService(sqlDB)
 	announcementH := announcement.NewAnnouncementHandler(announcementSvc)
 
-	serviceDateLoc := envLocation("CLINIC_TIMEZONE", time.FixedZone("UTC+8", 8*60*60))
 	serviceDateSvc := schedulingservice.NewServiceDateService(rawDB, serviceDateLoc)
 	serviceDateH := schedulinghandler.NewServiceDateHandler(serviceDateSvc)
 
@@ -254,10 +274,8 @@ func Run() {
 		envDuration("RECORD_ACTION_WINDOW", 5*time.Minute),
 	)
 	adminRecordSvc.SetRecordActionService(recordActionSvc)
-	if dingtalkClient != nil {
-		adminRecordSvc.SetTicketStatusNotifier(
-			recordservice.NewDingTalkTicketNotifier(dingtalkClient, serviceDateLoc),
-		)
+	if ticketNotifier != nil {
+		adminRecordSvc.SetTicketStatusNotifier(ticketNotifier)
 	}
 	adminRecordH := recordhandler.NewAdminRecordHandler(adminRecordSvc)
 

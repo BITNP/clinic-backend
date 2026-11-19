@@ -32,7 +32,7 @@ func (s *AdminRecordService) CloseExpiredRecords(ctx context.Context, cutoff tim
 				`UPDATE clinic_record
 				 SET status = $1, action_seq = action_seq + 1
 				 WHERE appointment_time < $2 AND status IN (%s)
-				 RETURNING id, COALESCE("user", ''), appointment_time`,
+				 RETURNING id, COALESCE("user", ''), appointment_time, room`,
 				database.Placeholders(3, len(noShowStatuses)),
 			),
 			args...,
@@ -42,7 +42,7 @@ func (s *AdminRecordService) CloseExpiredRecords(ctx context.Context, cutoff tim
 		}
 		for rows.Next() {
 			record := recordmodel.ClinicRecord{Status: recordmodel.RecordStatusNoShow}
-			if err := rows.Scan(&record.ID, &record.User, &record.AppointmentTime); err != nil {
+			if err := rows.Scan(&record.ID, &record.User, &record.AppointmentTime, &record.RoomID); err != nil {
 				rows.Close()
 				return fmt.Errorf("scan no-show record: %w", err)
 			}

@@ -10,7 +10,10 @@ import (
 	recordmodel "clinic-backend/internal/record/model"
 	recordservice "clinic-backend/internal/record/service"
 	roommodel "clinic-backend/internal/room/model"
+	schedulingmodel "clinic-backend/internal/scheduling/model"
 	"clinic-backend/internal/testutil"
+
+	"gorm.io/gorm"
 )
 
 type fakeDingTalkStatusSender struct {
@@ -46,51 +49,97 @@ func (f *fakeTicketStatusNotifier) Notify(_ context.Context, notification record
 	return f.err
 }
 
+func seedTicketNotificationServiceDate(
+	t *testing.T,
+	db *gorm.DB,
+	roomID uint,
+	record *recordmodel.ClinicRecord,
+) {
+	t.Helper()
+	day := time.Date(
+		record.AppointmentTime.Year(),
+		record.AppointmentTime.Month(),
+		record.AppointmentTime.Day(),
+		0, 0, 0, 0, time.UTC,
+	)
+	if err := db.Model(&recordmodel.ClinicRecord{}).
+		Where("id = ?", record.ID).
+		Update("appointment_time", day).Error; err != nil {
+		t.Fatalf("normalize record appointment date: %v", err)
+	}
+	record.AppointmentTime = day
+	start := day.Add(10 * time.Hour)
+	serviceDate := schedulingmodel.ClinicServiceDate{
+		Capacity:  10,
+		RoomID:    &roomID,
+		Date:      day,
+		StartTime: start,
+		EndTime:   start.Add(2 * time.Hour),
+		Title:     "test",
+	}
+	if err := db.Create(&serviceDate).Error; err != nil {
+		t.Fatalf("seed service date: %v", err)
+	}
+}
+
 func TestDingTalkTicketNotifierFormatsStatusMessages(t *testing.T) {
 	location := time.FixedZone("UTC+8", 8*60*60)
-	appointment := time.Date(2026, 11, 20, 0, 0, 0, 0, location)
+	start := time.Date(2026, 11, 20, 18, 30, 0, 0, location)
+	end := time.Date(2026, 11, 20, 21, 0, 0, 0, location)
+	const allFields = "{{.HEDR}}|{{.DATE}}|{{.ID}}|{{.ROOM}}|{{.LOCA}}|{{.TRRO}}|{{.TRLO}}|{{.REAS}}|{{.QQAC}}"
+	cfg := recordservice.DingTalkTicketNotifierConfig{
+		Title:             "状态通知",
+		Header:            "测试协会",
+		QQAccount:         "123456",
+		TransferRoom:      "转诊诊室",
+		TransferAddress:   "转诊地址",
+		ConfirmedTemplate: allFields,
+		RejectedTemplate:  allFields,
+		ReferredTemplate:  allFields,
+		NoShowTemplate:    allFields,
+		ReminderTemplate:  "{{.ROOM}}",
+	}
 	tests := []struct {
-		name    string
-		status  recordmodel.RecordStatus
-		reason  string
-		content string
+		name   string
+		status recordmodel.RecordStatus
+		reason string
 	}{
 		{
-			name:    "confirmed",
-			status:  recordmodel.RecordStatusConfirmed,
-			content: "您的工单 #00000042（预约日期 2026-11-20）已确认。",
+			name:   "confirmed",
+			status: recordmodel.RecordStatusConfirmed,
 		},
 		{
 			name:   "rejected",
 			status: recordmodel.RecordStatusRejected,
 			reason: "预约时间不在服务时段",
-			content: "您的工单 #00000042（预约日期 2026-11-20）已驳回。\n" +
-				"驳回原因：预约时间不在服务时段",
 		},
 		{
 			name:   "referred",
 			status: recordmodel.RecordStatusReferred,
 			reason: "需要主板级维修",
-			content: "您的工单 #00000042（预约日期 2026-11-20）建议返厂。\n" +
-				"说明：需要主板级维修",
 		},
 		{
-			name:    "no show",
-			status:  recordmodel.RecordStatusNoShow,
-			content: "您的工单 #00000042（预约日期 2026-11-20）因未到诊所已关闭。",
+			name:   "no show",
+			status: recordmodel.RecordStatusNoShow,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sender := &fakeDingTalkStatusSender{}
-			notifier := recordservice.NewDingTalkTicketNotifier(sender, location)
-			err := notifier.Notify(context.Background(), recordservice.TicketStatusNotification{
-				RecordID:        42,
-				User:            "ding-user-42",
-				Status:          tt.status,
-				AppointmentTime: appointment,
-				Reason:          tt.reason,
+			notifier, err := recordservice.NewDingTalkTicketNotifier(sender, location, cfg)
+			if err != nil {
+				t.Fatalf("NewDingTalkTicketNotifier() error = %v", err)
+			}
+			err = notifier.Notify(context.Background(), recordservice.TicketStatusNotification{
+				RecordID:     42,
+				User:         "ding-user-42",
+				Status:       tt.status,
+				Reason:       tt.reason,
+				RoomName:     "徐特立图书馆",
+				RoomAddress:  "徐特立图书馆三楼311G研讨室",
+				ServiceStart: start,
+				ServiceEnd:   end,
 			})
 			if err != nil {
 				t.Fatalf("Notify() error = %v", err)
@@ -102,13 +151,61 @@ func TestDingTalkTicketNotifierFormatsStatusMessages(t *testing.T) {
 			if request.Receivers != "ding-user-42" {
 				t.Errorf("Receivers = %q, want ding-user-42", request.Receivers)
 			}
-			if request.Title != "电脑诊所工单状态更新" || request.Content != tt.content {
+			wantContent := "测试协会|2026-11-20的18:30-21:00|#42|徐特立图书馆|徐特立图书馆三楼311G研讨室|转诊诊室|转诊地址|" +
+				tt.reason + "|123456"
+			if request.Title != "状态通知" || request.Content != wantContent {
 				t.Errorf("message = %q / %q", request.Title, request.Content)
 			}
 			if request.MessageType != "text" || request.Level != "normal" {
 				t.Errorf("message options = %q / %q", request.MessageType, request.Level)
 			}
 		})
+	}
+}
+
+func TestDingTalkTicketNotifierRejectsInvalidTemplate(t *testing.T) {
+	cfg := recordservice.DingTalkTicketNotifierConfig{
+		Title:             "状态通知",
+		Header:            "测试协会",
+		ConfirmedTemplate: "{{.UNKNOWN}}",
+		RejectedTemplate:  "rejected",
+		ReferredTemplate:  "referred",
+		NoShowTemplate:    "no_show",
+		ReminderTemplate:  "reminder",
+	}
+	if _, err := recordservice.NewDingTalkTicketNotifier(&fakeDingTalkStatusSender{}, time.UTC, cfg); err == nil {
+		t.Fatal("expected invalid template error")
+	}
+}
+
+func TestDingTalkTicketNotifierDecodesEscapedNewlines(t *testing.T) {
+	cfg := recordservice.DingTalkTicketNotifierConfig{
+		Title:             "状态通知",
+		Header:            "测试协会",
+		ConfirmedTemplate: `第一行\n{{.ROOM}}`,
+		RejectedTemplate:  "rejected",
+		ReferredTemplate:  "referred",
+		NoShowTemplate:    "no_show",
+		ReminderTemplate:  "reminder",
+	}
+	sender := &fakeDingTalkStatusSender{}
+	notifier, err := recordservice.NewDingTalkTicketNotifier(sender, time.UTC, cfg)
+	if err != nil {
+		t.Fatalf("NewDingTalkTicketNotifier() error = %v", err)
+	}
+	err = notifier.Notify(context.Background(), recordservice.TicketStatusNotification{
+		RecordID:     1,
+		User:         "ding-user",
+		Status:       recordmodel.RecordStatusConfirmed,
+		RoomName:     "测试诊室",
+		ServiceStart: time.Date(2026, 11, 20, 18, 30, 0, 0, time.UTC),
+		ServiceEnd:   time.Date(2026, 11, 20, 21, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("Notify() error = %v", err)
+	}
+	if got := sender.requests[0].Content; got != "第一行\n测试诊室" {
+		t.Errorf("Content = %q", got)
 	}
 }
 
@@ -169,6 +266,7 @@ func TestTicketTransitionsNotifySupportedStatuses(t *testing.T) {
 			if err := db.Model(&record).Update("user", record.User).Error; err != nil {
 				t.Fatal(err)
 			}
+			seedTicketNotificationServiceDate(t, db, room.ID, &record)
 
 			notifier := &fakeTicketStatusNotifier{}
 			svc := recordservice.NewAdminRecordService(testutil.RawDB(t, db))
@@ -182,6 +280,9 @@ func TestTicketTransitionsNotifySupportedStatuses(t *testing.T) {
 			got := notifier.notifications[0]
 			if got.RecordID != record.ID || got.User != record.User || got.Status != tt.status || got.Reason != tt.reason {
 				t.Errorf("notification = %+v", got)
+			}
+			if got.RoomName != room.Name || got.ServiceStart.IsZero() || got.ServiceEnd.IsZero() {
+				t.Errorf("notification details = %+v", got)
 			}
 		})
 	}
@@ -207,6 +308,7 @@ func TestTicketNotificationFailureDoesNotFailTransition(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
 	record := seedActionRecord(t, db, recordmodel.RecordStatusPending, room.ID)
+	seedTicketNotificationServiceDate(t, db, room.ID, &record)
 	notifier := &fakeTicketStatusNotifier{err: errors.New("message center unavailable")}
 	svc := recordservice.NewAdminRecordService(testutil.RawDB(t, db))
 	svc.SetTicketStatusNotifier(notifier)
@@ -230,6 +332,7 @@ func TestCloseExpiredRecordsNotifiesNoShowGuests(t *testing.T) {
 		t.Fatal(err)
 	}
 	cutoff := yesterdayCutoff()
+	var lastRecord recordmodel.ClinicRecord
 	for _, tc := range []struct {
 		user   string
 		status recordmodel.RecordStatus
@@ -249,7 +352,9 @@ func TestCloseExpiredRecordsNotifiesNoShowGuests(t *testing.T) {
 		if err := db.Create(&record).Error; err != nil {
 			t.Fatal(err)
 		}
+		lastRecord = record
 	}
+	seedTicketNotificationServiceDate(t, db, room.ID, &lastRecord)
 
 	notifier := &fakeTicketStatusNotifier{}
 	svc := recordservice.NewAdminRecordService(testutil.RawDB(t, db))
@@ -267,6 +372,9 @@ func TestCloseExpiredRecordsNotifiesNoShowGuests(t *testing.T) {
 	for _, notification := range notifier.notifications {
 		if notification.Status != recordmodel.RecordStatusNoShow {
 			t.Errorf("status = %s, want no_show", notification.Status)
+		}
+		if notification.RoomName != room.Name || notification.ServiceStart.IsZero() {
+			t.Errorf("notification details = %+v", notification)
 		}
 	}
 }

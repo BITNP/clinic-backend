@@ -834,6 +834,10 @@ whose appointment date has passed are closed automatically. `pending` and
 transitions send the same best-effort DingTalk notification described below
 when `DINGTALK_NOTIFY_ENABLED=true`.
 
+DingTalk message text is rendered from configurable templates. The available
+fields are `HEDR`, `DATE`, `ID`, `ROOM`, `LOCA`, `TRRO`, `TRLO`, `REAS`, and
+`QQAC`; see `CONFIGURATION.md` for their sources and configuration variables.
+
 Admin record view:
 
 | Field | Type | Description |

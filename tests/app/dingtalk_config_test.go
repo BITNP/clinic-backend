@@ -36,6 +36,40 @@ func TestLoadDingTalkConfig(t *testing.T) {
 	if cfg.Timeout != 3*time.Second {
 		t.Errorf("Timeout = %v, want 3s", cfg.Timeout)
 	}
+	if cfg.Notification.Title != "电脑诊所工单状态更新" || cfg.Notification.Header != "网络开拓者协会" {
+		t.Errorf("notification defaults = %+v", cfg.Notification)
+	}
+	if !strings.Contains(cfg.Notification.ConfirmedTemplate, "您的预约已通过") ||
+		!strings.Contains(cfg.Notification.NoShowTemplate, "{{.QQAC}}") {
+		t.Errorf("notification templates = %+v", cfg.Notification)
+	}
+}
+
+func TestLoadDingTalkConfigNotificationOverrides(t *testing.T) {
+	values := validDingTalkEnv()
+	values["DINGTALK_NOTIFICATION_TITLE"] = "自定义标题"
+	values["DINGTALK_NOTIFICATION_HEADER"] = "自定义协会"
+	values["DINGTALK_NOTIFICATION_QQ_ACCOUNT"] = "123456"
+	values["DINGTALK_NOTIFICATION_TRANSFER_ROOM"] = "转诊室"
+	values["DINGTALK_NOTIFICATION_TRANSFER_ADDRESS"] = "转诊地址"
+	values["DINGTALK_TEMPLATE_CONFIRMED"] = "确认 {{.ROOM}}"
+	values["DINGTALK_TEMPLATE_REJECTED"] = "驳回 {{.REAS}}"
+	values["DINGTALK_TEMPLATE_REFERRED"] = "转诊 {{.TRRO}}"
+	values["DINGTALK_TEMPLATE_NO_SHOW"] = "未到 {{.QQAC}}"
+	values["DINGTALK_TEMPLATE_REMINDER"] = "提醒 {{.DATE}}"
+
+	cfg, err := app.LoadDingTalkConfig(envMap(values))
+	if err != nil {
+		t.Fatalf("LoadDingTalkConfig() error = %v", err)
+	}
+	got := cfg.Notification
+	if got.Title != "自定义标题" || got.Header != "自定义协会" || got.QQAccount != "123456" ||
+		got.TransferRoom != "转诊室" || got.TransferAddress != "转诊地址" ||
+		got.ConfirmedTemplate != "确认 {{.ROOM}}" || got.RejectedTemplate != "驳回 {{.REAS}}" ||
+		got.ReferredTemplate != "转诊 {{.TRRO}}" || got.NoShowTemplate != "未到 {{.QQAC}}" ||
+		got.ReminderTemplate != "提醒 {{.DATE}}" {
+		t.Errorf("notification config = %+v", got)
+	}
 }
 
 func TestLoadDingTalkConfigDisabledByDefault(t *testing.T) {

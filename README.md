@@ -196,7 +196,9 @@ do not pass through the QQ message gateway. The backend sends to the record's
 `no_show`, then verifies the per-platform delivery status. Its
 `DINGTALK_BASE_URL`, `DINGTALK_APP_CODE`, and credential settings are documented
 in `CONFIGURATION.md`. Ticket notifications are disabled by default; set
-`DINGTALK_NOTIFY_ENABLED=true` after configuring the message center.
+`DINGTALK_NOTIFY_ENABLED=true` after configuring the message center. Notification
+text and organization-specific fields are configurable through the
+`DINGTALK_TEMPLATE_*` and `DINGTALK_NOTIFICATION_*` settings.
 
 The image tags in the commands above come from `.env`; see
 [CONFIGURATION.md](CONFIGURATION.md#production-stack-docker-composeprodyml) for

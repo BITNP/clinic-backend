@@ -144,6 +144,45 @@ The delivery settings are required only when `DINGTALK_NOTIFY_ENABLED=true`.
 Leaving it `false` means ticket transitions and cleanup remain unchanged while
 all DingTalk sends and status checks are skipped.
 
+Notification text is configurable with Go templates. Leave a template setting
+empty to use its built-in default. Use `\n` for a line break.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `DINGTALK_NOTIFICATION_TITLE` | `电脑诊所工单状态更新` | DingTalk notification title. |
+| `DINGTALK_NOTIFICATION_HEADER` | `网络开拓者协会` | Value rendered as `{{.HEDR}}`. |
+| `DINGTALK_NOTIFICATION_QQ_ACCOUNT` | empty | Appeal QQ rendered as `{{.QQAC}}`. |
+| `DINGTALK_NOTIFICATION_TRANSFER_ROOM` | empty | Transfer room rendered as `{{.TRRO}}`. |
+| `DINGTALK_NOTIFICATION_TRANSFER_ADDRESS` | empty | Transfer address rendered as `{{.TRLO}}`. |
+| `DINGTALK_TEMPLATE_CONFIRMED` | built-in approval example | Template for `confirmed`. |
+| `DINGTALK_TEMPLATE_REJECTED` | built-in rejection example | Template for `rejected`. |
+| `DINGTALK_TEMPLATE_REFERRED` | built-in referral example | Template for `referred`. |
+| `DINGTALK_TEMPLATE_NO_SHOW` | built-in no-show example | Template for `no_show`. |
+| `DINGTALK_TEMPLATE_REMINDER` | built-in reminder example | Reserved reminder template; validated at startup but not scheduled. |
+
+Available template fields:
+
+| Field | Source |
+| --- | --- |
+| `HEDR` | `DINGTALK_NOTIFICATION_HEADER` |
+| `DATE` | Appointment date and service window, formatted `YYYY-MM-DD的HH:MM-HH:MM`. |
+| `ID` | Record id prefixed with `#`. |
+| `ROOM` | Booked room name. |
+| `LOCA` | Booked room address. |
+| `TRRO` | `DINGTALK_NOTIFICATION_TRANSFER_ROOM`. |
+| `TRLO` | `DINGTALK_NOTIFICATION_TRANSFER_ADDRESS`. |
+| `REAS` | Rejection or referral reason. |
+| `QQAC` | `DINGTALK_NOTIFICATION_QQ_ACCOUNT`. |
+
+Example override:
+
+```env
+DINGTALK_NOTIFICATION_QQ_ACCOUNT=123456789
+DINGTALK_NOTIFICATION_TRANSFER_ROOM=求是社区
+DINGTALK_NOTIFICATION_TRANSFER_ADDRESS=疏桐园D地下室D116
+DINGTALK_TEMPLATE_CONFIRMED=【{{.HEDR}}】工单{{.ID}}已通过，请于{{.DATE}}前往{{.ROOM}}。\n地址：{{.LOCA}}
+```
+
 The client obtains an open-platform token with the configured key and secret,
 caches it, and requests a replacement on the first DingTalk operation at or
 after 80% of `expires_in`. The V2 API reports `expires_in` in minutes. Calls use
