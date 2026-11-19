@@ -129,11 +129,11 @@ DingTalk notifications use the V2 message-center API through the reusable
 `internal/notification/client` package. This path is independent of the QQ
 `message-gateway` path. The backend uses it to notify the record's `user`
 DingTalk id when a ticket becomes `confirmed`, `rejected`, `referred`, or
-`no_show`. Notifications are enabled by default:
+`no_show`. Notifications are disabled by default:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `DINGTALK_NOTIFY_ENABLED` | `true` | Enables ticket status notifications. When `false`, the DingTalk delivery settings below are ignored. |
+| `DINGTALK_NOTIFY_ENABLED` | `false` | Enables ticket status notifications. When `false`, the DingTalk delivery settings below are ignored. |
 | `DINGTALK_BASE_URL` | — (required) | Message-center business base URL. HTTP and HTTPS are supported. |
 | `DINGTALK_APP_CODE` | — (required) | Authorized message-center application code, sent as `msg-center-app-code`. |
 | `DINGTALK_APP_KEY` | — (required) | Open-platform application key used by the token API. |
@@ -141,8 +141,8 @@ DingTalk id when a ticket becomes `confirmed`, `rejected`, `referred`, or
 | `DINGTALK_TIMEOUT` | `10s` | Per-request HTTP timeout; must be positive. |
 
 The delivery settings are required only when `DINGTALK_NOTIFY_ENABLED=true`.
-Setting it to `false` leaves ticket transitions and cleanup unchanged but skips
-all DingTalk sends and status checks.
+Leaving it `false` means ticket transitions and cleanup remain unchanged while
+all DingTalk sends and status checks are skipped.
 
 The client obtains an open-platform token with the configured key and secret,
 caches it, and requests a replacement on the first DingTalk operation at or

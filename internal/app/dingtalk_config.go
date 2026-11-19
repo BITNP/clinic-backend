@@ -23,7 +23,7 @@ type DingTalkConfig struct {
 
 // LoadDingTalkConfig reads and validates DingTalk message-center settings.
 func LoadDingTalkConfig(getenv func(string) string) (DingTalkConfig, error) {
-	enabled, err := parseBoolSetting(getenv("DINGTALK_NOTIFY_ENABLED"), true)
+	enabled, err := parseBoolSetting(getenv("DINGTALK_NOTIFY_ENABLED"), false)
 	if err != nil {
 		return DingTalkConfig{}, fmt.Errorf("invalid DINGTALK_NOTIFY_ENABLED: %w", err)
 	}

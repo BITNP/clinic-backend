@@ -195,8 +195,8 @@ do not pass through the QQ message gateway. The backend sends to the record's
 `user` DingTalk id when a ticket becomes `confirmed`, `rejected`, `referred`, or
 `no_show`, then verifies the per-platform delivery status. Its
 `DINGTALK_BASE_URL`, `DINGTALK_APP_CODE`, and credential settings are documented
-in `CONFIGURATION.md`. Set `DINGTALK_NOTIFY_ENABLED=false` to disable ticket
-notifications without configuring the message center.
+in `CONFIGURATION.md`. Ticket notifications are disabled by default; set
+`DINGTALK_NOTIFY_ENABLED=true` after configuring the message center.
 
 The image tags in the commands above come from `.env`; see
 [CONFIGURATION.md](CONFIGURATION.md#production-stack-docker-composeprodyml) for

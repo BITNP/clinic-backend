@@ -224,7 +224,7 @@ start_cas() {
 # --- 2. fake DingTalk --------------------------------------------------------
 
 start_fake_dingtalk() {
-	case "${DINGTALK_NOTIFY_ENABLED:-true}" in
+	case "${DINGTALK_NOTIFY_ENABLED:-false}" in
 	0 | f | F | false | FALSE | False)
 		log "DingTalk ticket notifications disabled"
 		return

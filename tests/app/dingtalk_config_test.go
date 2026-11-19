@@ -10,10 +10,11 @@ import (
 
 func validDingTalkEnv() map[string]string {
 	return map[string]string{
-		"DINGTALK_BASE_URL":   "https://message-center.example/",
-		"DINGTALK_APP_CODE":   "clinic",
-		"DINGTALK_APP_KEY":    "app-key",
-		"DINGTALK_APP_SECRET": "app-secret",
+		"DINGTALK_NOTIFY_ENABLED": "true",
+		"DINGTALK_BASE_URL":       "https://message-center.example/",
+		"DINGTALK_APP_CODE":       "clinic",
+		"DINGTALK_APP_KEY":        "app-key",
+		"DINGTALK_APP_SECRET":     "app-secret",
 	}
 }
 
@@ -34,6 +35,16 @@ func TestLoadDingTalkConfig(t *testing.T) {
 	}
 	if cfg.Timeout != 3*time.Second {
 		t.Errorf("Timeout = %v, want 3s", cfg.Timeout)
+	}
+}
+
+func TestLoadDingTalkConfigDisabledByDefault(t *testing.T) {
+	cfg, err := app.LoadDingTalkConfig(envMap(nil))
+	if err != nil {
+		t.Fatalf("LoadDingTalkConfig() error = %v", err)
+	}
+	if cfg.Enabled || cfg.BaseURL != "" || cfg.AppCode != "" || cfg.AppKey != "" || cfg.AppSecret != "" || cfg.Timeout != 0 {
+		t.Errorf("config = %+v, want disabled zero delivery config", cfg)
 	}
 }
 
