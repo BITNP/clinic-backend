@@ -41,11 +41,17 @@ func (f *fakeDingTalkStatusSender) SendAndCheckStatus(
 
 type fakeTicketStatusNotifier struct {
 	notifications []recordservice.TicketStatusNotification
+	reminders     []recordservice.TicketStatusNotification
 	err           error
 }
 
 func (f *fakeTicketStatusNotifier) Notify(_ context.Context, notification recordservice.TicketStatusNotification) error {
 	f.notifications = append(f.notifications, notification)
+	return f.err
+}
+
+func (f *fakeTicketStatusNotifier) NotifyReminder(_ context.Context, notification recordservice.TicketStatusNotification) error {
+	f.reminders = append(f.reminders, notification)
 	return f.err
 }
 
@@ -205,6 +211,38 @@ func TestDingTalkTicketNotifierDecodesEscapedNewlines(t *testing.T) {
 		t.Fatalf("Notify() error = %v", err)
 	}
 	if got := sender.requests[0].Content; got != "第一行\n测试诊室" {
+		t.Errorf("Content = %q", got)
+	}
+}
+
+func TestDingTalkTicketNotifierSendsReminderTemplate(t *testing.T) {
+	location := time.FixedZone("UTC+8", 8*60*60)
+	cfg := recordservice.DingTalkTicketNotifierConfig{
+		Title:             "状态通知",
+		Header:            "测试协会",
+		ConfirmedTemplate: "confirmed",
+		RejectedTemplate:  "rejected",
+		ReferredTemplate:  "referred",
+		NoShowTemplate:    "no_show",
+		ReminderTemplate:  "提醒：{{.DATE}} {{.ROOM}} {{.LOCA}}",
+	}
+	sender := &fakeDingTalkStatusSender{}
+	notifier, err := recordservice.NewDingTalkTicketNotifier(sender, location, cfg)
+	if err != nil {
+		t.Fatalf("NewDingTalkTicketNotifier() error = %v", err)
+	}
+	err = notifier.NotifyReminder(context.Background(), recordservice.TicketStatusNotification{
+		RecordID:     1,
+		User:         "ding-user",
+		RoomName:     "徐特立图书馆",
+		RoomAddress:  "三楼311G",
+		ServiceStart: time.Date(2026, 11, 20, 18, 30, 0, 0, location),
+		ServiceEnd:   time.Date(2026, 11, 20, 21, 0, 0, 0, location),
+	})
+	if err != nil {
+		t.Fatalf("NotifyReminder() error = %v", err)
+	}
+	if got := sender.requests[0].Content; got != "提醒：2026-11-20的18:30-21:00 徐特立图书馆 三楼311G" {
 		t.Errorf("Content = %q", got)
 	}
 }

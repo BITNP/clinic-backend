@@ -31,6 +31,7 @@ type TicketStatusNotification struct {
 // TicketStatusNotifier delivers a ticket status change to the guest.
 type TicketStatusNotifier interface {
 	Notify(ctx context.Context, notification TicketStatusNotification) error
+	NotifyReminder(ctx context.Context, notification TicketStatusNotification) error
 }
 
 // DingTalkStatusSender submits a DingTalk message and verifies its delivery
@@ -138,12 +139,28 @@ func (n *DingTalkTicketNotifier) Notify(ctx context.Context, notification Ticket
 	if !isNotifiableTicketStatus(notification.Status) {
 		return nil
 	}
-	if strings.TrimSpace(notification.User) == "" {
-		return fmt.Errorf("ticket notification for record %d: user id is required", notification.RecordID)
-	}
 	tmpl, ok := n.statusTemplates[notification.Status]
 	if !ok {
 		return nil
+	}
+	return n.send(ctx, tmpl, notification)
+}
+
+// NotifyReminder sends the configured pre-shift reminder for a ticket.
+func (n *DingTalkTicketNotifier) NotifyReminder(ctx context.Context, notification TicketStatusNotification) error {
+	if n == nil || n.sender == nil {
+		return fmt.Errorf("ticket reminder: dingtalk sender is not configured")
+	}
+	return n.send(ctx, n.reminderTemplate, notification)
+}
+
+func (n *DingTalkTicketNotifier) send(
+	ctx context.Context,
+	tmpl *template.Template,
+	notification TicketStatusNotification,
+) error {
+	if strings.TrimSpace(notification.User) == "" {
+		return fmt.Errorf("ticket notification for record %d: user id is required", notification.RecordID)
 	}
 	content, err := n.render(tmpl, notification)
 	if err != nil {

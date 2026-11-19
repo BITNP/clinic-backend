@@ -36,6 +36,7 @@ func migrateAdminRecordTestModels(t *testing.T, db *gorm.DB) {
 		&recordmodel.ClinicRecordArrival{},
 		&recordmodel.ClinicRecordRejection{},
 		&recordmodel.ClinicRecordReferral{},
+		&recordmodel.ClinicRecordDingTalkReminder{},
 		&schedulingmodel.ClinicServiceDate{},
 		&staffmodel.ClinicStaff{},
 	); err != nil {

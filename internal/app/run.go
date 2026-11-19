@@ -372,6 +372,29 @@ func Run() {
 		go func() { defer close(done); worker.Run(ctx) }()
 	}
 
+	var dingtalkReminderDone <-chan struct{}
+	if ticketNotifier != nil {
+		discovery := &recordservice.TicketReminderDiscovery{
+			DB:       rawDB,
+			LeadTime: dingtalkCfg.Reminder.LeadTime,
+		}
+		delivery := &recordservice.TicketReminderDelivery{
+			DB:       rawDB,
+			Notifier: ticketNotifier,
+			Location: serviceDateLoc,
+		}
+		worker := &recordservice.TicketReminderWorker{
+			Discovery:       discovery,
+			Delivery:        delivery,
+			PollInterval:    dingtalkCfg.Reminder.PollInterval,
+			DeliveryTimeout: 3*dingtalkCfg.Timeout + 5*time.Second,
+		}
+		done := make(chan struct{})
+		dingtalkReminderDone = done
+		go func() { defer close(done); worker.Run(ctx) }()
+		log.Printf("dingtalk ticket reminders enabled (lead time %s, poll interval %s)", dingtalkCfg.Reminder.LeadTime, dingtalkCfg.Reminder.PollInterval)
+	}
+
 	if napcatClient != nil {
 		go napcatClient.Run(ctx)
 		log.Printf("legacy in-process message manager enabled at %s (sender %s); prefer message-gateway", msgCfg.NapCat.BaseURL, msgCfg.SenderKey)
@@ -449,6 +472,13 @@ func Run() {
 		case <-reminderDone:
 		case <-time.After(5 * time.Second):
 			log.Println("reminder worker shutdown timed out")
+		}
+	}
+	if dingtalkReminderDone != nil {
+		select {
+		case <-dingtalkReminderDone:
+		case <-time.After(5 * time.Second):
+			log.Println("dingtalk ticket reminder worker shutdown timed out")
 		}
 	}
 	if err := redisClient.Close(); err != nil {

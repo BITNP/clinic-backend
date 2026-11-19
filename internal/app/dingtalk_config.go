@@ -9,7 +9,9 @@ import (
 )
 
 const (
-	defaultDingTalkTimeout = 10 * time.Second
+	defaultDingTalkTimeout              = 10 * time.Second
+	defaultDingTalkReminderLeadTime     = 30 * time.Minute
+	defaultDingTalkReminderPollInterval = time.Minute
 
 	defaultDingTalkNotificationTitle  = "电脑诊所工单状态更新"
 	defaultDingTalkNotificationHeader = "网络开拓者协会"
@@ -35,6 +37,12 @@ type DingTalkNotificationConfig struct {
 	ReminderTemplate  string
 }
 
+// DingTalkReminderConfig controls guest pre-shift reminder discovery.
+type DingTalkReminderConfig struct {
+	LeadTime     time.Duration
+	PollInterval time.Duration
+}
+
 // DingTalkConfig contains the message-center settings used for DingTalk
 // notifications.
 type DingTalkConfig struct {
@@ -45,6 +53,7 @@ type DingTalkConfig struct {
 	AppSecret    string
 	Timeout      time.Duration
 	Notification DingTalkNotificationConfig
+	Reminder     DingTalkReminderConfig
 }
 
 // LoadDingTalkConfig reads and validates DingTalk message-center settings.
@@ -60,6 +69,14 @@ func LoadDingTalkConfig(getenv func(string) string) (DingTalkConfig, error) {
 	timeout, err := parsePositiveDurationSetting(getenv("DINGTALK_TIMEOUT"), defaultDingTalkTimeout)
 	if err != nil {
 		return DingTalkConfig{}, fmt.Errorf("invalid DINGTALK_TIMEOUT: %w", err)
+	}
+	reminderLeadTime, err := parsePositiveDurationSetting(getenv("DINGTALK_REMINDER_LEAD_TIME"), defaultDingTalkReminderLeadTime)
+	if err != nil {
+		return DingTalkConfig{}, fmt.Errorf("invalid DINGTALK_REMINDER_LEAD_TIME: %w", err)
+	}
+	reminderPollInterval, err := parsePositiveDurationSetting(getenv("DINGTALK_REMINDER_POLL_INTERVAL"), defaultDingTalkReminderPollInterval)
+	if err != nil {
+		return DingTalkConfig{}, fmt.Errorf("invalid DINGTALK_REMINDER_POLL_INTERVAL: %w", err)
 	}
 
 	cfg := DingTalkConfig{
@@ -80,6 +97,10 @@ func LoadDingTalkConfig(getenv func(string) string) (DingTalkConfig, error) {
 			ReferredTemplate:  dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_REFERRED", defaultDingTalkReferredTemplate),
 			NoShowTemplate:    dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_NO_SHOW", defaultDingTalkNoShowTemplate),
 			ReminderTemplate:  dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_REMINDER", defaultDingTalkReminderTemplate),
+		},
+		Reminder: DingTalkReminderConfig{
+			LeadTime:     reminderLeadTime,
+			PollInterval: reminderPollInterval,
 		},
 	}
 	if _, err := notificationclient.NewDingTalkClient(notificationclient.Config{
