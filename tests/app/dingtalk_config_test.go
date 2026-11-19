@@ -40,6 +40,8 @@ func TestLoadDingTalkConfig(t *testing.T) {
 		t.Errorf("notification defaults = %+v", cfg.Notification)
 	}
 	if !strings.Contains(cfg.Notification.ConfirmedTemplate, "您的预约已通过") ||
+		!strings.Contains(cfg.Notification.ReferredTemplate, "建议联系售后进行维修") ||
+		!strings.Contains(cfg.Notification.ReferredTemplate, "{{.REAS}}") ||
 		!strings.Contains(cfg.Notification.NoShowTemplate, "{{.QQAC}}") {
 		t.Errorf("notification templates = %+v", cfg.Notification)
 	}
