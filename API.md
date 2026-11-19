@@ -831,7 +831,8 @@ At the clinic-local midnight (`CLINIC_TIMEZONE`, UTC+8 by default), records
 whose appointment date has passed are closed automatically. `pending` and
 `confirmed` records become `no_show`; `arrived` and `in_progress` records become
 `completed`. An existing arrival timestamp is preserved. Automatic `no_show`
-transitions send the same best-effort DingTalk notification described below.
+transitions send the same best-effort DingTalk notification described below
+when `DINGTALK_NOTIFY_ENABLED=true`.
 
 Admin record view:
 
@@ -1133,7 +1134,8 @@ curl -X DELETE "$BASE/api/admin/records/7/photos/1" \
 **Description:** Approves a pending record (`pending` → `confirmed`). Admin only.
 Sets `approver_id` and sends a best-effort DingTalk notification to the record's
 `user` id. The message-center delivery status is checked after submission;
-notification failures are logged and do not roll back the transition.
+notification failures are logged and do not roll back the transition. The send
+is skipped when `DINGTALK_NOTIFY_ENABLED=false`.
 
 **Request:** No body.
 
@@ -1155,7 +1157,7 @@ curl -X POST "$BASE/api/admin/records/1/confirm" \
 Stores the rejection reason and sends a best-effort DingTalk notification to the
 record's `user` id. The message-center delivery status is checked after
 submission; notification failures are logged and do not roll back the
-transition.
+transition. The send is skipped when `DINGTALK_NOTIFY_ENABLED=false`.
 
 **Request body**
 
@@ -1238,7 +1240,8 @@ curl -X POST "$BASE/api/admin/records/1/complete" \
 Stores the referral reason. A JSON object body is required; `reason` may be
 omitted or empty. Sends a best-effort DingTalk notification to the record's
 `user` id. The message-center delivery status is checked after submission;
-notification failures are logged and do not roll back the transition.
+notification failures are logged and do not roll back the transition. The send
+is skipped when `DINGTALK_NOTIFY_ENABLED=false`.
 
 **Request body**
 
@@ -1265,7 +1268,7 @@ curl -X POST "$BASE/api/admin/records/1/refer" \
 `no_show`). Staff or admin. Sends a best-effort DingTalk notification to the
 record's `user` id. The message-center delivery status is checked after
 submission; notification failures are logged and do not roll back the
-transition.
+transition. The send is skipped when `DINGTALK_NOTIFY_ENABLED=false`.
 
 **Request:** No body.
 

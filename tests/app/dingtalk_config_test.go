@@ -29,7 +29,7 @@ func TestLoadDingTalkConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadDingTalkConfig() error = %v", err)
 	}
-	if cfg.BaseURL != "https://message-center.example/" || cfg.AppCode != "clinic" || cfg.AppKey != "app-key" || cfg.AppSecret != "app-secret" {
+	if !cfg.Enabled || cfg.BaseURL != "https://message-center.example/" || cfg.AppCode != "clinic" || cfg.AppKey != "app-key" || cfg.AppSecret != "app-secret" {
 		t.Errorf("config = %+v", cfg)
 	}
 	if cfg.Timeout != 3*time.Second {
@@ -47,6 +47,19 @@ func TestLoadDingTalkConfigDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadDingTalkConfigDisabledSkipsDeliverySettings(t *testing.T) {
+	cfg, err := app.LoadDingTalkConfig(envMap(map[string]string{
+		"DINGTALK_NOTIFY_ENABLED": "false",
+		"DINGTALK_TIMEOUT":        "invalid",
+	}))
+	if err != nil {
+		t.Fatalf("LoadDingTalkConfig() error = %v", err)
+	}
+	if cfg.Enabled || cfg.BaseURL != "" || cfg.AppCode != "" || cfg.AppKey != "" || cfg.AppSecret != "" || cfg.Timeout != 0 {
+		t.Errorf("config = %+v, want disabled zero delivery config", cfg)
+	}
+}
+
 func TestLoadDingTalkConfigRejectsInvalidValues(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -54,6 +67,7 @@ func TestLoadDingTalkConfigRejectsInvalidValues(t *testing.T) {
 		value string
 		want  string
 	}{
+		{"enabled", "DINGTALK_NOTIFY_ENABLED", "sometimes", "invalid DINGTALK_NOTIFY_ENABLED"},
 		{"base URL", "DINGTALK_BASE_URL", "", "base URL is required"},
 		{"app code", "DINGTALK_APP_CODE", "", "app code is required"},
 		{"app key", "DINGTALK_APP_KEY", "", "app key is required"},

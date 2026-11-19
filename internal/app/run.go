@@ -62,15 +62,20 @@ func Run() {
 	if err != nil {
 		log.Fatalf("dingtalk configuration: %v", err)
 	}
-	dingtalkClient, err := notificationclient.NewDingTalkClient(notificationclient.Config{
-		BaseURL:   dingtalkCfg.BaseURL,
-		AppCode:   dingtalkCfg.AppCode,
-		AppKey:    dingtalkCfg.AppKey,
-		AppSecret: dingtalkCfg.AppSecret,
-		Timeout:   dingtalkCfg.Timeout,
-	})
-	if err != nil {
-		log.Fatalf("dingtalk client: %v", err)
+	var dingtalkClient *notificationclient.DingTalkClient
+	if dingtalkCfg.Enabled {
+		dingtalkClient, err = notificationclient.NewDingTalkClient(notificationclient.Config{
+			BaseURL:   dingtalkCfg.BaseURL,
+			AppCode:   dingtalkCfg.AppCode,
+			AppKey:    dingtalkCfg.AppKey,
+			AppSecret: dingtalkCfg.AppSecret,
+			Timeout:   dingtalkCfg.Timeout,
+		})
+		if err != nil {
+			log.Fatalf("dingtalk client: %v", err)
+		}
+	} else {
+		log.Println("dingtalk ticket notifications disabled")
 	}
 
 	msgCfg, err := LoadMessageConfig(os.Getenv)
@@ -249,9 +254,11 @@ func Run() {
 		envDuration("RECORD_ACTION_WINDOW", 5*time.Minute),
 	)
 	adminRecordSvc.SetRecordActionService(recordActionSvc)
-	adminRecordSvc.SetTicketStatusNotifier(
-		recordservice.NewDingTalkTicketNotifier(dingtalkClient, serviceDateLoc),
-	)
+	if dingtalkClient != nil {
+		adminRecordSvc.SetTicketStatusNotifier(
+			recordservice.NewDingTalkTicketNotifier(dingtalkClient, serviceDateLoc),
+		)
+	}
 	adminRecordH := recordhandler.NewAdminRecordHandler(adminRecordSvc)
 
 	workScheduleSvc := schedulingservice.NewWorkScheduleService(rawDB)
