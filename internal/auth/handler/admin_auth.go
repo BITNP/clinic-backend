@@ -104,7 +104,7 @@ func determineRole(groups []string) StaffRole {
 func determineRealmRole(realms []string) StaffRole {
 	for _, realm := range realms {
 		switch strings.ToLower(strings.TrimSpace(realm)) {
-		case "position-association-vice-chair-clinic", "position-clinic-head":
+		case "clinic-maintainer", "position-association-vice-chair-clinic", "position-clinic-head":
 			return RoleSuperAdmin
 		}
 	}

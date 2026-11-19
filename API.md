@@ -45,12 +45,12 @@ Missing or mismatched CSRF tokens receive `403 Forbidden`. Bearer-token requests
 do not need a CSRF token.
 
 CAS and Keycloak roles are resolved from their `realm` values before groups are
-checked. The realms `position-association-vice-chair-clinic` and
-`position-clinic-head` map to `superadmin`; `position-clinic-advisor` and
-`position-clinic-deputy-head` map to `admin`. Superadmin takes precedence when
-both levels are present. Without a matching realm, CAS retains its existing
-group-based `staff`/`admin` rules, while Keycloak maps any group containing
-`clinic` to `staff`.
+checked. The realms `clinic-maintainer`,
+`position-association-vice-chair-clinic`, and `position-clinic-head` map to
+`superadmin`; `position-clinic-advisor` and `position-clinic-deputy-head` map to
+`admin`. Superadmin takes precedence when both levels are present. Without a
+matching realm, CAS retains its existing group-based `staff`/`admin` rules,
+while Keycloak maps any group containing `clinic` to `staff`.
 
 Authorization levels are hierarchical:
 

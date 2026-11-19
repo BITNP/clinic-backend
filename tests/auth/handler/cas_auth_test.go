@@ -238,6 +238,11 @@ func TestCASAuthHandler_LoginCallback_ResolvesRealmRoles(t *testing.T) {
 			want:   authhandler.RoleSuperAdmin,
 		},
 		{
+			name:   "maintainer realm is superadmin",
+			realms: []string{"clinic-maintainer"},
+			want:   authhandler.RoleSuperAdmin,
+		},
+		{
 			name:   "admin realm elevates clinic group",
 			realms: []string{"position-clinic-deputy-head"},
 			groups: []string{"/clinic"},

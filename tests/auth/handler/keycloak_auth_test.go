@@ -245,6 +245,12 @@ func TestKeycloakAuthenticator_AuthenticateRealmRoles(t *testing.T) {
 			want:     authhandler.RoleSuperAdmin,
 		},
 		{
+			name:     "clinic maintainer is superadmin without groups",
+			username: "superadmin-maintainer",
+			realms:   []string{"clinic-maintainer"},
+			want:     authhandler.RoleSuperAdmin,
+		},
+		{
 			name:     "clinic advisor is admin",
 			username: "admin-advisor",
 			realms:   []string{"position-clinic-advisor"},
