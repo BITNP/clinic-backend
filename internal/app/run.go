@@ -11,8 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"clinic-backend/internal/agent"
-	"clinic-backend/internal/agent/tagger"
 	"clinic-backend/internal/announcement"
 	authclient "clinic-backend/internal/auth/client"
 	authhandler "clinic-backend/internal/auth/handler"
@@ -39,7 +37,6 @@ import (
 
 const (
 	storageCheckTimeout = 10 * time.Second
-	agentCheckTimeout   = 10 * time.Second
 )
 
 // Run initializes the backend and serves requests until shutdown.
@@ -71,12 +68,17 @@ func Run() {
 
 	db, rawDB := openDatabase()
 	configSvc := configservice.NewConfigService(rawDB)
-	if err := configSvc.EnsureRuntimeSettings(); err != nil {
+	if err := configSvc.EnsureRuntimeSettingsWithInitialValues(legacyRuntimeSettingValues(os.Getenv)); err != nil {
 		closeDatabase(db)
 		log.Fatalf("seed runtime configuration: %v", err)
 	}
 	err = configSvc.InitializeRuntime(func(settings configservice.RuntimeSettings) error {
-		_, err := LoadServiceDateReminderConfig(os.Getenv, settings.ServiceDateReminderEnabled, settings.ServiceDateReminderLeadTimes)
+		_, err := LoadServiceDateReminderConfig(
+			os.Getenv,
+			settings.ServiceDateReminderEnabled,
+			settings.ServiceDateReminderLeadTimes,
+			settings.MessageGatewayAccount,
+		)
 		return err
 	})
 	if err != nil {
@@ -85,7 +87,7 @@ func Run() {
 	}
 	runtimeSettings := configSvc.Current()
 
-	photoCfg, err := LoadPhotoConfig(os.Getenv, runtimeSettings.RecordPhotoMaxCount)
+	photoCfg, err := LoadPhotoConfig(runtimeSettings.RecordPhotoMaxCount, runtimeSettings.RecordPhotoMaxSizeBytes)
 	if err != nil {
 		closeDatabase(db)
 		log.Fatalf("photo configuration: %v", err)
@@ -95,6 +97,7 @@ func Run() {
 		os.Getenv,
 		runtimeSettings.ServiceDateReminderEnabled,
 		runtimeSettings.ServiceDateReminderLeadTimes,
+		runtimeSettings.MessageGatewayAccount,
 	)
 	if err != nil {
 		closeDatabase(db)
@@ -107,6 +110,7 @@ func Run() {
 		log.Fatalf("photo service: %v", err)
 	}
 	photoSvc.SetMaxCountGetter(func() int { return configSvc.Current().RecordPhotoMaxCount })
+	photoSvc.SetMaxSizeGetter(func() int64 { return configSvc.Current().RecordPhotoMaxSizeBytes })
 	photoH := recordhandler.NewPhotoHandler(photoSvc)
 
 	// Redis is required infrastructure: fail fast if it is not configured or
@@ -161,59 +165,24 @@ func Run() {
 		log.Fatalf("failed to backfill record tag_id: %v", err)
 	}
 
-	taggerAPIKey := strings.TrimSpace(runtimeSettings.TaggerLLMAPIKey)
-	var recordTagger *taggingservice.RecordTagger
-	if taggerAPIKey != "" {
-		taggerBaseURL := os.Getenv("TAGGER_LLM_BASE_URL")
-		taggerModel := os.Getenv("TAGGER_LLM_MODEL")
-		if taggerBaseURL == "" || taggerModel == "" {
-			log.Fatal("TAGGER_LLM_BASE_URL and TAGGER_LLM_MODEL are required when the TAGGER_LLM_API_KEY config item is set")
-		}
-
-		poolCfg := tagger.PoolConfig{
-			Size:          envInt("TAGGER_AGENT_POOL_SIZE", 4),
-			Timeout:       envDuration("TAGGER_TIMEOUT", 30*time.Second),
-			ContextTokens: envInt("TAGGER_CONTEXT_TOKENS", 32000),
-		}
-		modelCfg := agent.ChatModelConfig{
-			APIKey:  taggerAPIKey,
-			BaseURL: taggerBaseURL,
-			Model:   taggerModel,
-			Timeout: poolCfg.Timeout,
-		}
-		agentCheckCtx, cancelAgentCheck := context.WithTimeout(context.Background(), agentCheckTimeout)
-		agentCheckErr := agent.CheckConnection(agentCheckCtx, modelCfg)
-		cancelAgentCheck()
-		if agentCheckErr != nil {
-			log.Printf("tagger agent: model provider connection check failed: %v", agentCheckErr)
-		} else {
-			log.Printf("tagger agent: model provider connection check succeeded (model %s)", taggerModel)
-		}
-
-		factory := agent.NewChatModelFactory(context.Background(), modelCfg)
-
-		recordSet := taggingservice.RecordTagSet(recordTagSvc)
-		recordPool, err := tagger.NewPool(poolCfg, recordSet, factory)
-		if err != nil {
-			log.Fatalf("failed to build record tagger pool: %v", err)
-		}
-		recordTagger = taggingservice.NewRecordTagger(recordPool, rawDB, recordTagSvc)
-		recordTagger.SetWorkers(recordPool.Size())
-		recordTagger.SetSyncService(syncSvc)
-
-		liquidMetalSet, err := taggingservice.LiquidMetalTagSet()
-		if err != nil {
-			log.Fatalf("failed to build liquid metal tag set: %v", err)
-		}
-		liquidMetalPool, err := tagger.NewPool(poolCfg, liquidMetalSet, factory)
-		if err != nil {
-			log.Fatalf("failed to build liquid metal tagger pool: %v", err)
-		}
-		recordTagger.SetLiquidMetalTagger(taggingservice.NewLiquidMetalTagger(liquidMetalPool, liquidMetalSet))
-		log.Printf("tagger agent: enabled (model %s, %d sessions per tag set, context limit %d tokens)", taggerModel, poolCfg.Size, poolCfg.ContextTokens)
-	} else {
-		log.Println("tagger disabled: set the TAGGER_LLM_API_KEY config item to enable")
+	recordTagger := taggingservice.NewRecordTagger(nil, rawDB, recordTagSvc)
+	recordTagger.SetSyncService(syncSvc)
+	taggerRuntime := newTaggerRuntimeManager(recordTagger, recordTagSvc)
+	if err := taggerRuntime.Initialize(runtimeSettings); err != nil {
+		log.Fatalf("initialize tagger runtime: %v", err)
 	}
+	configSvc.SetRuntimeValidator(func(settings configservice.RuntimeSettings) error {
+		if _, err := LoadServiceDateReminderConfig(
+			os.Getenv,
+			settings.ServiceDateReminderEnabled,
+			settings.ServiceDateReminderLeadTimes,
+			settings.MessageGatewayAccount,
+		); err != nil {
+			return err
+		}
+		return taggerRuntime.Prepare(settings)
+	})
+	configSvc.SetRuntimeApplyHook(taggerRuntime.Activate)
 
 	sqlDB, err := db.DB()
 	if err != nil {
@@ -234,9 +203,7 @@ func Run() {
 	ticketSvc := recordservice.NewTicketService(rawDB, serviceDateLoc)
 	ticketSvc.SetDefaultTagID(recordTagSvc.DefaultID())
 	ticketSvc.SetPhotoService(photoSvc)
-	if recordTagger != nil {
-		ticketSvc.SetTagger(recordTagger)
-	}
+	ticketSvc.SetTagger(recordTagger)
 	ticketH := recordhandler.NewTicketHandler(ticketSvc)
 	legacyH := legacy.NewLegacyHandler(ticketSvc, serviceDateSvc, roomSvc, announcementSvc)
 
@@ -343,7 +310,17 @@ func Run() {
 	var reminderDone <-chan struct{}
 	{
 		discovery := &schedulingservice.ReminderDiscovery{DB: rawDB, Location: serviceDateLoc, LeadTimes: reminderCfg.LeadTimes}
-		delivery := &schedulingservice.ReminderDelivery{DB: rawDB, Discovery: discovery, Client: &http.Client{Timeout: reminderCfg.Gateway.Timeout}, BaseURL: reminderCfg.Gateway.BaseURL, Account: reminderCfg.Gateway.Account, Token: reminderCfg.Gateway.AccountToken, Template: reminderCfg.MessageTemplate, Lease: reminderCfg.Gateway.Timeout + 45*time.Second}
+		delivery := &schedulingservice.ReminderDelivery{
+			DB:            rawDB,
+			Discovery:     discovery,
+			Client:        &http.Client{Timeout: reminderCfg.Gateway.Timeout},
+			BaseURL:       reminderCfg.Gateway.BaseURL,
+			Account:       reminderCfg.Gateway.Account,
+			AccountGetter: func() string { return configSvc.Current().MessageGatewayAccount },
+			Token:         reminderCfg.Gateway.AccountToken,
+			Template:      reminderCfg.MessageTemplate,
+			Lease:         reminderCfg.Gateway.Timeout + 45*time.Second,
+		}
 		leadTimes := func() []time.Duration { return configSvc.Current().ServiceDateReminderLeadTimes }
 		enabled := func() bool { return configSvc.Current().ServiceDateReminderEnabled }
 		discovery.LeadTimesGetter = leadTimes
@@ -378,9 +355,7 @@ func Run() {
 		msgMgr.Run(ctx)
 	}()
 
-	if recordTagger != nil {
-		go recordTagger.Run(ctx)
-	}
+	go recordTagger.Run(ctx)
 
 	go func() {
 		runCleanup := func() {

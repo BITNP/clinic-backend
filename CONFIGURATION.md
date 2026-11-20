@@ -17,8 +17,10 @@ The backend embeds `internal/config/service/data/template.json`, which defines
 the reserved groups and item metadata but contains no values. At every startup
 the backend reads `runtime_settings.json` from its working directory, beside
 `.env`, validates that every reserved item is present, and uses those values
-only when creating missing database rows. Existing rows are never overwritten,
-so the database becomes authoritative after initialization.
+only when creating missing database rows. Existing values are preserved, while
+reserved display names, types, groups, ordering, required flags, and write-only
+flags are synchronized from the template. The database becomes authoritative
+for values immediately after initialization.
 
 `runtime_settings.json` is an external deployment file and is gitignored. Start
 from [`runtime_settings.example.json`](runtime_settings.example.json), keep the
@@ -31,17 +33,26 @@ items, and invalid values stop startup with an error.
   "SYNC_POLL_INTERVAL": "10s",
   "STAFF_VERSION": "0",
   "TAGGER_LLM_API_KEY": "",
+  "TAGGER_LLM_BASE_URL": "",
+  "TAGGER_LLM_MODEL": "",
+  "TAGGER_AGENT_POOL_SIZE": "4",
+  "TAGGER_CONTEXT_TOKENS": "32000",
+  "TAGGER_TIMEOUT": "30s",
   "RECORD_ACTION_WINDOW": "5m",
   "RECORD_PHOTO_MAX_COUNT": "9",
+  "RECORD_PHOTO_MAX_SIZE_BYTES": "10485760",
   "SERVICE_DATE_REMINDER_ENABLED": "false",
-  "SERVICE_DATE_REMINDER_LEAD_TIMES": "5h,3h"
+  "SERVICE_DATE_REMINDER_LEAD_TIMES": "5h,3h",
+  "MESSAGE_GATEWAY_ACCOUNT": "qq"
 }
 ```
 
-These settings are not read from environment variables. Changes made through
-`/api/admin/config` apply after a successful save. Operations already in
-progress may finish with their previous settings. Browser tabs refresh their
-sync interval periodically.
+During the first upgrade that introduces an item, a non-empty legacy
+environment value with the same name may initialize that missing row. Once the
+row exists, the database is authoritative and the environment value is ignored.
+Changes made through `/api/admin/config` apply after a successful save.
+Operations already in progress may finish with their previous settings. Browser
+tabs refresh their sync interval periodically.
 
 | Config item | Default | Description |
 | --- | --- | --- |
@@ -49,9 +60,16 @@ sync interval periodically.
 | `STAFF_VERSION` | `0` | Raise to force all staff to log in again. Non-negative integer. |
 | `RECORD_ACTION_WINDOW` | `5m` | Positive Go duration for how long a staff action stays revertible. |
 | `RECORD_PHOTO_MAX_COUNT` | `9` | Positive maximum number of ordered photos attached to one record. |
+| `RECORD_PHOTO_MAX_SIZE_BYTES` | `10485760` | Positive maximum size of one uploaded photo in bytes. |
 | `SERVICE_DATE_REMINDER_ENABLED` | `false` | Strict boolean controlling the pending-ticket reminder worker. |
 | `SERVICE_DATE_REMINDER_LEAD_TIMES` | `5h,3h` | Comma-separated unique positive Go durations using whole seconds, relative to service start. |
+| `MESSAGE_GATEWAY_ACCOUNT` | `qq` | Account segment used for pending-ticket reminder delivery. |
 | `TAGGER_LLM_API_KEY` | empty | Optional write-only key for the in-process tagger. Its value is never returned by the API. |
+| `TAGGER_LLM_BASE_URL` | empty | OpenAI-compatible endpoint; required when the API key is non-empty. |
+| `TAGGER_LLM_MODEL` | empty | Model ID; required when the API key is non-empty. |
+| `TAGGER_AGENT_POOL_SIZE` | `4` | Long-lived models and sessions per tag set. Minimum `1`. |
+| `TAGGER_CONTEXT_TOKENS` | `32000` | Session reset threshold. Must be positive. |
+| `TAGGER_TIMEOUT` | `30s` | Positive per-call and pool-wait timeout. |
 
 These names are reserved: their `value_type`, required flag, and value validation
 are enforced by the config service. They are seeded into the `system`, `record`,
@@ -76,12 +94,9 @@ it remains a `clinic-health-monitor` environment setting.
 
 ### Records
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `RECORD_PHOTO_MAX_SIZE_BYTES` | `10485760` (10 MiB) | Maximum size of one uploaded photo in bytes. |
-
-The photo count is the database-managed `RECORD_PHOTO_MAX_COUNT` setting above.
-The size limit must be a positive integer; invalid values stop startup.
+The photo count and per-file byte limit are database-managed
+`RECORD_PHOTO_MAX_COUNT` and `RECORD_PHOTO_MAX_SIZE_BYTES` settings above.
+Both limits apply to the next request immediately after a successful save.
 
 ### Sessions and authentication
 
@@ -110,22 +125,17 @@ is reused. Tagging is disabled while the database-managed
 `TAGGER_LLM_API_KEY` config item is empty.
 
 The API key is a write-only config item, so the admin API never returns its
-stored value. Its initial value comes from `runtime_settings.json`; after the
-database item exists, it can be replaced through the system settings page and
-takes effect after the backend restarts.
+stored value. All tagger settings shown above are database-managed and can be
+changed through the system settings page. A successful save builds a complete
+candidate tagger generation before the database commit and atomically swaps it
+in afterwards. In-flight calls finish on the previous generation. Pool-size
+increases start new work immediately; decreases let excess in-flight calls
+finish while preventing additional old-limit concurrency.
 
-At startup the backend sends one minimal chat completion to the configured
-provider and logs whether the connection succeeded. The check has a 10-second
-timeout and does not stop startup when it fails; tagging requests keep failing
-until the provider is reachable.
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `TAGGER_LLM_BASE_URL` | required when enabled | OpenAI-compatible endpoint. |
-| `TAGGER_LLM_MODEL` | required when enabled | Model ID. |
-| `TAGGER_AGENT_POOL_SIZE` | `4` | Long-lived chat models and sessions per tag set. Minimum `1`. |
-| `TAGGER_CONTEXT_TOKENS` | `32000` | Session reset threshold. Must be below the model's context window. |
-| `TAGGER_TIMEOUT` | `30s` | Per-call timeout, including waiting for a free session. |
+Changing the API key, endpoint, model, timeout, or context limit rebuilds both
+tagger pools without restarting the backend. The backend does not verify
+provider connectivity during save, so an incorrectly secured key can still
+produce request-time provider errors.
 
 Prompt caching is provider-dependent. The system prompt is a stable prefix for
 each session, so providers with prefix caching can reuse it across calls.
@@ -160,14 +170,20 @@ start the sample stack separately if you need it.
 There is no global gateway access key. Each gateway account has its own
 `client_token` in `message-gateway/accounts.json`; that token is used as the
 bearer token for the account's URL. The account's `access_token` is the private
-NapCat token and must not be given to clients. The backend has no business
-caller wired to the gateway yet. The first consumer is
-`clinic-health-monitor`, which uses its own client token in the production
-stack.
+NapCat token and must not be given to clients. Pending-ticket reminders use the
+selected database account. `clinic-health-monitor` uses its own client token in
+the production stack.
 
 The legacy `NAPCAT_*` and `MESSAGE_*` variables belong to the frozen
 `internal/message` copy and must not be set in new deployments. In particular,
 keep `NAPCAT_BASE_URL` empty so the in-process manager stays disabled.
+
+The pending-ticket reminder account is the database-managed
+`MESSAGE_GATEWAY_ACCOUNT` item above. It is resolved before each delivery, so a
+successful save affects the next reminder send. The environment-backed
+`MESSAGE_GATEWAY_ACCOUNT_TOKEN` must correspond to the selected account;
+changing the token still requires a backend restart. `MESSAGE_GATEWAY_URL` and
+`MESSAGE_GATEWAY_TIMEOUT` also remain environment-backed.
 
 The gateway queue is in-memory and assumes one gateway instance per sender/QQ
 account. Pending messages are lost on gateway restart. See

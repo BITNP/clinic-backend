@@ -407,12 +407,13 @@ API:
 - `SERVICE_DATE_REMINDER_ENABLED` is a boolean, default `false`.
 - `SERVICE_DATE_REMINDER_LEAD_TIMES` defaults to `5h,3h`: unique, positive
   Go durations in whole seconds. Each is relative to the service start time.
+- `MESSAGE_GATEWAY_ACCOUNT` defaults to `qq` and affects the next delivery.
 
-Their same-named environment variables are not read. The remaining reminder
-settings are environment-backed:
+Legacy same-named environment variables can initialize a missing row once, but
+are ignored after it exists. The remaining reminder settings are
+environment-backed:
 
 - `MESSAGE_GATEWAY_URL`: gateway base URL.
-- `MESSAGE_GATEWAY_ACCOUNT=qq`: gateway account name (default `qq`).
 - `MESSAGE_GATEWAY_ACCOUNT_TOKEN`: the account's gateway `client_token`.
 - `MESSAGE_GATEWAY_TIMEOUT=5s` (default shown): request timeout.
 - `SERVICE_DATE_REMINDER_TEMPLATE`: optional Go text template with `Date`,

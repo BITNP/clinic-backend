@@ -47,6 +47,7 @@ type PhotoService struct {
 	maxCount       int
 	maxCountGetter func() int
 	maxSizeBytes   int64
+	maxSizeGetter  func() int64
 }
 
 // NewPhotoService creates a photo service. The database and storage are
@@ -74,6 +75,9 @@ func NewPhotoService(db *database.DB, store photoStorage, maxCount int, maxSizeB
 // SetMaxCountGetter supplies the current configured photo limit.
 func (s *PhotoService) SetMaxCountGetter(getter func() int) { s.maxCountGetter = getter }
 
+// SetMaxSizeGetter supplies the current configured per-photo size limit.
+func (s *PhotoService) SetMaxSizeGetter(getter func() int64) { s.maxSizeGetter = getter }
+
 // MaxCount is the maximum number of photos a record may have.
 func (s *PhotoService) MaxCount() int {
 	if s.maxCountGetter != nil {
@@ -84,6 +88,9 @@ func (s *PhotoService) MaxCount() int {
 
 // MaxSizeBytes is the maximum size of one photo.
 func (s *PhotoService) MaxSizeBytes() int64 {
+	if s.maxSizeGetter != nil {
+		return s.maxSizeGetter()
+	}
 	return s.maxSizeBytes
 }
 
@@ -459,7 +466,7 @@ func (s *PhotoService) validateUpload(upload PhotoUpload) (string, error) {
 	if upload.Reader == nil || upload.Size <= 0 {
 		return "", ErrPhotoFileRequired
 	}
-	if upload.Size > s.maxSizeBytes {
+	if upload.Size > s.MaxSizeBytes() {
 		return "", ErrPhotoTooLarge
 	}
 	contentType, err := detectPhotoContentType(upload.Reader)

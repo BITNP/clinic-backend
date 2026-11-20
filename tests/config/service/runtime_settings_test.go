@@ -99,6 +99,43 @@ func TestRuntimeSettingsPublishOnlyAfterValidSave(t *testing.T) {
 	}
 }
 
+func TestRuntimeSettingsApplyHookRunsAfterValidSave(t *testing.T) {
+	svc, db := setupConfigServiceDB(t)
+	if err := svc.EnsureRuntimeSettings(); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.InitializeRuntime(nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var applied configservice.RuntimeSettings
+	calls := 0
+	svc.SetRuntimeApplyHook(func(settings configservice.RuntimeSettings) {
+		calls++
+		applied = settings
+	})
+
+	var item configmodel.ClinicConfigItem
+	if err := db.Where("name = ?", "TAGGER_AGENT_POOL_SIZE").First(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	value := "6"
+	if _, err := svc.UpdateItem(item.ID, configservice.UpdateItemInput{Value: &value}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || applied.TaggerAgentPoolSize != 6 {
+		t.Fatalf("apply hook calls=%d settings=%+v", calls, applied)
+	}
+
+	value = "0"
+	if _, err := svc.UpdateItem(item.ID, configservice.UpdateItemInput{Value: &value}); !errors.Is(err, configservice.ErrConfigValueInvalid) {
+		t.Fatalf("expected invalid pool size, got %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("apply hook ran for rejected update: calls=%d", calls)
+	}
+}
+
 func TestRemovingLeadCancelsPendingJobsInSave(t *testing.T) {
 	svc, db := setupConfigServiceDB(t)
 	if err := db.AutoMigrate(&schedulingmodel.ServiceDateReminder{}); err != nil {
@@ -158,11 +195,28 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	if settings.RecordPhotoMaxCount != 9 {
 		t.Errorf("RecordPhotoMaxCount = %d, want 9", settings.RecordPhotoMaxCount)
 	}
+	if settings.RecordPhotoMaxSizeBytes != 10485760 {
+		t.Errorf("RecordPhotoMaxSizeBytes = %d, want 10485760", settings.RecordPhotoMaxSizeBytes)
+	}
 	if settings.ServiceDateReminderEnabled {
 		t.Error("ServiceDateReminderEnabled = true, want false")
 	}
+	if settings.MessageGatewayAccount != "qq" {
+		t.Errorf("MessageGatewayAccount = %q, want qq", settings.MessageGatewayAccount)
+	}
 	if settings.TaggerLLMAPIKey != "" {
 		t.Errorf("TaggerLLMAPIKey = %q, want empty", settings.TaggerLLMAPIKey)
+	}
+	if settings.TaggerLLMBaseURL != "" || settings.TaggerLLMModel != "" {
+		t.Errorf("tagger endpoint defaults = %q, %q; want empty", settings.TaggerLLMBaseURL, settings.TaggerLLMModel)
+	}
+	if settings.TaggerAgentPoolSize != 4 || settings.TaggerContextTokens != 32000 || settings.TaggerTimeout != 30*time.Second {
+		t.Errorf(
+			"tagger runtime defaults = size %d, context %d, timeout %v",
+			settings.TaggerAgentPoolSize,
+			settings.TaggerContextTokens,
+			settings.TaggerTimeout,
+		)
 	}
 	if len(settings.ServiceDateReminderLeadTimes) != 2 ||
 		settings.ServiceDateReminderLeadTimes[0] != 5*time.Hour ||
@@ -177,8 +231,8 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	if err := db.Model(&configmodel.ClinicConfigItem{}).Count(&itemCount).Error; err != nil {
 		t.Fatalf("count items: %v", err)
 	}
-	if groupCount != 3 || itemCount != 7 {
-		t.Errorf("seeded counts = %d groups, %d items; want 3 and 7", groupCount, itemCount)
+	if groupCount != 3 || itemCount != 14 {
+		t.Errorf("seeded counts = %d groups, %d items; want 3 and 14", groupCount, itemCount)
 	}
 
 	var taggerKey configmodel.ClinicConfigItem
@@ -207,9 +261,16 @@ func TestConfigService_EnsureRuntimeSettingsUsesExternalFileAndIgnoresEnvironmen
 	t.Setenv("STAFF_VERSION", "4")
 	t.Setenv("RECORD_ACTION_WINDOW", "2m")
 	t.Setenv("RECORD_PHOTO_MAX_COUNT", "5")
+	t.Setenv("RECORD_PHOTO_MAX_SIZE_BYTES", "2048")
 	t.Setenv("SERVICE_DATE_REMINDER_ENABLED", "true")
 	t.Setenv("SERVICE_DATE_REMINDER_LEAD_TIMES", "3h,7h")
+	t.Setenv("MESSAGE_GATEWAY_ACCOUNT", "custom")
 	t.Setenv("TAGGER_LLM_API_KEY", "ignored-environment-key")
+	t.Setenv("TAGGER_LLM_BASE_URL", "https://ignored.example/v1")
+	t.Setenv("TAGGER_LLM_MODEL", "ignored-model")
+	t.Setenv("TAGGER_AGENT_POOL_SIZE", "8")
+	t.Setenv("TAGGER_CONTEXT_TOKENS", "64000")
+	t.Setenv("TAGGER_TIMEOUT", "5s")
 
 	if err := svc.EnsureRuntimeSettings(); err != nil {
 		t.Fatalf("ensure runtime settings: %v", err)
@@ -223,8 +284,13 @@ func TestConfigService_EnsureRuntimeSettingsUsesExternalFileAndIgnoresEnvironmen
 		settings.StaffVersion != 0 ||
 		settings.RecordActionWindow != 5*time.Minute ||
 		settings.RecordPhotoMaxCount != 9 ||
+		settings.RecordPhotoMaxSizeBytes != 10485760 ||
 		settings.ServiceDateReminderEnabled ||
-		settings.TaggerLLMAPIKey != "" {
+		settings.MessageGatewayAccount != "qq" ||
+		settings.TaggerLLMAPIKey != "" ||
+		settings.TaggerAgentPoolSize != 4 ||
+		settings.TaggerContextTokens != 32000 ||
+		settings.TaggerTimeout != 30*time.Second {
 		t.Errorf("JSON defaults = %+v", settings)
 	}
 	if len(settings.ServiceDateReminderLeadTimes) != 2 ||
@@ -274,6 +340,41 @@ func TestConfigService_SeedsTaggerAPIKeyFromExternalFile(t *testing.T) {
 	}
 }
 
+func TestConfigService_SeedsMissingItemsFromLegacyValuesOnce(t *testing.T) {
+	svc, db := setupConfigServiceDB(t)
+	initial := map[string]string{
+		"TAGGER_LLM_BASE_URL":         "https://legacy.example/v1",
+		"TAGGER_LLM_MODEL":            "legacy-model",
+		"TAGGER_AGENT_POOL_SIZE":      "6",
+		"TAGGER_CONTEXT_TOKENS":       "24000",
+		"TAGGER_TIMEOUT":              "12s",
+		"RECORD_PHOTO_MAX_SIZE_BYTES": "2048",
+		"MESSAGE_GATEWAY_ACCOUNT":     "legacy-account",
+	}
+	if err := svc.EnsureRuntimeSettingsWithInitialValues(initial); err != nil {
+		t.Fatalf("ensure runtime settings: %v", err)
+	}
+
+	var item configmodel.ClinicConfigItem
+	if err := db.Where("name = ?", "TAGGER_AGENT_POOL_SIZE").First(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	if item.Value != "6" {
+		t.Errorf("pool size = %q, want legacy value 6", item.Value)
+	}
+
+	replacement := map[string]string{"TAGGER_AGENT_POOL_SIZE": "12"}
+	if err := svc.EnsureRuntimeSettingsWithInitialValues(replacement); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Where("name = ?", "TAGGER_AGENT_POOL_SIZE").First(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	if item.Value != "6" {
+		t.Errorf("pool size after reseed = %q, want existing value 6", item.Value)
+	}
+}
+
 func TestConfigService_RequiresCompleteExternalRuntimeSettingsFile(t *testing.T) {
 	_, db := setupConfigServiceDB(t)
 	rawDB := testutil.RawDB(t, db)
@@ -309,6 +410,54 @@ func TestConfigService_RequiresCompleteExternalRuntimeSettingsFile(t *testing.T)
 			path: func(t *testing.T) string {
 				values := testutil.RuntimeSettingsValues()
 				values["RECORD_ACTION_WINDOW"] = "later"
+				return testutil.WriteRuntimeSettingsFile(t, values)
+			},
+		},
+		{
+			name: "invalid tagger URL",
+			path: func(t *testing.T) string {
+				values := testutil.RuntimeSettingsValues()
+				values["TAGGER_LLM_BASE_URL"] = "api.example.com/v1"
+				return testutil.WriteRuntimeSettingsFile(t, values)
+			},
+		},
+		{
+			name: "invalid tagger pool size",
+			path: func(t *testing.T) string {
+				values := testutil.RuntimeSettingsValues()
+				values["TAGGER_AGENT_POOL_SIZE"] = "0"
+				return testutil.WriteRuntimeSettingsFile(t, values)
+			},
+		},
+		{
+			name: "invalid tagger context",
+			path: func(t *testing.T) string {
+				values := testutil.RuntimeSettingsValues()
+				values["TAGGER_CONTEXT_TOKENS"] = "-1"
+				return testutil.WriteRuntimeSettingsFile(t, values)
+			},
+		},
+		{
+			name: "invalid tagger timeout",
+			path: func(t *testing.T) string {
+				values := testutil.RuntimeSettingsValues()
+				values["TAGGER_TIMEOUT"] = "0s"
+				return testutil.WriteRuntimeSettingsFile(t, values)
+			},
+		},
+		{
+			name: "invalid photo size",
+			path: func(t *testing.T) string {
+				values := testutil.RuntimeSettingsValues()
+				values["RECORD_PHOTO_MAX_SIZE_BYTES"] = "0"
+				return testutil.WriteRuntimeSettingsFile(t, values)
+			},
+		},
+		{
+			name: "invalid gateway account",
+			path: func(t *testing.T) string {
+				values := testutil.RuntimeSettingsValues()
+				values["MESSAGE_GATEWAY_ACCOUNT"] = "bad/account"
 				return testutil.WriteRuntimeSettingsFile(t, values)
 			},
 		},

@@ -35,12 +35,52 @@
     },
     {
       "name": "TAGGER_LLM_API_KEY",
-      "display_name": "标签模型 API 密钥（重启后生效）",
+      "display_name": "标签模型 API 密钥",
       "value_type": "string",
       "group": "system",
       "sort_order": 2,
       "is_required": false,
       "writeonly": true
+    },
+    {
+      "name": "TAGGER_LLM_BASE_URL",
+      "display_name": "标签模型 API 地址",
+      "value_type": "string",
+      "group": "system",
+      "sort_order": 3,
+      "is_required": false
+    },
+    {
+      "name": "TAGGER_LLM_MODEL",
+      "display_name": "标签模型名称",
+      "value_type": "string",
+      "group": "system",
+      "sort_order": 4,
+      "is_required": false
+    },
+    {
+      "name": "TAGGER_AGENT_POOL_SIZE",
+      "display_name": "标签模型并发会话数",
+      "value_type": "int",
+      "group": "system",
+      "sort_order": 5,
+      "is_required": true
+    },
+    {
+      "name": "TAGGER_CONTEXT_TOKENS",
+      "display_name": "标签模型上下文上限",
+      "value_type": "int",
+      "group": "system",
+      "sort_order": 6,
+      "is_required": true
+    },
+    {
+      "name": "TAGGER_TIMEOUT",
+      "display_name": "标签模型超时时间",
+      "value_type": "string",
+      "group": "system",
+      "sort_order": 7,
+      "is_required": true
     },
     {
       "name": "RECORD_ACTION_WINDOW",
@@ -59,6 +99,14 @@
       "is_required": true
     },
     {
+      "name": "RECORD_PHOTO_MAX_SIZE_BYTES",
+      "display_name": "单张照片大小上限（字节）",
+      "value_type": "int",
+      "group": "record",
+      "sort_order": 2,
+      "is_required": true
+    },
+    {
       "name": "SERVICE_DATE_REMINDER_ENABLED",
       "display_name": "启用服务日期提醒",
       "value_type": "boolean",
@@ -72,6 +120,14 @@
       "value_type": "string",
       "group": "reminder",
       "sort_order": 1,
+      "is_required": true
+    },
+    {
+      "name": "MESSAGE_GATEWAY_ACCOUNT",
+      "display_name": "提醒消息网关账号",
+      "value_type": "string",
+      "group": "reminder",
+      "sort_order": 2,
       "is_required": true
     }
   ]

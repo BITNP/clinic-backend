@@ -11,7 +11,6 @@ import (
 func validServiceDateReminderEnv() map[string]string {
 	return map[string]string{
 		"MESSAGE_GATEWAY_URL":           "http://message-gateway:8081/",
-		"MESSAGE_GATEWAY_ACCOUNT":       "qq",
 		"MESSAGE_GATEWAY_ACCOUNT_TOKEN": "gateway-token",
 		"MESSAGE_GATEWAY_TIMEOUT":       "5s",
 	}
@@ -22,6 +21,7 @@ func TestLoadServiceDateReminderConfigDefaults(t *testing.T) {
 		envMap(nil),
 		false,
 		[]time.Duration{5 * time.Hour, 3 * time.Hour},
+		"qq",
 	)
 	if err != nil {
 		t.Fatalf("LoadServiceDateReminderConfig() error = %v", err)
@@ -71,6 +71,7 @@ func TestLoadServiceDateReminderConfigCustom(t *testing.T) {
 		envMap(values),
 		true,
 		[]time.Duration{3 * time.Hour, 7 * time.Hour},
+		" qq-main ",
 	)
 	if err != nil {
 		t.Fatalf("LoadServiceDateReminderConfig() error = %v", err)
@@ -113,6 +114,7 @@ func TestLoadServiceDateReminderConfigDisabledDoesNotRequireGatewayToken(t *test
 		envMap(nil),
 		false,
 		[]time.Duration{5 * time.Hour, 3 * time.Hour},
+		"qq",
 	)
 	if err != nil {
 		t.Fatalf("LoadServiceDateReminderConfig() error = %v", err)
@@ -131,6 +133,7 @@ func TestLoadServiceDateReminderConfig_UsesDatabaseSettings(t *testing.T) {
 		envMap(values),
 		true,
 		[]time.Duration{2 * time.Hour, 30 * time.Minute},
+		"qq",
 	)
 	if err != nil {
 		t.Fatalf("LoadServiceDateReminderConfig() error = %v", err)
@@ -148,6 +151,7 @@ func TestLoadServiceDateReminderConfig_RejectsInvalidLeadTimes(t *testing.T) {
 		envMap(validServiceDateReminderEnv()),
 		true,
 		[]time.Duration{0},
+		"qq",
 	)
 	if err == nil {
 		t.Fatal("expected an error")
@@ -209,16 +213,22 @@ func TestLoadServiceDateReminderConfigInvalidValues(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			values := validServiceDateReminderEnv()
+			account := "qq"
 			if tt.remove {
 				delete(values, tt.key)
 			} else {
 				values[tt.key] = tt.value
+			}
+			if tt.key == "MESSAGE_GATEWAY_ACCOUNT" {
+				account = tt.value
+				delete(values, tt.key)
 			}
 
 			_, err := app.LoadServiceDateReminderConfig(
 				envMap(values),
 				true,
 				[]time.Duration{5 * time.Hour, 3 * time.Hour},
+				account,
 			)
 			if err == nil {
 				t.Fatal("expected an error")
@@ -235,7 +245,7 @@ func TestReminderLeadTimesAllowOneOrMany(t *testing.T) {
 		{time.Hour},
 		{30 * time.Minute, 5 * time.Hour, 3 * time.Hour},
 	} {
-		cfg, err := app.LoadServiceDateReminderConfig(envMap(nil), false, input)
+		cfg, err := app.LoadServiceDateReminderConfig(envMap(nil), false, input, "qq")
 		if err != nil {
 			t.Fatalf("%v: %v", input, err)
 		}

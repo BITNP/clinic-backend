@@ -41,6 +41,7 @@ type ConfigService struct {
 	mu              sync.Mutex
 	runtime         atomic.Pointer[RuntimeSettings]
 	validateRuntime func(RuntimeSettings) error
+	applyRuntime    func(RuntimeSettings)
 }
 
 func NewConfigService(db *database.DB) *ConfigService {
@@ -73,6 +74,22 @@ func (s *ConfigService) InitializeRuntime(validate func(RuntimeSettings) error) 
 	s.validateRuntime = validate
 	s.runtime.Store(&settings)
 	return nil
+}
+
+// SetRuntimeValidator replaces the validation run before runtime settings are
+// committed.
+func (s *ConfigService) SetRuntimeValidator(validate func(RuntimeSettings) error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.validateRuntime = validate
+}
+
+// SetRuntimeApplyHook registers a post-commit hook for committed runtime
+// settings. The hook must not call back into ConfigService.
+func (s *ConfigService) SetRuntimeApplyHook(apply func(RuntimeSettings)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.applyRuntime = apply
 }
 
 // Current returns a private copy of the active runtime settings.
@@ -583,6 +600,9 @@ func (s *ConfigService) updateItem(id uint, in UpdateItemInput, actorRole *confi
 	}
 	if candidate != nil {
 		s.runtime.Store(candidate)
+		if s.applyRuntime != nil {
+			s.applyRuntime(*candidate)
+		}
 	}
 	return item, nil
 }

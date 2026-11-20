@@ -860,14 +860,17 @@ item endpoints.
 
 The backend seeds and reserves `SYNC_POLL_INTERVAL`, `STAFF_VERSION`,
 `RECORD_ACTION_WINDOW`, `RECORD_PHOTO_MAX_COUNT`,
-`SERVICE_DATE_REMINDER_ENABLED`, `SERVICE_DATE_REMINDER_LEAD_TIMES`, and
-`TAGGER_LLM_API_KEY`. Their types, required flags, and write-only flags are fixed
-and their values receive key-specific validation. Initial values come from the
-external `runtime_settings.json` file beside `.env`; environment variables with
-these names are ignored. `TAGGER_LLM_API_KEY` is optional and write-only: its
-value is never returned by the API. Changes to it take effect after the backend
-restarts. Other successful saves apply to subsequent operations without
-restarting the backend.
+`RECORD_PHOTO_MAX_SIZE_BYTES`, `SERVICE_DATE_REMINDER_ENABLED`,
+`SERVICE_DATE_REMINDER_LEAD_TIMES`, `MESSAGE_GATEWAY_ACCOUNT`,
+`TAGGER_LLM_API_KEY`, `TAGGER_LLM_BASE_URL`, `TAGGER_LLM_MODEL`,
+`TAGGER_AGENT_POOL_SIZE`, `TAGGER_CONTEXT_TOKENS`, and `TAGGER_TIMEOUT`. Their
+types, required flags, and write-only flags are fixed and their values receive
+key-specific validation. Initial values come from the external
+`runtime_settings.json` file beside `.env`; environment variables with these
+names may only initialize a missing item during migration and are ignored once
+the row exists. `TAGGER_LLM_API_KEY` is optional and write-only: its value is
+never returned by the API. All successful saves apply without restarting the
+backend; tagger changes atomically replace the active pool generation.
 
 ### `GET /api/admin/config`
 
@@ -1330,9 +1333,9 @@ list. Staff or admin only. Bumps the `record` counter.
 | `photo` | file | yes | One JPEG, PNG, or WebP image. |
 
 The server detects the image type from the bytes, so the part's declared
-`Content-Type` is ignored. The request and file are limited by
-`RECORD_PHOTO_MAX_SIZE_BYTES`; the record is limited by
-the database-managed `RECORD_PHOTO_MAX_COUNT` config item.
+`Content-Type` is ignored. The request and file are limited by the
+database-managed `RECORD_PHOTO_MAX_SIZE_BYTES` config item; the record is
+limited by `RECORD_PHOTO_MAX_COUNT`.
 
 **Response `201 Created`** — the new photo object. A `Location` header points at
 its position URL.
@@ -2825,5 +2828,7 @@ curl "$BASE/api/announcement/toc/"
 See [CONFIGURATION.md](CONFIGURATION.md) for every environment variable and
 deployment setting. Settings that affect API behavior are noted inline above:
 `CLINIC_API_KEY`, `CLINIC_TIMEZONE`, `STAFF_VERSION`, `SYNC_POLL_INTERVAL`,
-`RECORD_ACTION_WINDOW`, `RECORD_PHOTO_MAX_COUNT`, the service-date reminder
-settings, `TAGGER_LLM_API_KEY`, `SESSION_*`, `CAS_*`, and `KEYCLOAK_*`.
+`RECORD_ACTION_WINDOW`, `RECORD_PHOTO_MAX_COUNT`,
+`RECORD_PHOTO_MAX_SIZE_BYTES`, the service-date reminder settings,
+`MESSAGE_GATEWAY_ACCOUNT`, the `TAGGER_*` settings, `SESSION_*`, `CAS_*`, and
+`KEYCLOAK_*`.

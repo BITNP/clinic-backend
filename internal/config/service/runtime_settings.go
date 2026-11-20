@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -26,7 +27,14 @@ const (
 	runtimeSettingRecordPhotoMaxCount      = "RECORD_PHOTO_MAX_COUNT"
 	runtimeSettingServiceReminderEnabled   = "SERVICE_DATE_REMINDER_ENABLED"
 	runtimeSettingServiceReminderLeadTimes = "SERVICE_DATE_REMINDER_LEAD_TIMES"
+	runtimeSettingMessageGatewayAccount    = "MESSAGE_GATEWAY_ACCOUNT"
 	runtimeSettingTaggerLLMAPIKey          = "TAGGER_LLM_API_KEY"
+	runtimeSettingTaggerLLMBaseURL         = "TAGGER_LLM_BASE_URL"
+	runtimeSettingTaggerLLMModel           = "TAGGER_LLM_MODEL"
+	runtimeSettingTaggerPoolSize           = "TAGGER_AGENT_POOL_SIZE"
+	runtimeSettingTaggerContextTokens      = "TAGGER_CONTEXT_TOKENS"
+	runtimeSettingTaggerTimeout            = "TAGGER_TIMEOUT"
+	runtimeSettingRecordPhotoMaxSizeBytes  = "RECORD_PHOTO_MAX_SIZE_BYTES"
 )
 
 //go:embed data/template.json
@@ -60,7 +68,14 @@ var runtimeSettingExpectedTypes = map[string]configmodel.ConfigValueType{
 	runtimeSettingRecordPhotoMaxCount:      configmodel.ConfigValueTypeInt,
 	runtimeSettingServiceReminderEnabled:   configmodel.ConfigValueTypeBoolean,
 	runtimeSettingServiceReminderLeadTimes: configmodel.ConfigValueTypeString,
+	runtimeSettingMessageGatewayAccount:    configmodel.ConfigValueTypeString,
 	runtimeSettingTaggerLLMAPIKey:          configmodel.ConfigValueTypeString,
+	runtimeSettingTaggerLLMBaseURL:         configmodel.ConfigValueTypeString,
+	runtimeSettingTaggerLLMModel:           configmodel.ConfigValueTypeString,
+	runtimeSettingTaggerPoolSize:           configmodel.ConfigValueTypeInt,
+	runtimeSettingTaggerContextTokens:      configmodel.ConfigValueTypeInt,
+	runtimeSettingTaggerTimeout:            configmodel.ConfigValueTypeString,
+	runtimeSettingRecordPhotoMaxSizeBytes:  configmodel.ConfigValueTypeInt,
 }
 
 var (
@@ -169,15 +184,33 @@ type RuntimeSettings struct {
 	StaffVersion                 int
 	RecordActionWindow           time.Duration
 	RecordPhotoMaxCount          int
+	RecordPhotoMaxSizeBytes      int64
 	ServiceDateReminderEnabled   bool
 	ServiceDateReminderLeadTimes []time.Duration
+	MessageGatewayAccount        string
 	TaggerLLMAPIKey              string
+	TaggerLLMBaseURL             string
+	TaggerLLMModel               string
+	TaggerAgentPoolSize          int
+	TaggerContextTokens          int
+	TaggerTimeout                time.Duration
 }
 
 // EnsureRuntimeSettings inserts missing groups and settings using the embedded
-// template and external runtime_settings.json values. Existing rows are never
-// overwritten.
+// template and external runtime_settings.json values. Existing values are
+// preserved while reserved metadata is synchronized from the template.
 func (s *ConfigService) EnsureRuntimeSettings() error {
+	return s.ensureRuntimeSettings(nil)
+}
+
+// EnsureRuntimeSettingsWithInitialValues seeds newly created items from
+// initialValues when present. It supports one-time migration from legacy
+// environment settings; existing rows always remain authoritative.
+func (s *ConfigService) EnsureRuntimeSettingsWithInitialValues(initialValues map[string]string) error {
+	return s.ensureRuntimeSettings(initialValues)
+}
+
+func (s *ConfigService) ensureRuntimeSettings(initialValues map[string]string) error {
 	template, err := loadRuntimeTemplate()
 	if err != nil {
 		return err
@@ -215,16 +248,40 @@ func (s *ConfigService) EnsureRuntimeSettings() error {
 				continue
 			}
 
+			value := values[setting.Name]
+			if raw, ok := initialValues[setting.Name]; ok && strings.TrimSpace(raw) != "" {
+				value, err = validateRuntimeSettingValue(setting.Name, raw)
+				if err != nil {
+					return fmt.Errorf("initialize %s from legacy environment: %w", setting.Name, err)
+				}
+			}
 			groupID := groupIDs[setting.GroupName]
 			if _, err := tx.Exec(
 				`INSERT INTO clinic_config_item
 				 (name, value, value_type, display_name, is_required, writeonly, group_id, sort_order)
 				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 				 ON CONFLICT (name) DO NOTHING`,
-				setting.Name, values[setting.Name], setting.ValueType, setting.DisplayName,
+				setting.Name, value, setting.ValueType, setting.DisplayName,
 				setting.IsRequired, setting.WriteOnly, groupID, setting.SortOrder,
 			); err != nil {
 				return fmt.Errorf("seed config item %s: %w", setting.Name, err)
+			}
+		}
+		for _, setting := range template.Items {
+			if _, err := tx.Exec(
+				`UPDATE clinic_config_item
+				 SET display_name = $2, value_type = $3, is_required = $4,
+				     writeonly = $5, group_id = $6, sort_order = $7
+				 WHERE name = $1`,
+				setting.Name,
+				setting.DisplayName,
+				setting.ValueType,
+				setting.IsRequired,
+				setting.WriteOnly,
+				groupIDs[setting.GroupName],
+				setting.SortOrder,
+			); err != nil {
+				return fmt.Errorf("sync config item metadata %s: %w", setting.Name, err)
 			}
 		}
 		return nil
@@ -320,12 +377,26 @@ func loadRuntimeSettings(q interface{ QueryRow(string, ...any) *sql.Row }) (Runt
 			settings.RecordActionWindow, err = time.ParseDuration(normalized)
 		case runtimeSettingRecordPhotoMaxCount:
 			settings.RecordPhotoMaxCount, err = strconv.Atoi(normalized)
+		case runtimeSettingRecordPhotoMaxSizeBytes:
+			settings.RecordPhotoMaxSizeBytes, err = strconv.ParseInt(normalized, 10, 64)
 		case runtimeSettingServiceReminderEnabled:
 			settings.ServiceDateReminderEnabled = normalized == "true"
 		case runtimeSettingServiceReminderLeadTimes:
 			settings.ServiceDateReminderLeadTimes, err = parseRuntimeLeadTimes(normalized)
+		case runtimeSettingMessageGatewayAccount:
+			settings.MessageGatewayAccount = normalized
 		case runtimeSettingTaggerLLMAPIKey:
 			settings.TaggerLLMAPIKey = normalized
+		case runtimeSettingTaggerLLMBaseURL:
+			settings.TaggerLLMBaseURL = normalized
+		case runtimeSettingTaggerLLMModel:
+			settings.TaggerLLMModel = normalized
+		case runtimeSettingTaggerPoolSize:
+			settings.TaggerAgentPoolSize, err = strconv.Atoi(normalized)
+		case runtimeSettingTaggerContextTokens:
+			settings.TaggerContextTokens, err = strconv.Atoi(normalized)
+		case runtimeSettingTaggerTimeout:
+			settings.TaggerTimeout, err = time.ParseDuration(normalized)
 		}
 		if err != nil {
 			return RuntimeSettings{}, fmt.Errorf("parse runtime config %s: %w", setting.Name, err)
@@ -418,6 +489,12 @@ func validateRuntimeSettingValue(name, raw string) (string, error) {
 			return "", fmt.Errorf("%w: %s must be a positive integer", ErrConfigValueInvalid, name)
 		}
 		return strconv.Itoa(count), nil
+	case runtimeSettingRecordPhotoMaxSizeBytes:
+		size, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || size <= 0 {
+			return "", fmt.Errorf("%w: %s must be a positive integer", ErrConfigValueInvalid, name)
+		}
+		return strconv.FormatInt(size, 10), nil
 	case runtimeSettingServiceReminderEnabled:
 		if value != "true" && value != "false" {
 			return "", fmt.Errorf("%w: %s must be true or false", ErrConfigValueInvalid, name)
@@ -435,13 +512,58 @@ func validateRuntimeSettingValue(name, raw string) (string, error) {
 		return strings.Join(parts, ","), nil
 	case runtimeSettingTaggerLLMAPIKey:
 		return value, nil
+	case runtimeSettingTaggerLLMBaseURL:
+		if value == "" {
+			return "", nil
+		}
+		parsed, err := url.Parse(value)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return "", fmt.Errorf("%w: %s must be an HTTP(S) URL", ErrConfigValueInvalid, name)
+		}
+		if parsed.RawQuery != "" || parsed.Fragment != "" {
+			return "", fmt.Errorf("%w: %s must not contain a query or fragment", ErrConfigValueInvalid, name)
+		}
+		return value, nil
+	case runtimeSettingTaggerLLMModel:
+		return value, nil
+	case runtimeSettingTaggerPoolSize:
+		size, err := strconv.Atoi(value)
+		if err != nil || size <= 0 {
+			return "", fmt.Errorf("%w: %s must be a positive integer", ErrConfigValueInvalid, name)
+		}
+		return strconv.Itoa(size), nil
+	case runtimeSettingTaggerContextTokens:
+		tokens, err := strconv.Atoi(value)
+		if err != nil || tokens <= 0 {
+			return "", fmt.Errorf("%w: %s must be a positive integer", ErrConfigValueInvalid, name)
+		}
+		return strconv.Itoa(tokens), nil
+	case runtimeSettingTaggerTimeout:
+		duration, err := parseRuntimeDuration(name, value)
+		if err != nil {
+			return "", err
+		}
+		if duration <= 0 {
+			return "", fmt.Errorf("%w: %s must be positive", ErrConfigValueInvalid, name)
+		}
+		return formatRuntimeDuration(duration), nil
+	case runtimeSettingMessageGatewayAccount:
+		if value == "" || value == "." || value == ".." || strings.ContainsAny(value, "/?#") {
+			return "", fmt.Errorf("%w: %s must be a valid gateway account", ErrConfigValueInvalid, name)
+		}
+		return value, nil
 	default:
 		return "", fmt.Errorf("%w: unsupported runtime setting %s", ErrConfigInvalidInput, name)
 	}
 }
 
 func runtimeSettingIsOptional(name string) bool {
-	return name == runtimeSettingTaggerLLMAPIKey
+	switch name {
+	case runtimeSettingTaggerLLMAPIKey, runtimeSettingTaggerLLMBaseURL, runtimeSettingTaggerLLMModel:
+		return true
+	default:
+		return false
+	}
 }
 
 func runtimeSettingIsWriteOnly(name string) bool {

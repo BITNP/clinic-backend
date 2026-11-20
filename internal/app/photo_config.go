@@ -7,10 +7,6 @@ import (
 	"strings"
 )
 
-const (
-	defaultRecordPhotoMaxSizeBytes = int64(10 * 1024 * 1024)
-)
-
 // PhotoConfig holds the limits enforced for photos attached to record worker
 // notes.
 type PhotoConfig struct {
@@ -18,15 +14,13 @@ type PhotoConfig struct {
 	MaxSizeBytes int64
 }
 
-// LoadPhotoConfig combines the database-managed photo count with
-// environment-managed upload settings.
-func LoadPhotoConfig(getenv func(string) string, maxCount int) (PhotoConfig, error) {
+// LoadPhotoConfig validates the database-managed photo limits.
+func LoadPhotoConfig(maxCount int, maxSizeBytes int64) (PhotoConfig, error) {
 	if maxCount <= 0 {
 		return PhotoConfig{}, errors.New("invalid RECORD_PHOTO_MAX_COUNT: must be positive")
 	}
-	maxSizeBytes, err := parsePositiveInt64Setting(getenv("RECORD_PHOTO_MAX_SIZE_BYTES"), defaultRecordPhotoMaxSizeBytes)
-	if err != nil {
-		return PhotoConfig{}, fmt.Errorf("invalid RECORD_PHOTO_MAX_SIZE_BYTES: %w", err)
+	if maxSizeBytes <= 0 {
+		return PhotoConfig{}, fmt.Errorf("invalid RECORD_PHOTO_MAX_SIZE_BYTES: must be positive")
 	}
 
 	return PhotoConfig{
@@ -42,22 +36,6 @@ func parsePositiveIntSetting(raw string, fallback int) (int, error) {
 	}
 
 	value, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, err
-	}
-	if value <= 0 {
-		return 0, errors.New("must be positive")
-	}
-	return value, nil
-}
-
-func parsePositiveInt64Setting(raw string, fallback int64) (int64, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return fallback, nil
-	}
-
-	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		return 0, err
 	}

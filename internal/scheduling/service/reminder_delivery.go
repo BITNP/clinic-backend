@@ -26,6 +26,7 @@ type ReminderDelivery struct {
 	Discovery               *ReminderDiscovery
 	Client                  *http.Client
 	BaseURL, Account, Token string
+	AccountGetter           func() string
 	Template                *template.Template
 	Lease                   time.Duration
 	Now                     func() time.Time
@@ -219,7 +220,11 @@ func (d *ReminderDelivery) Deliver(ctx context.Context, job *schedulingmodel.Ser
 	if err != nil {
 		return err
 	}
-	endpoint := strings.TrimRight(d.BaseURL, "/") + "/api/v1/accounts/" + url.PathEscape(d.Account) + "/send_private_msg_async"
+	account := d.Account
+	if d.AccountGetter != nil {
+		account = d.AccountGetter()
+	}
+	endpoint := strings.TrimRight(d.BaseURL, "/") + "/api/v1/accounts/" + url.PathEscape(account) + "/send_private_msg_async"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return d.retry(ctx, job, now, err)

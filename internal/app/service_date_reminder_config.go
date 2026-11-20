@@ -32,12 +32,13 @@ type ServiceDateReminderGatewayConfig struct {
 	Timeout      time.Duration
 }
 
-// LoadServiceDateReminderConfig combines database-managed reminder switches
-// and lead times with environment-managed template and gateway data.
+// LoadServiceDateReminderConfig combines database-managed reminder settings
+// with environment-managed template and gateway credentials.
 func LoadServiceDateReminderConfig(
 	getenv func(string) string,
 	enabled bool,
 	leadTimes []time.Duration,
+	account string,
 ) (ServiceDateReminderConfig, error) {
 	leadTimes = append([]time.Duration(nil), leadTimes...)
 	if err := validateServiceDateReminderLeadTimes(leadTimes); err != nil {
@@ -59,7 +60,7 @@ func LoadServiceDateReminderConfig(
 		}
 	}
 
-	account := strings.TrimSpace(getenv("MESSAGE_GATEWAY_ACCOUNT"))
+	account = strings.TrimSpace(account)
 	if account == "" {
 		account = defaultServiceDateReminderAccount
 	}
