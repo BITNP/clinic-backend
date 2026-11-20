@@ -820,6 +820,254 @@ curl -X DELETE "$BASE/api/admin/rooms/1" \
   -b cookies.txt -H "X-CSRF-Token: $CSRF"
 ```
 
+## Admin: configuration
+
+All configuration endpoints are **admin only** and accept only `admin` or
+`superadmin`. Ordinary `staff` users receive `403`.
+
+Configuration group object:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | integer | Group id. |
+| `name` | string | Unique machine-readable name, max 64 characters. Immutable after creation. |
+| `display_name` | string | Human-readable name, max 128 characters. |
+| `sort_order` | integer | Non-negative position among groups. |
+
+Configuration item object:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | integer | Item id. |
+| `name` | string | Globally unique machine-readable name, max 128 characters. Immutable after creation. |
+| `value` | string | Canonical text representation of the value. |
+| `value_type` | string | `int`, `double`, `boolean`, or `string`. |
+| `display_name` | string | Human-readable name, max 128 characters. |
+| `is_required` | boolean | When true, an empty value is rejected. |
+| `group_id` | integer | Owning configuration group. |
+| `sort_order` | integer | Non-negative position within the group. |
+
+Integer and double values are normalized to canonical decimal representations.
+Booleans must be `true` or `false`. Optional items may have an empty value.
+
+### `GET /api/admin/config`
+
+**Description:** Returns the complete configuration catalog as two flat arrays.
+Groups are ordered by `sort_order`, then `id`. Items are ordered by their
+group's `sort_order`, `group_id`, item `sort_order`, and item `id`.
+
+**Response `200 OK`**
+
+```json
+{
+  "groups": [
+    {
+      "id": 1,
+      "name": "booking",
+      "display_name": "预约设置",
+      "sort_order": 0
+    }
+  ],
+  "items": [
+    {
+      "id": 10,
+      "name": "max_booking_days",
+      "value": "7",
+      "value_type": "int",
+      "display_name": "最多提前预约天数",
+      "is_required": true,
+      "group_id": 1,
+      "sort_order": 0
+    }
+  ]
+}
+```
+
+Both arrays are always present and are empty arrays when no records exist.
+Items contain `group_id` only; they do not embed a group object.
+
+**Error responses:** `401`, `403`, `500`.
+
+**curl**
+
+```bash
+curl "$BASE/api/admin/config" -b cookies.txt
+```
+
+### `GET /api/admin/config/groups/{id}`
+
+**Description:** Returns one configuration group.
+
+**Response `200 OK`** — configuration group object.
+
+**Error responses:** `400` (invalid id), `401`, `403`, `404`.
+
+**curl**
+
+```bash
+curl "$BASE/api/admin/config/groups/1" -b cookies.txt
+```
+
+### `POST /api/admin/config/groups`
+
+**Description:** Creates a configuration group. The name is immutable after
+creation.
+
+**Request body**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | string | yes | Unique machine name, max 64 characters. |
+| `display_name` | string | yes | Human-readable name, max 128 characters. |
+| `sort_order` | integer | no | Non-negative position. Defaults to `0`. |
+
+**Response `201 Created`** — configuration group object.
+
+**Error responses:** `400` (invalid fields), `401`, `403`, `409` (name already
+taken).
+
+**curl**
+
+```bash
+curl -X POST "$BASE/api/admin/config/groups" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"booking","display_name":"预约设置","sort_order":0}'
+```
+
+### `PUT /api/admin/config/groups/{id}`
+
+**Description:** Updates a configuration group. Omitted fields are unchanged.
+The group name cannot be changed.
+
+**Request body**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `display_name` | string | no | Human-readable name, max 128 characters. |
+| `sort_order` | integer | no | Non-negative position. |
+
+**Response `200 OK`** — updated configuration group object.
+
+**Error responses:** `400`, `401`, `403`, `404`.
+
+**curl**
+
+```bash
+curl -X PUT "$BASE/api/admin/config/groups/1" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF" \
+  -H 'Content-Type: application/json' \
+  -d '{"display_name":"预约配置","sort_order":2}'
+```
+
+### `DELETE /api/admin/config/groups/{id}`
+
+**Description:** Deletes an empty configuration group. Groups containing items
+cannot be deleted.
+
+**Response `204 No Content`**
+
+**Error responses:** `400`, `401`, `403`, `404`, `409` (group still has items).
+
+**curl**
+
+```bash
+curl -X DELETE "$BASE/api/admin/config/groups/1" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF"
+```
+
+### `GET /api/admin/config/items/{id}`
+
+**Description:** Returns one configuration item with all attributes. The
+response contains `group_id` and does not embed the group object.
+
+**Response `200 OK`** — configuration item object.
+
+**Error responses:** `400`, `401`, `403`, `404`.
+
+**curl**
+
+```bash
+curl "$BASE/api/admin/config/items/10" -b cookies.txt
+```
+
+### `POST /api/admin/config/items`
+
+**Description:** Creates a configuration item. The name is immutable after
+creation, and `group_id` must reference an existing group.
+
+**Request body**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | string | yes | Globally unique machine name, max 128 characters. |
+| `value` | string | no | Defaults to an empty string. Must match `value_type`. |
+| `value_type` | string | yes | `int`, `double`, `boolean`, or `string`. |
+| `display_name` | string | yes | Human-readable name, max 128 characters. |
+| `is_required` | boolean | no | Rejects an empty value when true. Defaults to `false`. |
+| `group_id` | integer | yes | Existing configuration group id. |
+| `sort_order` | integer | no | Non-negative position within the group. Defaults to `0`. |
+
+**Response `201 Created`** — configuration item object.
+
+**Error responses:** `400` (invalid fields or value), `401`, `403`, `404`
+(group not found), `409` (item name already taken).
+
+**curl**
+
+```bash
+curl -X POST "$BASE/api/admin/config/items" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"max_booking_days","value":"7","value_type":"int","display_name":"最多提前预约天数","is_required":true,"group_id":1,"sort_order":0}'
+```
+
+### `PUT /api/admin/config/items/{id}`
+
+**Description:** Updates a configuration item. Omitted fields are unchanged.
+The item name cannot be changed. The final value is validated against the final
+`value_type` and `is_required` settings.
+
+**Request body**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `value` | string | no | New value. |
+| `value_type` | string | no | `int`, `double`, `boolean`, or `string`. |
+| `display_name` | string | no | Human-readable name, max 128 characters. |
+| `is_required` | boolean | no | Whether an empty value is allowed. |
+| `group_id` | integer | no | Move the item to another existing group. |
+| `sort_order` | integer | no | Non-negative position within the group. |
+
+**Response `200 OK`** — updated configuration item object.
+
+**Error responses:** `400` (invalid fields or value), `401`, `403`, `404`
+(item or target group not found).
+
+**curl**
+
+```bash
+curl -X PUT "$BASE/api/admin/config/items/10" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF" \
+  -H 'Content-Type: application/json' \
+  -d '{"value":"14","display_name":"最多提前预约天数","group_id":2,"sort_order":1}'
+```
+
+### `DELETE /api/admin/config/items/{id}`
+
+**Description:** Deletes a configuration item.
+
+**Response `204 No Content`**
+
+**Error responses:** `400`, `401`, `403`, `404`.
+
+**curl**
+
+```bash
+curl -X DELETE "$BASE/api/admin/config/items/10" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF"
+```
+
 ## Admin: records
 
 Record lifecycle states:

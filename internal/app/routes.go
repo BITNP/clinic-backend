@@ -4,6 +4,7 @@ import (
 	"clinic-backend/internal/announcement"
 	authhandler "clinic-backend/internal/auth/handler"
 	"clinic-backend/internal/changes"
+	confighandler "clinic-backend/internal/config/handler"
 	"clinic-backend/internal/legacy"
 	recordhandler "clinic-backend/internal/record/handler"
 	roomhandler "clinic-backend/internal/room/handler"
@@ -21,6 +22,7 @@ type RouterConfig struct {
 	ServiceDateH  *schedulinghandler.ServiceDateHandler
 	CampusH       *roomhandler.CampusHandler
 	RoomH         *roomhandler.RoomHandler
+	ConfigH       *confighandler.ConfigHandler
 	StaffH        *staffhandler.StaffHandler
 	WorkScheduleH *schedulinghandler.WorkScheduleHandler
 	AdminRecordH  *recordhandler.AdminRecordHandler
@@ -44,6 +46,7 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 		serviceDateH:  cfg.ServiceDateH,
 		campusH:       cfg.CampusH,
 		roomH:         cfg.RoomH,
+		configH:       cfg.ConfigH,
 		staffH:        cfg.StaffH,
 		workScheduleH: cfg.WorkScheduleH,
 		adminRecordH:  cfg.AdminRecordH,
@@ -66,6 +69,7 @@ type routeHandlers struct {
 	serviceDateH  *schedulinghandler.ServiceDateHandler
 	campusH       *roomhandler.CampusHandler
 	roomH         *roomhandler.RoomHandler
+	configH       *confighandler.ConfigHandler
 	staffH        *staffhandler.StaffHandler
 	workScheduleH *schedulinghandler.WorkScheduleHandler
 	adminRecordH  *recordhandler.AdminRecordHandler
@@ -154,6 +158,24 @@ func (h routeHandlers) router() *gin.Engine {
 		roomWrite.POST("", h.roomH.Create)
 		roomWrite.PUT("/:id", h.roomH.Update)
 		roomWrite.DELETE("/:id", h.roomH.Delete)
+	}
+
+	// ── Admin: Configuration ──────────────────────────────────────────────
+	// Configuration values are restricted to admins and superadmins.
+	config := r.Group("/api/admin/config")
+	config.Use(h.adminAuth, authhandler.RequireAdmin)
+	{
+		config.GET("", h.configH.ListCatalog)
+
+		config.GET("/groups/:id", h.configH.GetGroup)
+		config.POST("/groups", h.configH.CreateGroup)
+		config.PUT("/groups/:id", h.configH.UpdateGroup)
+		config.DELETE("/groups/:id", h.configH.DeleteGroup)
+
+		config.GET("/items/:id", h.configH.GetItem)
+		config.POST("/items", h.configH.CreateItem)
+		config.PUT("/items/:id", h.configH.UpdateItem)
+		config.DELETE("/items/:id", h.configH.DeleteItem)
 	}
 
 	// ── Admin: Records (staff can read and perform site operations) ───────

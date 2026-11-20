@@ -19,6 +19,8 @@ import (
 	authservice "clinic-backend/internal/auth/service"
 	"clinic-backend/internal/calendar"
 	"clinic-backend/internal/changes"
+	confighandler "clinic-backend/internal/config/handler"
+	configservice "clinic-backend/internal/config/service"
 	"clinic-backend/internal/legacy"
 	"clinic-backend/internal/message"
 	"clinic-backend/internal/message/napcat"
@@ -222,6 +224,8 @@ func Run() {
 
 	staffSvc := staffservice.NewStaffService(rawDB)
 	staffH := staffhandler.NewStaffHandler(staffSvc)
+	configSvc := configservice.NewConfigService(rawDB)
+	configH := confighandler.NewConfigHandler(configSvc)
 
 	sessionTTL := envDuration("SESSION_TTL", 336*time.Hour)
 	sessionSvc := authservice.NewSessionService(sqlDB, sessionTTL)
@@ -299,6 +303,7 @@ func Run() {
 		ServiceDateH:  serviceDateH,
 		CampusH:       campusH,
 		RoomH:         roomH,
+		ConfigH:       configH,
 		StaffH:        staffH,
 		WorkScheduleH: workScheduleH,
 		AdminRecordH:  adminRecordH,
