@@ -178,11 +178,16 @@ func TestConfigService_ItemCRUDNormalizesValue(t *testing.T) {
 	if item.Value != "7" {
 		t.Errorf("normalized value = %q, want 7", item.Value)
 	}
+	if item.RoleLevel != configmodel.ConfigRoleLevelAdmin || item.IsReadable {
+		t.Errorf("access defaults = %q, %t; want admin, false", item.RoleLevel, item.IsReadable)
+	}
 
 	value := "false"
 	valueType := configmodel.ConfigValueTypeBoolean
 	displayName := "Enabled"
 	required := false
+	roleLevel := configmodel.ConfigRoleLevelStaff
+	readable := true
 	groupID := secondGroup.ID
 	sortOrder := 3
 	updated, err := svc.UpdateItem(item.ID, configservice.UpdateItemInput{
@@ -190,6 +195,8 @@ func TestConfigService_ItemCRUDNormalizesValue(t *testing.T) {
 		ValueType:   &valueType,
 		DisplayName: &displayName,
 		IsRequired:  &required,
+		RoleLevel:   &roleLevel,
+		IsReadable:  &readable,
 		GroupID:     &groupID,
 		SortOrder:   &sortOrder,
 	})
@@ -201,6 +208,18 @@ func TestConfigService_ItemCRUDNormalizesValue(t *testing.T) {
 	}
 	if updated.GroupID != groupID || updated.SortOrder != sortOrder || updated.IsRequired {
 		t.Errorf("updated item relation/order = %+v", updated)
+	}
+	if updated.RoleLevel != roleLevel || !updated.IsReadable {
+		t.Errorf("updated access = %q, %t; want %q, true", updated.RoleLevel, updated.IsReadable, roleLevel)
+	}
+
+	readable = false
+	updated, err = svc.UpdateItem(item.ID, configservice.UpdateItemInput{IsReadable: &readable})
+	if err != nil {
+		t.Fatalf("disable reading: %v", err)
+	}
+	if updated.IsReadable {
+		t.Error("is_readable = true after explicit false update")
 	}
 
 	if err := svc.DeleteItem(item.ID); err != nil {
@@ -283,6 +302,14 @@ func TestConfigService_ItemValidation(t *testing.T) {
 				DisplayName: "Missing Group", GroupID: 999,
 			},
 			want: configservice.ErrConfigGroupNotFound,
+		},
+		{
+			name: "invalid role level",
+			input: configservice.CreateItemInput{
+				Name: "invalid_role", ValueType: configmodel.ConfigValueTypeString,
+				DisplayName: "Invalid Role", RoleLevel: configmodel.ConfigRoleLevel("guest"), GroupID: group.ID,
+			},
+			want: configservice.ErrConfigInvalidInput,
 		},
 		{
 			name: "negative order",

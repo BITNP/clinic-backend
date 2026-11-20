@@ -154,6 +154,9 @@ func TestConfigHandler_CRUDAndFlatCatalog(t *testing.T) {
 	if item.Value != "7" || item.GroupID != group.ID {
 		t.Errorf("created item = %+v", item)
 	}
+	if item.RoleLevel != configmodel.ConfigRoleLevelAdmin || item.IsReadable {
+		t.Errorf("created item access = %q, %t; want admin, false", item.RoleLevel, item.IsReadable)
+	}
 
 	w = testutil.DoRequest(t, r, http.MethodGet, "/api/admin/config", nil)
 	if w.Code != http.StatusOK {
@@ -195,6 +198,8 @@ func TestConfigHandler_CRUDAndFlatCatalog(t *testing.T) {
 		"value_type":   "boolean",
 		"display_name": "Enabled",
 		"is_required":  false,
+		"role_level":   "staff",
+		"is_readable":  true,
 		"sort_order":   4,
 	})
 	if w.Code != http.StatusOK {
@@ -205,6 +210,9 @@ func TestConfigHandler_CRUDAndFlatCatalog(t *testing.T) {
 	}
 	if item.Value != "false" || item.ValueType != configmodel.ConfigValueTypeBoolean {
 		t.Errorf("updated item = %+v", item)
+	}
+	if item.RoleLevel != configmodel.ConfigRoleLevelStaff || !item.IsReadable {
+		t.Errorf("updated item access = %q, %t; want staff, true", item.RoleLevel, item.IsReadable)
 	}
 
 	w = testutil.DoRequest(t, r, http.MethodDelete, "/api/admin/config/items/"+testutil.Itoa(item.ID), nil)
@@ -250,6 +258,17 @@ func TestConfigHandler_ValidationAndConflicts(t *testing.T) {
 	})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("invalid value type: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	w = testutil.DoRequest(t, r, http.MethodPost, "/api/admin/config/items", map[string]any{
+		"name":         "bad_role",
+		"value_type":   "string",
+		"display_name": "Bad Role",
+		"role_level":   "guest",
+		"group_id":     group.ID,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid role level: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 
 	w = testutil.DoRequest(t, r, http.MethodPost, "/api/admin/config/items", map[string]any{

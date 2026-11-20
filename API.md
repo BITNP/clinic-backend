@@ -845,6 +845,8 @@ Configuration item object:
 | `value_type` | string | `int`, `double`, `boolean`, or `string`. |
 | `display_name` | string | Human-readable name, max 128 characters. |
 | `is_required` | boolean | When true, an empty value is rejected. |
+| `role_level` | string | Role-level metadata: `staff`, `admin`, or `superadmin`. Defaults to `admin`. |
+| `is_readable` | boolean | Readability metadata for configuration consumers. Defaults to `false`. |
 | `group_id` | integer | Owning configuration group. |
 | `sort_order` | integer | Non-negative position within the group. |
 
@@ -885,6 +887,8 @@ group's `sort_order`, `group_id`, item `sort_order`, and item `id`.
       "value_type": "int",
       "display_name": "最多提前预约天数",
       "is_required": true,
+      "role_level": "admin",
+      "is_readable": false,
       "group_id": 1,
       "sort_order": 0
     }
@@ -1014,6 +1018,8 @@ creation, and `group_id` must reference an existing group.
 | `value_type` | string | yes | `int`, `double`, `boolean`, or `string`. |
 | `display_name` | string | yes | Human-readable name, max 128 characters. |
 | `is_required` | boolean | no | Rejects an empty value when true. Defaults to `false`. |
+| `role_level` | string | no | `staff`, `admin`, or `superadmin`. Defaults to `admin`. |
+| `is_readable` | boolean | no | Readability metadata for configuration consumers. Defaults to `false`. |
 | `group_id` | integer | yes | Existing configuration group id. |
 | `sort_order` | integer | no | Non-negative position within the group. Defaults to `0`. |
 
@@ -1028,7 +1034,7 @@ creation, and `group_id` must reference an existing group.
 curl -X POST "$BASE/api/admin/config/items" \
   -b cookies.txt -H "X-CSRF-Token: $CSRF" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"max_booking_days","value":"7","value_type":"int","display_name":"最多提前预约天数","is_required":true,"group_id":1,"sort_order":0}'
+  -d '{"name":"max_booking_days","value":"7","value_type":"int","display_name":"最多提前预约天数","is_required":true,"role_level":"staff","is_readable":true,"group_id":1,"sort_order":0}'
 ```
 
 ### `PUT /api/admin/config/items/{id}`
@@ -1053,6 +1059,8 @@ actions already expired or pruned from the journal under the previous window.
 | `value_type` | string | no | `int`, `double`, `boolean`, or `string`. |
 | `display_name` | string | no | Human-readable name, max 128 characters. |
 | `is_required` | boolean | no | Whether an empty value is allowed. |
+| `role_level` | string | no | `staff`, `admin`, or `superadmin`. |
+| `is_readable` | boolean | no | Readability metadata for configuration consumers. |
 | `group_id` | integer | no | Move the item to another existing group. |
 | `sort_order` | integer | no | Non-negative position within the group. |
 
@@ -1067,7 +1075,7 @@ actions already expired or pruned from the journal under the previous window.
 curl -X PUT "$BASE/api/admin/config/items/10" \
   -b cookies.txt -H "X-CSRF-Token: $CSRF" \
   -H 'Content-Type: application/json' \
-  -d '{"value":"14","display_name":"最多提前预约天数","group_id":2,"sort_order":1}'
+  -d '{"value":"14","display_name":"最多提前预约天数","role_level":"staff","is_readable":true,"group_id":2,"sort_order":1}'
 ```
 
 ### `DELETE /api/admin/config/items/{id}`

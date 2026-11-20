@@ -30,7 +30,7 @@ var (
 
 const (
 	groupColumns = "id, name, display_name, sort_order"
-	itemColumns  = "id, name, value, value_type, display_name, is_required, group_id, sort_order"
+	itemColumns  = "id, name, value, value_type, display_name, is_required, role_level, is_readable, group_id, sort_order"
 )
 
 // ConfigService contains the business logic for configuration groups and items.
@@ -106,6 +106,8 @@ type CreateItemInput struct {
 	ValueType   configmodel.ConfigValueType
 	DisplayName string
 	IsRequired  bool
+	RoleLevel   configmodel.ConfigRoleLevel
+	IsReadable  bool
 	GroupID     uint
 	SortOrder   int
 }
@@ -115,6 +117,8 @@ type UpdateItemInput struct {
 	ValueType   *configmodel.ConfigValueType
 	DisplayName *string
 	IsRequired  *bool
+	RoleLevel   *configmodel.ConfigRoleLevel
+	IsReadable  *bool
 	GroupID     *uint
 	SortOrder   *int
 }
@@ -168,7 +172,7 @@ func listGroups(tx *sql.Tx) ([]configmodel.ClinicConfigGroup, error) {
 func listItems(tx *sql.Tx) ([]configmodel.ClinicConfigItem, error) {
 	rows, err := tx.Query(`
 		SELECT i.id, i.name, i.value, i.value_type, i.display_name,
-		       i.is_required, i.group_id, i.sort_order
+		       i.is_required, i.role_level, i.is_readable, i.group_id, i.sort_order
 		FROM clinic_config_item AS i
 		JOIN clinic_config_group AS g ON g.id = i.group_id
 		ORDER BY g.sort_order ASC, g.id ASC, i.sort_order ASC, i.id ASC
@@ -322,6 +326,17 @@ func (s *ConfigService) CreateItem(in CreateItemInput) (configmodel.ClinicConfig
 	if err := validateSortOrder(in.SortOrder); err != nil {
 		return configmodel.ClinicConfigItem{}, err
 	}
+	roleLevel := in.RoleLevel
+	if roleLevel == "" {
+		roleLevel = configmodel.ConfigRoleLevelAdmin
+	}
+	if !roleLevel.Valid() {
+		return configmodel.ClinicConfigItem{}, fmt.Errorf(
+			"%w: unsupported role_level %q",
+			ErrConfigInvalidInput,
+			roleLevel,
+		)
+	}
 	value, err := normalizeConfigItemValue(name, in.Value, in.ValueType, in.IsRequired)
 	if err != nil {
 		return configmodel.ClinicConfigItem{}, err
@@ -335,10 +350,11 @@ func (s *ConfigService) CreateItem(in CreateItemInput) (configmodel.ClinicConfig
 		var err error
 		item, err = scanItem(tx.QueryRow(
 			`INSERT INTO clinic_config_item
-			 (name, value, value_type, display_name, is_required, group_id, sort_order)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7)
+			 (name, value, value_type, display_name, is_required, role_level, is_readable, group_id, sort_order)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 			 RETURNING `+itemColumns,
-			name, value, in.ValueType, displayName, in.IsRequired, in.GroupID, in.SortOrder,
+			name, value, in.ValueType, displayName, in.IsRequired, roleLevel, in.IsReadable,
+			in.GroupID, in.SortOrder,
 		))
 		if err != nil {
 			if database.IsUniqueViolation(err) {
@@ -387,6 +403,19 @@ func (s *ConfigService) UpdateItem(id uint, in UpdateItemInput) (configmodel.Cli
 		if in.IsRequired != nil {
 			item.IsRequired = *in.IsRequired
 		}
+		if in.RoleLevel != nil {
+			item.RoleLevel = *in.RoleLevel
+		}
+		if !item.RoleLevel.Valid() {
+			return fmt.Errorf(
+				"%w: unsupported role_level %q",
+				ErrConfigInvalidInput,
+				item.RoleLevel,
+			)
+		}
+		if in.IsReadable != nil {
+			item.IsReadable = *in.IsReadable
+		}
 		if in.GroupID != nil {
 			if *in.GroupID == 0 {
 				return fmt.Errorf("%w: group_id is required", ErrConfigInvalidInput)
@@ -411,11 +440,12 @@ func (s *ConfigService) UpdateItem(id uint, in UpdateItemInput) (configmodel.Cli
 		item, err = scanItem(tx.QueryRow(
 			`UPDATE clinic_config_item
 			 SET value = $1, value_type = $2, display_name = $3,
-			     is_required = $4, group_id = $5, sort_order = $6
-			 WHERE id = $7
+			     is_required = $4, role_level = $5, is_readable = $6,
+			     group_id = $7, sort_order = $8
+			 WHERE id = $9
 			 RETURNING `+itemColumns,
 			item.Value, item.ValueType, item.DisplayName, item.IsRequired,
-			item.GroupID, item.SortOrder, id,
+			item.RoleLevel, item.IsReadable, item.GroupID, item.SortOrder, id,
 		))
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -502,6 +532,8 @@ func scanItem(row interface{ Scan(...any) error }) (configmodel.ClinicConfigItem
 		&item.ValueType,
 		&item.DisplayName,
 		&item.IsRequired,
+		&item.RoleLevel,
+		&item.IsReadable,
 		&item.GroupID,
 		&item.SortOrder,
 	)

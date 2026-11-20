@@ -35,6 +35,8 @@ type createItemRequest struct {
 	ValueType   configmodel.ConfigValueType `json:"value_type" binding:"required,oneof=int double boolean string"`
 	DisplayName string                      `json:"display_name" binding:"required,max=128"`
 	IsRequired  bool                        `json:"is_required"`
+	RoleLevel   configmodel.ConfigRoleLevel `json:"role_level" binding:"omitempty,oneof=staff admin superadmin"`
+	IsReadable  bool                        `json:"is_readable"`
 	GroupID     uint                        `json:"group_id" binding:"required"`
 	SortOrder   int                         `json:"sort_order" binding:"min=0"`
 }
@@ -44,6 +46,8 @@ type updateItemRequest struct {
 	ValueType   *configmodel.ConfigValueType `json:"value_type" binding:"omitempty,oneof=int double boolean string"`
 	DisplayName *string                      `json:"display_name" binding:"omitempty,max=128"`
 	IsRequired  *bool                        `json:"is_required"`
+	RoleLevel   *configmodel.ConfigRoleLevel `json:"role_level" binding:"omitempty,oneof=staff admin superadmin"`
+	IsReadable  *bool                        `json:"is_readable"`
 	GroupID     *uint                        `json:"group_id" binding:"omitempty,gt=0"`
 	SortOrder   *int                         `json:"sort_order" binding:"omitempty,min=0"`
 }
@@ -150,6 +154,8 @@ func (h *ConfigHandler) CreateItem(c *gin.Context) {
 		ValueType:   req.ValueType,
 		DisplayName: req.DisplayName,
 		IsRequired:  req.IsRequired,
+		RoleLevel:   req.RoleLevel,
+		IsReadable:  req.IsReadable,
 		GroupID:     req.GroupID,
 		SortOrder:   req.SortOrder,
 	})
@@ -177,6 +183,8 @@ func (h *ConfigHandler) UpdateItem(c *gin.Context) {
 		ValueType:   req.ValueType,
 		DisplayName: req.DisplayName,
 		IsRequired:  req.IsRequired,
+		RoleLevel:   req.RoleLevel,
+		IsReadable:  req.IsReadable,
 		GroupID:     req.GroupID,
 		SortOrder:   req.SortOrder,
 	})
