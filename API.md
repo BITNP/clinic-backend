@@ -2025,7 +2025,8 @@ changes. Counters are best-effort: a Redis failure is logged and never fails the
 underlying write.
 
 Groups: `record`, `room`, `work_schedule`, `service_date`, `staff`,
-`announcement`.
+`announcement`, `config`. Successful configuration group and item writes bump
+`config`; reads and failed writes do not. The counter contains no settings values.
 
 ### `GET /api/admin/sync`
 
@@ -2040,7 +2041,8 @@ Groups: `record`, `room`, `work_schedule`, `service_date`, `staff`,
   "work_schedule": 5,
   "service_date": 9,
   "staff": 2,
-  "announcement": 7
+  "announcement": 7,
+  "config": 1
 }
 ```
 

@@ -1,6 +1,7 @@
 package handler_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"clinic-backend/internal/app"
 	authhandler "clinic-backend/internal/auth/handler"
+	"clinic-backend/internal/changes"
 	confighandler "clinic-backend/internal/config/handler"
 	configmodel "clinic-backend/internal/config/model"
 	configservice "clinic-backend/internal/config/service"
@@ -19,6 +21,10 @@ import (
 )
 
 func setupConfigHandlerRouter(t *testing.T, role authhandler.StaffRole) (*gin.Engine, *configservice.ConfigService, *gorm.DB) {
+	return setupConfigHandlerRouterWithSync(t, role, nil)
+}
+
+func setupConfigHandlerRouterWithSync(t *testing.T, role authhandler.StaffRole, syncSvc *changes.SyncService) (*gin.Engine, *configservice.ConfigService, *gorm.DB) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
@@ -43,8 +49,74 @@ func setupConfigHandlerRouter(t *testing.T, role authhandler.StaffRole) (*gin.En
 	r := app.NewRouter(app.RouterConfig{
 		ConfigH:   h,
 		AdminAuth: auth,
+		SyncSvc:   syncSvc,
 	})
 	return r, svc, db
+}
+
+type configSyncStore struct{ counters map[string]int64 }
+
+func (s *configSyncStore) Incr(_ context.Context, key string) (int64, error) {
+	s.counters[key]++
+	return s.counters[key], nil
+}
+
+func (s *configSyncStore) Get(_ context.Context, keys []string) (map[string]int64, error) {
+	values := make(map[string]int64, len(keys))
+	for _, key := range keys {
+		values[key] = s.counters[key]
+	}
+	return values, nil
+}
+
+func TestConfigRoutesBumpSyncOnlyOnSuccessfulWrites(t *testing.T) {
+	syncSvc := changes.NewSyncService(&configSyncStore{counters: make(map[string]int64)})
+	r, _, _ := setupConfigHandlerRouterWithSync(t, authhandler.RoleAdmin, syncSvc)
+	check := func(want int64) {
+		t.Helper()
+		snapshot, err := syncSvc.Snapshot(context.Background())
+		if err != nil || snapshot[changes.SyncGroupConfig] != want {
+			t.Fatalf("config counter = %d, want %d (error %v)", snapshot[changes.SyncGroupConfig], want, err)
+		}
+	}
+	check(0)
+	w := testutil.DoRequest(t, r, http.MethodPost, "/api/admin/config/groups", map[string]any{"name": "test", "display_name": "Test"})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create group: %d %s", w.Code, w.Body)
+	}
+	var group configmodel.ClinicConfigGroup
+	if err := json.Unmarshal(w.Body.Bytes(), &group); err != nil {
+		t.Fatal(err)
+	}
+	check(1)
+	w = testutil.DoRequest(t, r, http.MethodGet, "/api/admin/config", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("read: %d", w.Code)
+	}
+	w = testutil.DoRequest(t, r, http.MethodPut, "/api/admin/config/groups/999", map[string]any{"display_name": "Missing"})
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("failed update: %d", w.Code)
+	}
+	check(1)
+	w = testutil.DoRequest(t, r, http.MethodPost, "/api/admin/config/items", map[string]any{"name": "test", "display_name": "Test", "value": "1", "value_type": "int", "group_id": group.ID})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create item: %d %s", w.Code, w.Body)
+	}
+	var item configmodel.ClinicConfigItem
+	if err := json.Unmarshal(w.Body.Bytes(), &item); err != nil {
+		t.Fatal(err)
+	}
+	check(2)
+	w = testutil.DoRequest(t, r, http.MethodPut, "/api/admin/config/items/"+testutil.Itoa(item.ID), map[string]any{"value": "2"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("update item: %d %s", w.Code, w.Body)
+	}
+	check(3)
+	w = testutil.DoRequest(t, r, http.MethodDelete, "/api/admin/config/items/"+testutil.Itoa(item.ID), nil)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("delete item: %d", w.Code)
+	}
+	check(4)
 }
 
 func TestConfigHandler_CRUDAndFlatCatalog(t *testing.T) {

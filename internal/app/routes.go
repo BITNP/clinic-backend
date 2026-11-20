@@ -163,7 +163,7 @@ func (h routeHandlers) router() *gin.Engine {
 	// ── Admin: Configuration ──────────────────────────────────────────────
 	// Configuration values are restricted to admins and superadmins.
 	config := r.Group("/api/admin/config")
-	config.Use(h.adminAuth, authhandler.RequireAdmin)
+	config.Use(h.adminAuth, authhandler.RequireAdmin, changes.SyncBumpMiddleware(h.syncSvc, changes.SyncGroupConfig))
 	{
 		config.GET("", h.configH.ListCatalog)
 
