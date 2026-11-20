@@ -278,7 +278,7 @@ func (s *ConfigService) CreateItem(in CreateItemInput) (configmodel.ClinicConfig
 	if err := validateSortOrder(in.SortOrder); err != nil {
 		return configmodel.ClinicConfigItem{}, err
 	}
-	value, err := normalizeValue(in.Value, in.ValueType, in.IsRequired)
+	value, err := normalizeConfigItemValue(name, in.Value, in.ValueType, in.IsRequired)
 	if err != nil {
 		return configmodel.ClinicConfigItem{}, err
 	}
@@ -353,7 +353,7 @@ func (s *ConfigService) UpdateItem(id uint, in UpdateItemInput) (configmodel.Cli
 			item.SortOrder = *in.SortOrder
 		}
 
-		item.Value, err = normalizeValue(item.Value, item.ValueType, item.IsRequired)
+		item.Value, err = normalizeConfigItemValue(item.Name, item.Value, item.ValueType, item.IsRequired)
 		if err != nil {
 			return err
 		}
@@ -485,4 +485,16 @@ func normalizeValue(value string, valueType configmodel.ConfigValueType, require
 	default:
 		return "", fmt.Errorf("%w: unsupported value_type %q", ErrConfigValueTypeInvalid, valueType)
 	}
+}
+
+func normalizeConfigItemValue(
+	name string,
+	value string,
+	valueType configmodel.ConfigValueType,
+	required bool,
+) (string, error) {
+	if _, ok := runtimeSettingDefinitionByName[name]; ok {
+		return validateKnownRuntimeSetting(name, valueType, required, value)
+	}
+	return normalizeValue(value, valueType, required)
 }
