@@ -1,10 +1,10 @@
 # Configuration
 
 All runtime and deployment settings for `clinic-backend` in one place. Most
-runtime settings are environment variables; Docker Compose reads them from
-`.env` (template: `.env.example`). Six application settings are stored in the
-database and can be edited through the admin configuration API. Defaults below
-come from Go code, the embedded database seed catalog, or a compose file as
+deployment settings are environment variables; Docker Compose reads them from
+`.env` (template: `.env.example`). Database-managed config items receive their
+initial values from `runtime_settings.json`, which must sit beside `.env`.
+Defaults below come from Go code, that external JSON file, or a compose file as
 noted.
 
 - API behavior that depends on these settings is documented in [API.md](API.md).
@@ -13,13 +13,35 @@ noted.
 
 ## Database-managed runtime settings
 
-The backend embeds
-`internal/config/service/data/runtime_settings.json` and uses it only to create
-missing groups and items at startup. Existing rows are never overwritten, so the
-database becomes authoritative after first initialization. These settings are
-not read from environment variables. Changes made through `/api/admin/config`
-apply after a successful save. Operations already in progress may finish with
-their previous settings. Browser tabs refresh their sync interval periodically.
+The backend embeds `internal/config/service/data/template.json`, which defines
+the reserved groups and item metadata but contains no values. At every startup
+the backend reads `runtime_settings.json` from its working directory, beside
+`.env`, validates that every reserved item is present, and uses those values
+only when creating missing database rows. Existing rows are never overwritten,
+so the database becomes authoritative after initialization.
+
+`runtime_settings.json` is an external deployment file and is gitignored. Start
+from [`runtime_settings.example.json`](runtime_settings.example.json), keep the
+real file at the same filesystem level as `.env`, and mount it read-only at
+`/app/runtime_settings.json` in containers. Missing files, extra or missing
+items, and invalid values stop startup with an error.
+
+```json
+{
+  "SYNC_POLL_INTERVAL": "10s",
+  "STAFF_VERSION": "0",
+  "TAGGER_LLM_API_KEY": "",
+  "RECORD_ACTION_WINDOW": "5m",
+  "RECORD_PHOTO_MAX_COUNT": "9",
+  "SERVICE_DATE_REMINDER_ENABLED": "false",
+  "SERVICE_DATE_REMINDER_LEAD_TIMES": "5h,3h"
+}
+```
+
+These settings are not read from environment variables. Changes made through
+`/api/admin/config` apply after a successful save. Operations already in
+progress may finish with their previous settings. Browser tabs refresh their
+sync interval periodically.
 
 | Config item | Default | Description |
 | --- | --- | --- |
@@ -29,6 +51,7 @@ their previous settings. Browser tabs refresh their sync interval periodically.
 | `RECORD_PHOTO_MAX_COUNT` | `9` | Positive maximum number of ordered photos attached to one record. |
 | `SERVICE_DATE_REMINDER_ENABLED` | `false` | Strict boolean controlling the pending-ticket reminder worker. |
 | `SERVICE_DATE_REMINDER_LEAD_TIMES` | `5h,3h` | Comma-separated unique positive Go durations using whole seconds, relative to service start. |
+| `TAGGER_LLM_API_KEY` | empty | Optional write-only key for the in-process tagger. Its value is never returned by the API. |
 
 These names are reserved: their `value_type`, required flag, and value validation
 are enforced by the config service. They are seeded into the `system`, `record`,
@@ -87,11 +110,9 @@ is reused. Tagging is disabled while the database-managed
 `TAGGER_LLM_API_KEY` config item is empty.
 
 The API key is a write-only config item, so the admin API never returns its
-stored value. It can be created or replaced through the system settings page
-and takes effect after the backend restarts. On the first startup after this
-setting is introduced, a legacy `TAGGER_LLM_API_KEY` environment value seeds
-the database item if it does not exist yet. After that, the database value is
-authoritative.
+stored value. Its initial value comes from `runtime_settings.json`; after the
+database item exists, it can be replaced through the system settings page and
+takes effect after the backend restarts.
 
 At startup the backend sends one minimal chat completion to the configured
 provider and logs whether the connection succeeded. The check has a 10-second
@@ -100,7 +121,6 @@ until the provider is reachable.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `TAGGER_LLM_API_KEY` | empty | Legacy bootstrap value only. Seeds the write-only database config item when first created; later changes must be made through the admin API. |
 | `TAGGER_LLM_BASE_URL` | required when enabled | OpenAI-compatible endpoint. |
 | `TAGGER_LLM_MODEL` | required when enabled | Model ID. |
 | `TAGGER_AGENT_POOL_SIZE` | `4` | Long-lived chat models and sessions per tag set. Minimum `1`. |
@@ -310,12 +330,12 @@ Compose, see [Local development](#local-development).
 ### Production stack (`docker-compose.prod.yml`)
 
 `docker-compose.prod.yml` is a standalone deploy config: only this file,
-`.env`, `deploy/rustfs/` and the packaged image tarball are needed on the
-server. It runs the backend, the admin frontend, the health monitor, a bundled
-Redis service, and RustFS object storage, and connects to the Postgres already
-running on the server via `host.containers.internal` (no bundled database). The
-message gateway is deployed separately from `../message-gateway`; NapCat is
-external to that stack, with an optional sample in
+`.env`, `runtime_settings.json`, `deploy/rustfs/` and the packaged image tarball
+are needed on the server. It runs the backend, the admin frontend, the health
+monitor, a bundled Redis service, and RustFS object storage, and connects to the
+Postgres already running on the server via `host.containers.internal` (no
+bundled database). The message gateway is deployed separately from
+`../message-gateway`; NapCat is external to that stack, with an optional sample in
 `../message-gateway/docker-compose.napcat.yml`. The backend and health monitor
 join the `message-gateway` external network. It refuses to start if
 `CLINIC_API_KEY`, the required S3 settings, the RustFS provisioning
@@ -385,8 +405,9 @@ same-origin from the browser's perspective.
 
 ## Local development
 
-`scripts/dev.sh` automates the local stack. It loads `.env` (values there
-override existing environment variables) and then starts:
+`scripts/dev.sh` automates the local stack. It creates `runtime_settings.json`
+from the example when missing, loads `.env` (values there override existing
+environment variables), and then starts:
 
 1. the fake CAS server on `:9999`;
 2. Redis on `:6379` (container, falling back to `redis-server`);

@@ -71,7 +71,7 @@ func Run() {
 
 	db, rawDB := openDatabase()
 	configSvc := configservice.NewConfigService(rawDB)
-	if err := configSvc.EnsureRuntimeSettingsWithInitialTaggerAPIKey(os.Getenv("TAGGER_LLM_API_KEY")); err != nil {
+	if err := configSvc.EnsureRuntimeSettings(); err != nil {
 		closeDatabase(db)
 		log.Fatalf("seed runtime configuration: %v", err)
 	}

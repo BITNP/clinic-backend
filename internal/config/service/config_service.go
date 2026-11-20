@@ -37,13 +37,23 @@ const (
 // ConfigService contains the business logic for configuration groups and items.
 type ConfigService struct {
 	db              *database.DB
+	runtimeFile     string
 	mu              sync.Mutex
 	runtime         atomic.Pointer[RuntimeSettings]
 	validateRuntime func(RuntimeSettings) error
 }
 
 func NewConfigService(db *database.DB) *ConfigService {
-	return &ConfigService{db: db}
+	return NewConfigServiceWithRuntimeSettingsFile(db, DefaultRuntimeSettingsFile)
+}
+
+// NewConfigServiceWithRuntimeSettingsFile builds a config service that loads
+// runtime seed values from path.
+func NewConfigServiceWithRuntimeSettingsFile(db *database.DB, path string) *ConfigService {
+	if strings.TrimSpace(path) == "" {
+		path = DefaultRuntimeSettingsFile
+	}
+	return &ConfigService{db: db, runtimeFile: path}
 }
 
 // InitializeRuntime loads the active settings and installs application validation.

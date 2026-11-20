@@ -36,7 +36,8 @@ func setupConfigHandlerRouterWithSync(t *testing.T, role authhandler.StaffRole, 
 		t.Fatalf("migrate config models: %v", err)
 	}
 
-	svc := configservice.NewConfigService(testutil.RawDB(t, db))
+	runtimeFile := testutil.WriteRuntimeSettingsFile(t, testutil.RuntimeSettingsValues())
+	svc := configservice.NewConfigServiceWithRuntimeSettingsFile(testutil.RawDB(t, db), runtimeFile)
 	h := confighandler.NewConfigHandler(svc)
 	auth := func(c *gin.Context) {
 		if role == "" {
@@ -298,13 +299,17 @@ func TestConfigHandler_WriteOnlyValueIsOmitted(t *testing.T) {
 
 func TestConfigHandler_TaggerAPIKeyStaysWriteOnly(t *testing.T) {
 	r, svc, db := setupConfigHandlerRouter(t, authhandler.RoleAdmin)
-	if err := svc.EnsureRuntimeSettingsWithInitialTaggerAPIKey("legacy-provider-key"); err != nil {
+	if err := svc.EnsureRuntimeSettings(); err != nil {
 		t.Fatalf("seed runtime settings: %v", err)
 	}
 
 	var item configmodel.ClinicConfigItem
 	if err := db.Where("name = ?", "TAGGER_LLM_API_KEY").First(&item).Error; err != nil {
 		t.Fatalf("get tagger API key item: %v", err)
+	}
+	value := "legacy-provider-key"
+	if _, err := svc.UpdateItem(item.ID, configservice.UpdateItemInput{Value: &value}); err != nil {
+		t.Fatalf("seed tagger API key: %v", err)
 	}
 	path := "/api/admin/config/items/" + testutil.Itoa(item.ID)
 

@@ -1,5 +1,6 @@
 .idea
 .env
+runtime_settings.json
 cookies.txt
 clinic-backend
 bench_seed

@@ -863,11 +863,11 @@ The backend seeds and reserves `SYNC_POLL_INTERVAL`, `STAFF_VERSION`,
 `SERVICE_DATE_REMINDER_ENABLED`, `SERVICE_DATE_REMINDER_LEAD_TIMES`, and
 `TAGGER_LLM_API_KEY`. Their types, required flags, and write-only flags are fixed
 and their values receive key-specific validation. Initial values come from the
-embedded runtime settings seed catalog; environment variables with these names
-are ignored after initial seeding. `TAGGER_LLM_API_KEY` is optional and
-write-only: its value is never returned by the API. Changes to it take effect
-after the backend restarts. Other successful saves apply to subsequent
-operations without restarting the backend.
+external `runtime_settings.json` file beside `.env`; environment variables with
+these names are ignored. `TAGGER_LLM_API_KEY` is optional and write-only: its
+value is never returned by the API. Changes to it take effect after the backend
+restarts. Other successful saves apply to subsequent operations without
+restarting the backend.
 
 ### `GET /api/admin/config`
 

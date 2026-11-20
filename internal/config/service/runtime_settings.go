@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 )
 
 const (
+	DefaultRuntimeSettingsFile             = "runtime_settings.json"
 	runtimeSettingSyncPollInterval         = "SYNC_POLL_INTERVAL"
 	runtimeSettingStaffVersion             = "STAFF_VERSION"
 	runtimeSettingRecordActionWindow       = "RECORD_ACTION_WINDOW"
@@ -27,8 +29,8 @@ const (
 	runtimeSettingTaggerLLMAPIKey          = "TAGGER_LLM_API_KEY"
 )
 
-//go:embed data/runtime_settings.json
-var runtimeSettingsJSON []byte
+//go:embed data/template.json
+var runtimeSettingsTemplateJSON []byte
 
 type runtimeGroupDefinition struct {
 	Name        string `json:"name"`
@@ -37,17 +39,16 @@ type runtimeGroupDefinition struct {
 }
 
 type runtimeSettingDefinition struct {
-	Name         string                      `json:"name"`
-	DisplayName  string                      `json:"display_name"`
-	ValueType    configmodel.ConfigValueType `json:"value_type"`
-	GroupName    string                      `json:"group"`
-	SortOrder    int                         `json:"sort_order"`
-	IsRequired   bool                        `json:"is_required"`
-	WriteOnly    bool                        `json:"writeonly"`
-	DefaultValue string                      `json:"default_value"`
+	Name        string                      `json:"name"`
+	DisplayName string                      `json:"display_name"`
+	ValueType   configmodel.ConfigValueType `json:"value_type"`
+	GroupName   string                      `json:"group"`
+	SortOrder   int                         `json:"sort_order"`
+	IsRequired  bool                        `json:"is_required"`
+	WriteOnly   bool                        `json:"writeonly"`
 }
 
-type runtimeSettingsSeed struct {
+type runtimeSettingsTemplate struct {
 	Groups []runtimeGroupDefinition   `json:"groups"`
 	Items  []runtimeSettingDefinition `json:"items"`
 }
@@ -63,68 +64,68 @@ var runtimeSettingExpectedTypes = map[string]configmodel.ConfigValueType{
 }
 
 var (
-	runtimeSeedOnce sync.Once
-	runtimeSeed     runtimeSettingsSeed
-	runtimeSeedErr  error
+	runtimeTemplateOnce sync.Once
+	runtimeTemplate     runtimeSettingsTemplate
+	runtimeTemplateErr  error
 )
 
-func loadRuntimeSeed() (runtimeSettingsSeed, error) {
-	runtimeSeedOnce.Do(func() {
-		if err := json.Unmarshal(runtimeSettingsJSON, &runtimeSeed); err != nil {
-			runtimeSeedErr = fmt.Errorf("decode runtime settings seed: %w", err)
+func loadRuntimeTemplate() (runtimeSettingsTemplate, error) {
+	runtimeTemplateOnce.Do(func() {
+		if err := json.Unmarshal(runtimeSettingsTemplateJSON, &runtimeTemplate); err != nil {
+			runtimeTemplateErr = fmt.Errorf("decode runtime settings template: %w", err)
 			return
 		}
-		if err := validateRuntimeSeed(runtimeSeed); err != nil {
-			runtimeSeedErr = err
+		if err := validateRuntimeTemplate(runtimeTemplate); err != nil {
+			runtimeTemplateErr = err
 		}
 	})
-	return runtimeSeed, runtimeSeedErr
+	return runtimeTemplate, runtimeTemplateErr
 }
 
-func validateRuntimeSeed(seed runtimeSettingsSeed) error {
-	if len(seed.Groups) == 0 {
-		return errors.New("runtime settings seed has no groups")
+func validateRuntimeTemplate(template runtimeSettingsTemplate) error {
+	if len(template.Groups) == 0 {
+		return errors.New("runtime settings template has no groups")
 	}
 
-	groupNames := make(map[string]struct{}, len(seed.Groups))
-	for _, group := range seed.Groups {
+	groupNames := make(map[string]struct{}, len(template.Groups))
+	for _, group := range template.Groups {
 		if strings.TrimSpace(group.Name) == "" || strings.TrimSpace(group.DisplayName) == "" {
-			return errors.New("runtime settings seed contains an incomplete group")
+			return errors.New("runtime settings template contains an incomplete group")
 		}
 		if group.SortOrder < 0 {
-			return fmt.Errorf("runtime settings seed group %s has a negative sort_order", group.Name)
+			return fmt.Errorf("runtime settings template group %s has a negative sort_order", group.Name)
 		}
 		if _, exists := groupNames[group.Name]; exists {
-			return fmt.Errorf("runtime settings seed contains duplicate group %s", group.Name)
+			return fmt.Errorf("runtime settings template contains duplicate group %s", group.Name)
 		}
 		groupNames[group.Name] = struct{}{}
 	}
 
-	if len(seed.Items) != len(runtimeSettingExpectedTypes) {
+	if len(template.Items) != len(runtimeSettingExpectedTypes) {
 		return fmt.Errorf(
-			"runtime settings seed contains %d items; want %d",
-			len(seed.Items),
+			"runtime settings template contains %d items; want %d",
+			len(template.Items),
 			len(runtimeSettingExpectedTypes),
 		)
 	}
 
-	itemNames := make(map[string]struct{}, len(seed.Items))
-	for _, item := range seed.Items {
+	itemNames := make(map[string]struct{}, len(template.Items))
+	for _, item := range template.Items {
 		expectedType, known := runtimeSettingExpectedTypes[item.Name]
 		if !known {
-			return fmt.Errorf("runtime settings seed contains unknown item %s", item.Name)
+			return fmt.Errorf("runtime settings template contains unknown item %s", item.Name)
 		}
 		if _, exists := itemNames[item.Name]; exists {
-			return fmt.Errorf("runtime settings seed contains duplicate item %s", item.Name)
+			return fmt.Errorf("runtime settings template contains duplicate item %s", item.Name)
 		}
 		itemNames[item.Name] = struct{}{}
 
 		if strings.TrimSpace(item.DisplayName) == "" {
-			return fmt.Errorf("runtime settings seed item %s has no display_name", item.Name)
+			return fmt.Errorf("runtime settings template item %s has no display_name", item.Name)
 		}
 		if item.ValueType != expectedType {
 			return fmt.Errorf(
-				"runtime settings seed item %s has value_type %s; want %s",
+				"runtime settings template item %s has value_type %s; want %s",
 				item.Name,
 				item.ValueType,
 				expectedType,
@@ -132,7 +133,7 @@ func validateRuntimeSeed(seed runtimeSettingsSeed) error {
 		}
 		if item.IsRequired == runtimeSettingIsOptional(item.Name) {
 			return fmt.Errorf(
-				"runtime settings seed item %s has is_required=%t; want %t",
+				"runtime settings template item %s has is_required=%t; want %t",
 				item.Name,
 				item.IsRequired,
 				!runtimeSettingIsOptional(item.Name),
@@ -140,26 +141,23 @@ func validateRuntimeSeed(seed runtimeSettingsSeed) error {
 		}
 		if item.WriteOnly != runtimeSettingIsWriteOnly(item.Name) {
 			return fmt.Errorf(
-				"runtime settings seed item %s has writeonly=%t; want %t",
+				"runtime settings template item %s has writeonly=%t; want %t",
 				item.Name,
 				item.WriteOnly,
 				runtimeSettingIsWriteOnly(item.Name),
 			)
 		}
 		if item.SortOrder < 0 {
-			return fmt.Errorf("runtime settings seed item %s has a negative sort_order", item.Name)
+			return fmt.Errorf("runtime settings template item %s has a negative sort_order", item.Name)
 		}
 		if _, exists := groupNames[item.GroupName]; !exists {
-			return fmt.Errorf("runtime settings seed item %s references unknown group %s", item.Name, item.GroupName)
-		}
-		if _, err := validateRuntimeSettingValue(item.Name, item.DefaultValue); err != nil {
-			return fmt.Errorf("runtime settings seed item %s has an invalid default: %w", item.Name, err)
+			return fmt.Errorf("runtime settings template item %s references unknown group %s", item.Name, item.GroupName)
 		}
 	}
 
 	for name := range runtimeSettingExpectedTypes {
 		if _, exists := itemNames[name]; !exists {
-			return fmt.Errorf("runtime settings seed is missing item %s", name)
+			return fmt.Errorf("runtime settings template is missing item %s", name)
 		}
 	}
 	return nil
@@ -176,27 +174,22 @@ type RuntimeSettings struct {
 	TaggerLLMAPIKey              string
 }
 
-// EnsureRuntimeSettings inserts missing groups and settings from the embedded
-// seed catalog. Existing rows are never overwritten.
+// EnsureRuntimeSettings inserts missing groups and settings using the embedded
+// template and external runtime_settings.json values. Existing rows are never
+// overwritten.
 func (s *ConfigService) EnsureRuntimeSettings() error {
-	return s.ensureRuntimeSettings("")
-}
-
-// EnsureRuntimeSettingsWithInitialTaggerAPIKey seeds a missing tagger API key
-// from the legacy environment setting. Existing database values are preserved.
-func (s *ConfigService) EnsureRuntimeSettingsWithInitialTaggerAPIKey(initialAPIKey string) error {
-	return s.ensureRuntimeSettings(strings.TrimSpace(initialAPIKey))
-}
-
-func (s *ConfigService) ensureRuntimeSettings(initialTaggerAPIKey string) error {
-	seed, err := loadRuntimeSeed()
+	template, err := loadRuntimeTemplate()
+	if err != nil {
+		return err
+	}
+	values, err := loadRuntimeSettingsValues(s.runtimeFile, template)
 	if err != nil {
 		return err
 	}
 
 	return database.WithTx(context.Background(), s.db.DB, func(tx *sql.Tx) error {
-		groupIDs := make(map[string]uint, len(seed.Groups))
-		for _, group := range seed.Groups {
+		groupIDs := make(map[string]uint, len(template.Groups))
+		for _, group := range template.Groups {
 			if _, err := tx.Exec(
 				`INSERT INTO clinic_config_group (name, display_name, sort_order)
 				 VALUES ($1, $2, $3)
@@ -213,7 +206,7 @@ func (s *ConfigService) ensureRuntimeSettings(initialTaggerAPIKey string) error 
 			groupIDs[group.Name] = groupID
 		}
 
-		for _, setting := range seed.Items {
+		for _, setting := range template.Items {
 			exists, err := configItemExists(tx, setting.Name)
 			if err != nil {
 				return err
@@ -222,22 +215,13 @@ func (s *ConfigService) ensureRuntimeSettings(initialTaggerAPIKey string) error 
 				continue
 			}
 
-			defaultValue := setting.DefaultValue
-			if setting.Name == runtimeSettingTaggerLLMAPIKey && initialTaggerAPIKey != "" {
-				defaultValue = initialTaggerAPIKey
-			}
-			value, err := validateRuntimeSettingValue(setting.Name, defaultValue)
-			if err != nil {
-				return fmt.Errorf("initialize %s: %w", setting.Name, err)
-			}
-
 			groupID := groupIDs[setting.GroupName]
 			if _, err := tx.Exec(
 				`INSERT INTO clinic_config_item
 				 (name, value, value_type, display_name, is_required, writeonly, group_id, sort_order)
 				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 				 ON CONFLICT (name) DO NOTHING`,
-				setting.Name, value, setting.ValueType, setting.DisplayName,
+				setting.Name, values[setting.Name], setting.ValueType, setting.DisplayName,
 				setting.IsRequired, setting.WriteOnly, groupID, setting.SortOrder,
 			); err != nil {
 				return fmt.Errorf("seed config item %s: %w", setting.Name, err)
@@ -245,6 +229,41 @@ func (s *ConfigService) ensureRuntimeSettings(initialTaggerAPIKey string) error 
 		}
 		return nil
 	})
+}
+
+func loadRuntimeSettingsValues(path string, template runtimeSettingsTemplate) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read runtime settings file %s: %w", path, err)
+	}
+
+	var values map[string]string
+	if err := json.Unmarshal(data, &values); err != nil {
+		return nil, fmt.Errorf("decode runtime settings file %s: %w", path, err)
+	}
+	if values == nil {
+		return nil, fmt.Errorf("runtime settings file %s must contain a JSON object", path)
+	}
+
+	expected := make(map[string]struct{}, len(template.Items))
+	for _, item := range template.Items {
+		expected[item.Name] = struct{}{}
+		raw, ok := values[item.Name]
+		if !ok {
+			return nil, fmt.Errorf("runtime settings file %s is missing item %s", path, item.Name)
+		}
+		normalized, err := validateRuntimeSettingValue(item.Name, raw)
+		if err != nil {
+			return nil, fmt.Errorf("runtime settings file %s item %s: %w", path, item.Name, err)
+		}
+		values[item.Name] = normalized
+	}
+	for name := range values {
+		if _, ok := expected[name]; !ok {
+			return nil, fmt.Errorf("runtime settings file %s contains unknown item %s", path, name)
+		}
+	}
+	return values, nil
 }
 
 func configItemExists(tx *sql.Tx, name string) (bool, error) {
@@ -265,13 +284,13 @@ func (s *ConfigService) LoadRuntimeSettings() (RuntimeSettings, error) {
 }
 
 func loadRuntimeSettings(q interface{ QueryRow(string, ...any) *sql.Row }) (RuntimeSettings, error) {
-	seed, err := loadRuntimeSeed()
+	template, err := loadRuntimeTemplate()
 	if err != nil {
 		return RuntimeSettings{}, err
 	}
 
 	settings := RuntimeSettings{}
-	for _, setting := range seed.Items {
+	for _, setting := range template.Items {
 		var value string
 		var valueType configmodel.ConfigValueType
 		var required bool
@@ -322,14 +341,14 @@ func validateKnownRuntimeSetting(
 	writeOnly bool,
 	value string,
 ) (string, error) {
-	seed, err := loadRuntimeSeed()
+	template, err := loadRuntimeTemplate()
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", ErrConfigInvalidInput, err)
 	}
 
 	var setting runtimeSettingDefinition
 	found := false
-	for _, candidate := range seed.Items {
+	for _, candidate := range template.Items {
 		if candidate.Name == name {
 			setting = candidate
 			found = true

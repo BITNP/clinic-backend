@@ -22,7 +22,8 @@ func setupConfigServiceDB(t *testing.T) (*configservice.ConfigService, *gorm.DB)
 	if err := db.AutoMigrate(&configmodel.ClinicConfigGroup{}, &configmodel.ClinicConfigItem{}); err != nil {
 		t.Fatalf("migrate config models: %v", err)
 	}
-	return configservice.NewConfigService(testutil.RawDB(t, db)), db
+	runtimeFile := testutil.WriteRuntimeSettingsFile(t, testutil.RuntimeSettingsValues())
+	return configservice.NewConfigServiceWithRuntimeSettingsFile(testutil.RawDB(t, db), runtimeFile), db
 }
 
 func TestConfigService_ListCatalogReturnsFlatOrderedData(t *testing.T) {

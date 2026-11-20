@@ -3,6 +3,7 @@ package service_test
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	configmodel "clinic-backend/internal/config/model"
 	configservice "clinic-backend/internal/config/service"
 	schedulingmodel "clinic-backend/internal/scheduling/model"
+	"clinic-backend/internal/testutil"
 )
 
 func TestConcurrentRuntimeUpdatesPublishCommittedState(t *testing.T) {
@@ -198,7 +200,7 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	}
 }
 
-func TestConfigService_EnsureRuntimeSettingsUsesJSONAndIgnoresEnvironment(t *testing.T) {
+func TestConfigService_EnsureRuntimeSettingsUsesExternalFileAndIgnoresEnvironment(t *testing.T) {
 	svc, _ := setupConfigServiceDB(t)
 
 	t.Setenv("SYNC_POLL_INTERVAL", "20s")
@@ -232,9 +234,13 @@ func TestConfigService_EnsureRuntimeSettingsUsesJSONAndIgnoresEnvironment(t *tes
 	}
 }
 
-func TestConfigService_EnsuresTaggerAPIKeyFromLegacyEnvironmentOnce(t *testing.T) {
-	svc, db := setupConfigServiceDB(t)
-	if err := svc.EnsureRuntimeSettingsWithInitialTaggerAPIKey("legacy-key"); err != nil {
+func TestConfigService_SeedsTaggerAPIKeyFromExternalFile(t *testing.T) {
+	_, db := setupConfigServiceDB(t)
+	values := testutil.RuntimeSettingsValues()
+	values["TAGGER_LLM_API_KEY"] = "file-key"
+	runtimeFile := testutil.WriteRuntimeSettingsFile(t, values)
+	svc := configservice.NewConfigServiceWithRuntimeSettingsFile(testutil.RawDB(t, db), runtimeFile)
+	if err := svc.EnsureRuntimeSettings(); err != nil {
 		t.Fatalf("ensure runtime settings: %v", err)
 	}
 
@@ -242,7 +248,7 @@ func TestConfigService_EnsuresTaggerAPIKeyFromLegacyEnvironmentOnce(t *testing.T
 	if err := db.Where("name = ?", "TAGGER_LLM_API_KEY").First(&item).Error; err != nil {
 		t.Fatalf("get tagger API key item: %v", err)
 	}
-	if item.Value != "legacy-key" || !item.WriteOnly || item.IsRequired {
+	if item.Value != "file-key" || !item.WriteOnly || item.IsRequired {
 		t.Errorf("seeded tagger API key item = %+v", item)
 	}
 
@@ -250,18 +256,71 @@ func TestConfigService_EnsuresTaggerAPIKeyFromLegacyEnvironmentOnce(t *testing.T
 	if err != nil {
 		t.Fatalf("load runtime settings: %v", err)
 	}
-	if settings.TaggerLLMAPIKey != "legacy-key" {
-		t.Errorf("TaggerLLMAPIKey = %q, want legacy-key", settings.TaggerLLMAPIKey)
+	if settings.TaggerLLMAPIKey != "file-key" {
+		t.Errorf("TaggerLLMAPIKey = %q, want file-key", settings.TaggerLLMAPIKey)
 	}
 
-	if err := svc.EnsureRuntimeSettingsWithInitialTaggerAPIKey("replacement-key"); err != nil {
+	values["TAGGER_LLM_API_KEY"] = "replacement-key"
+	replacementFile := testutil.WriteRuntimeSettingsFile(t, values)
+	replacementSvc := configservice.NewConfigServiceWithRuntimeSettingsFile(testutil.RawDB(t, db), replacementFile)
+	if err := replacementSvc.EnsureRuntimeSettings(); err != nil {
 		t.Fatalf("ensure runtime settings second time: %v", err)
 	}
 	if err := db.Where("name = ?", "TAGGER_LLM_API_KEY").First(&item).Error; err != nil {
 		t.Fatalf("get tagger API key item after reseed: %v", err)
 	}
-	if item.Value != "legacy-key" {
-		t.Errorf("tagger API key = %q, want existing legacy-key", item.Value)
+	if item.Value != "file-key" {
+		t.Errorf("tagger API key = %q, want existing file-key", item.Value)
+	}
+}
+
+func TestConfigService_RequiresCompleteExternalRuntimeSettingsFile(t *testing.T) {
+	_, db := setupConfigServiceDB(t)
+	rawDB := testutil.RawDB(t, db)
+
+	tests := []struct {
+		name string
+		path func(t *testing.T) string
+	}{
+		{
+			name: "missing file",
+			path: func(t *testing.T) string {
+				return filepath.Join(t.TempDir(), "missing.json")
+			},
+		},
+		{
+			name: "missing item",
+			path: func(t *testing.T) string {
+				values := testutil.RuntimeSettingsValues()
+				delete(values, "STAFF_VERSION")
+				return testutil.WriteRuntimeSettingsFile(t, values)
+			},
+		},
+		{
+			name: "unknown item",
+			path: func(t *testing.T) string {
+				values := testutil.RuntimeSettingsValues()
+				values["UNKNOWN_SETTING"] = "value"
+				return testutil.WriteRuntimeSettingsFile(t, values)
+			},
+		},
+		{
+			name: "invalid value",
+			path: func(t *testing.T) string {
+				values := testutil.RuntimeSettingsValues()
+				values["RECORD_ACTION_WINDOW"] = "later"
+				return testutil.WriteRuntimeSettingsFile(t, values)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := configservice.NewConfigServiceWithRuntimeSettingsFile(rawDB, tt.path(t))
+			if err := svc.EnsureRuntimeSettings(); err == nil {
+				t.Fatal("expected external runtime settings validation error")
+			}
+		})
 	}
 }
 

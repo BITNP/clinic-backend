@@ -109,7 +109,6 @@ services:
       SESSION_TTL: ${SESSION_TTL:-336h}
       KEYCLOAK_REALM_URL: ${KEYCLOAK_REALM_URL:-}
       KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-}
-      TAGGER_LLM_API_KEY: ${TAGGER_LLM_API_KEY:-}
       TAGGER_LLM_BASE_URL: ${TAGGER_LLM_BASE_URL:-}
       TAGGER_LLM_MODEL: ${TAGGER_LLM_MODEL:-}
       TAGGER_AGENT_POOL_SIZE: ${TAGGER_AGENT_POOL_SIZE:-4}
@@ -128,6 +127,8 @@ services:
       S3_GET_URL_TTL: ${S3_GET_URL_TTL:-10m}
     ports:
       - "8080:8080"
+    volumes:
+      - ./runtime_settings.json:/app/runtime_settings.json:ro
     networks:
       - default
       - message-gateway
