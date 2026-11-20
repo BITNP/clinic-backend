@@ -83,6 +83,11 @@ Outbound messaging is owned by the separate `message-gateway` project. Do not ad
 
 ## Backend/API Style
 
+Runtime settings managed by `internal/config` must be read through the injected
+getter at the start of each operation or worker iteration. Use that snapshot for
+the operation; do not retain runtime values in long-lived services. Startup-only
+infrastructure configuration may still be passed directly to constructors.
+
 * HTTP handlers should be thin:
 
     * parse request

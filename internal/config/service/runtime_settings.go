@@ -230,6 +230,10 @@ func configItemExists(tx *sql.Tx, name string) (bool, error) {
 
 // LoadRuntimeSettings reads and validates the database-managed runtime settings.
 func (s *ConfigService) LoadRuntimeSettings() (RuntimeSettings, error) {
+	return loadRuntimeSettings(s.db)
+}
+
+func loadRuntimeSettings(q interface{ QueryRow(string, ...any) *sql.Row }) (RuntimeSettings, error) {
 	seed, err := loadRuntimeSeed()
 	if err != nil {
 		return RuntimeSettings{}, err
@@ -240,7 +244,7 @@ func (s *ConfigService) LoadRuntimeSettings() (RuntimeSettings, error) {
 		var value string
 		var valueType configmodel.ConfigValueType
 		var required bool
-		err = s.db.QueryRow(
+		err = q.QueryRow(
 			"SELECT value, value_type, is_required FROM clinic_config_item WHERE name = $1",
 			setting.Name,
 		).Scan(&value, &valueType, &required)

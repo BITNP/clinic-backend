@@ -2,12 +2,133 @@ package service_test
 
 import (
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
 	configmodel "clinic-backend/internal/config/model"
 	configservice "clinic-backend/internal/config/service"
+	schedulingmodel "clinic-backend/internal/scheduling/model"
 )
+
+func TestConcurrentRuntimeUpdatesPublishCommittedState(t *testing.T) {
+	svc, db := setupConfigServiceDB(t)
+	if err := svc.EnsureRuntimeSettings(); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.InitializeRuntime(nil); err != nil {
+		t.Fatal(err)
+	}
+	var item configmodel.ClinicConfigItem
+	if err := db.Where("name = ?", "RECORD_PHOTO_MAX_COUNT").First(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 20)
+	for i := 1; i <= 20; i++ {
+		wg.Add(1)
+		go func(value string) {
+			defer wg.Done()
+			_, err := svc.UpdateItem(item.ID, configservice.UpdateItemInput{Value: &value})
+			if err != nil {
+				errs <- err
+			}
+			_ = svc.Current()
+		}(fmt.Sprint(i))
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+	stored, err := svc.LoadRuntimeSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.RecordPhotoMaxCount != svc.Current().RecordPhotoMaxCount {
+		t.Fatalf("stored=%d active=%d", stored.RecordPhotoMaxCount, svc.Current().RecordPhotoMaxCount)
+	}
+}
+
+func TestRuntimeSettingsPublishOnlyAfterValidSave(t *testing.T) {
+	svc, db := setupConfigServiceDB(t)
+	if err := svc.EnsureRuntimeSettings(); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.InitializeRuntime(func(s configservice.RuntimeSettings) error {
+		if s.ServiceDateReminderEnabled {
+			return fmt.Errorf("gateway unavailable")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var item configmodel.ClinicConfigItem
+	if err := db.Where("name = ?", "SERVICE_DATE_REMINDER_ENABLED").First(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	value := "true"
+	if _, err := svc.UpdateItem(item.ID, configservice.UpdateItemInput{Value: &value}); !errors.Is(err, configservice.ErrConfigValueInvalid) {
+		t.Fatalf("expected rejected save, got %v", err)
+	}
+	stored, err := svc.GetItem(item.ID)
+	if err != nil || stored.Value != "false" || svc.Current().ServiceDateReminderEnabled {
+		t.Fatalf("failed save changed state: item=%+v error=%v", stored, err)
+	}
+	if err := svc.DeleteItem(item.ID); !errors.Is(err, configservice.ErrConfigInvalidInput) {
+		t.Fatalf("expected protected setting, got %v", err)
+	}
+	item = configmodel.ClinicConfigItem{}
+	if err := db.Where("name = ?", "RECORD_PHOTO_MAX_COUNT").First(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	value = "4"
+	if _, err := svc.UpdateItem(item.ID, configservice.UpdateItemInput{Value: &value}); err != nil {
+		t.Fatal(err)
+	}
+	if got := svc.Current().RecordPhotoMaxCount; got != 4 {
+		t.Fatalf("active photo limit = %d", got)
+	}
+	copy := svc.Current()
+	copy.ServiceDateReminderLeadTimes[0] = 0
+	if svc.Current().ServiceDateReminderLeadTimes[0] == 0 {
+		t.Fatal("getter exposed mutable snapshot")
+	}
+}
+
+func TestRemovingLeadCancelsPendingJobsInSave(t *testing.T) {
+	svc, db := setupConfigServiceDB(t)
+	if err := db.AutoMigrate(&schedulingmodel.ServiceDateReminder{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.EnsureRuntimeSettings(); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.InitializeRuntime(nil); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	job := schedulingmodel.ServiceDateReminder{ServiceDateID: 1, ServiceStartAt: now.Add(time.Hour), LeadTimeSeconds: int64((5 * time.Hour) / time.Second), StaffID: 1, Status: "pending", NextAttemptAt: now}
+	if err := db.Create(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	var item configmodel.ClinicConfigItem
+	if err := db.Where("name = ?", "SERVICE_DATE_REMINDER_LEAD_TIMES").First(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	value := "3h"
+	if _, err := svc.UpdateItem(item.ID, configservice.UpdateItemInput{Value: &value}); err != nil {
+		t.Fatal(err)
+	}
+	value = "5h,3h"
+	if _, err := svc.UpdateItem(item.ID, configservice.UpdateItemInput{Value: &value}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&job, job.ID).Error; err != nil || job.Status != "cancelled" {
+		t.Fatalf("job after removing and restoring lead: %+v, %v", job, err)
+	}
+}
 
 func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	svc, db := setupConfigServiceDB(t)

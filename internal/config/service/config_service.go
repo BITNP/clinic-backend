@@ -8,6 +8,9 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 	"unicode/utf8"
 
 	configmodel "clinic-backend/internal/config/model"
@@ -32,11 +35,52 @@ const (
 
 // ConfigService contains the business logic for configuration groups and items.
 type ConfigService struct {
-	db *database.DB
+	db              *database.DB
+	mu              sync.Mutex
+	runtime         atomic.Pointer[RuntimeSettings]
+	validateRuntime func(RuntimeSettings) error
 }
 
 func NewConfigService(db *database.DB) *ConfigService {
 	return &ConfigService{db: db}
+}
+
+// InitializeRuntime loads the active settings and installs application validation.
+// Call before serving requests.
+func (s *ConfigService) InitializeRuntime(validate func(RuntimeSettings) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	settings, err := s.LoadRuntimeSettings()
+	if err != nil {
+		return err
+	}
+	if validate != nil {
+		if err := validate(settings); err != nil {
+			return err
+		}
+	}
+	s.validateRuntime = validate
+	s.runtime.Store(&settings)
+	return nil
+}
+
+// Current returns a private copy of the active runtime settings.
+func (s *ConfigService) Current() RuntimeSettings {
+	current := s.runtime.Load()
+	if current == nil {
+		return RuntimeSettings{}
+	}
+	result := *current
+	result.ServiceDateReminderLeadTimes = append([]time.Duration(nil), current.ServiceDateReminderLeadTimes...)
+	return result
+}
+
+// WithRuntimeSettings serializes a short background operation with settings
+// changes, so it cannot create work using a setting after that setting is removed.
+func (s *ConfigService) WithRuntimeSettings(fn func(RuntimeSettings) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return fn(s.Current())
 }
 
 // Catalog is the complete flat configuration view used by the admin page.
@@ -311,6 +355,9 @@ func (s *ConfigService) CreateItem(in CreateItemInput) (configmodel.ClinicConfig
 }
 
 func (s *ConfigService) UpdateItem(id uint, in UpdateItemInput) (configmodel.ClinicConfigItem, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var candidate *RuntimeSettings
 	var item configmodel.ClinicConfigItem
 	err := database.WithTx(context.Background(), s.db.DB, func(tx *sql.Tx) error {
 		var err error
@@ -376,15 +423,56 @@ func (s *ConfigService) UpdateItem(id uint, in UpdateItemInput) (configmodel.Cli
 			}
 			return fmt.Errorf("update config item %d: %w", id, err)
 		}
+		if s.runtime.Load() != nil {
+			settings, err := loadRuntimeSettings(tx)
+			if err != nil {
+				return err
+			}
+			if s.validateRuntime != nil {
+				if err := s.validateRuntime(settings); err != nil {
+					return fmt.Errorf("%w: %v", ErrConfigValueInvalid, err)
+				}
+			}
+			previous := s.runtime.Load()
+			for _, oldLead := range previous.ServiceDateReminderLeadTimes {
+				found := false
+				for _, newLead := range settings.ServiceDateReminderLeadTimes {
+					if newLead == oldLead {
+						found = true
+						break
+					}
+				}
+				if !found {
+					if _, err := tx.Exec(`UPDATE clinic_service_date_reminder
+						SET status = 'cancelled', updated_at = $1
+						WHERE status = 'pending' AND lead_time_seconds = $2`, time.Now().UTC(), int64(oldLead/time.Second)); err != nil {
+						return fmt.Errorf("cancel reminders for removed lead time: %w", err)
+					}
+				}
+			}
+			candidate = &settings
+		}
 		return nil
 	})
 	if err != nil {
 		return configmodel.ClinicConfigItem{}, err
 	}
+	if candidate != nil {
+		s.runtime.Store(candidate)
+	}
 	return item, nil
 }
 
 func (s *ConfigService) DeleteItem(id uint) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item, err := s.GetItem(id)
+	if err != nil {
+		return err
+	}
+	if _, ok := runtimeSettingExpectedTypes[item.Name]; ok {
+		return fmt.Errorf("%w: built-in runtime settings cannot be deleted", ErrConfigInvalidInput)
+	}
 	result, err := s.db.Exec("DELETE FROM clinic_config_item WHERE id = $1", id)
 	if err != nil {
 		return fmt.Errorf("delete config item %d: %w", id, err)
