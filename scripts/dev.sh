@@ -25,6 +25,11 @@ ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 MESSAGE_GATEWAY_DIR=${MESSAGE_GATEWAY_DIR:-$ROOT_DIR/../message-gateway}
 cd "$ROOT_DIR"
 
+if [[ ! -f "$ROOT_DIR/runtime_settings.json" ]]; then
+	cp "$ROOT_DIR/runtime_settings.example.json" "$ROOT_DIR/runtime_settings.json"
+	chmod 600 "$ROOT_DIR/runtime_settings.json"
+fi
+
 # Export the local configuration to the backend and helper processes.
 # In particular, the backend needs TAGGER_API_TOKEN to register its tag sets.
 if [[ -f "$ROOT_DIR/.env" ]]; then
@@ -420,7 +425,6 @@ start_backend() {
 	export APP_BASE_URL=${APP_BASE_URL:-http://127.0.0.1:5173}
 	export CAS_DEFAULT_REDIRECT=${CAS_DEFAULT_REDIRECT:-/}
 	export SESSION_COOKIE_SAMESITE=${SESSION_COOKIE_SAMESITE:-lax}
-	export STAFF_VERSION=${STAFF_VERSION:-0}
 
 	log "starting backend on :$BACKEND_PORT (Ctrl-C to stop)"
 

@@ -73,8 +73,12 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 	}
 	requests := 0
 	sentMessage := ""
+	account := "dynamic"
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		requests++
+		if r.URL.Path != "/api/v1/accounts/dynamic/send_private_msg_async" {
+			t.Errorf("gateway path = %q", r.URL.Path)
+		}
 		if r.Header.Get("Authorization") != "Bearer secret" {
 			t.Error("missing gateway token")
 		}
@@ -85,7 +89,18 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 		sentMessage = string(body)
 		return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(`{"status":"async","retcode":1,"data":{"delivery_id":"qq-1"}}`)), Header: make(http.Header)}, nil
 	})}
-	delivery := schedulingservice.ReminderDelivery{DB: rawDB, Discovery: &d, Client: client, BaseURL: "http://gateway", Account: "qq", Token: "secret", Template: template.Must(template.New("message").Parse("{{.PendingCount}} {{.LeadTime}}")), Lease: time.Minute, Now: func() time.Time { return now }}
+	delivery := schedulingservice.ReminderDelivery{
+		DB:            rawDB,
+		Discovery:     &d,
+		Client:        client,
+		BaseURL:       "http://gateway",
+		Account:       "qq",
+		AccountGetter: func() string { return account },
+		Token:         "secret",
+		Template:      template.Must(template.New("message").Parse("{{.PendingCount}} {{.LeadTime}}")),
+		Lease:         time.Minute,
+		Now:           func() time.Time { return now },
+	}
 	job, err := delivery.Claim(context.Background(), now)
 	if err != nil || job == nil {
 		t.Fatalf("claim %v %v", job, err)

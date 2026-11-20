@@ -1,4 +1,4 @@
-package app
+package app_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"clinic-backend/internal/app"
 	authhandler "clinic-backend/internal/auth/handler"
 	recordmodel "clinic-backend/internal/record/model"
 	roomhandler "clinic-backend/internal/room/handler"
@@ -53,11 +54,11 @@ func TestClientCampusRoutes(t *testing.T) {
 
 	campusSvc := roomservice.NewCampusService(testutil.RawDB(t, db))
 	roomSvc := roomservice.NewRoomService(testutil.RawDB(t, db))
-	router := (routeHandlers{
-		campusH:    roomhandler.NewCampusHandler(campusSvc, roomSvc),
-		roomH:      roomhandler.NewRoomHandler(roomSvc),
-		clientAuth: authhandler.ClientAuthMiddleware(routeTestAPIKey, 5*time.Minute),
-	}).router()
+	router := app.NewRouter(app.RouterConfig{
+		CampusH:    roomhandler.NewCampusHandler(campusSvc, roomSvc),
+		RoomH:      roomhandler.NewRoomHandler(roomSvc),
+		ClientAuth: authhandler.ClientAuthMiddleware(routeTestAPIKey, 5*time.Minute),
+	})
 
 	if got := clientCampusesRequest(t, router, "/api/campuses", false); got.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated request: expected 401, got %d: %s", got.Code, got.Body.String())

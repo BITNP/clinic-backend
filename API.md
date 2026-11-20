@@ -26,7 +26,7 @@ There are two independent authentication schemes. Every endpoint below states
 which one it uses; `/healthz`, `/login`, `/logout`, and
 `GET /api/announcement/toc` are public.
 
-### Staff and admin (session or Keycloak)
+### Staff, admin, and superadmin (session or Keycloak)
 
 Admin/staff endpoints accept either:
 
@@ -44,13 +44,22 @@ X-CSRF-Token: <value of the csrf_token cookie>
 Missing or mismatched CSRF tokens receive `403 Forbidden`. Bearer-token requests
 do not need a CSRF token.
 
-Staff and admin are separate authorization levels:
+CAS and Keycloak roles are resolved from their `realm` values before groups are
+checked. The realms `clinic-maintainer`,
+`position-association-vice-chair-clinic`, and `position-clinic-head` map to
+`superadmin`; `position-clinic-advisor` and `position-clinic-deputy-head` map to
+`admin`. Superadmin takes precedence when both levels are present. Without a
+matching realm, CAS retains its existing group-based `staff`/`admin` rules,
+while Keycloak maps any group containing `clinic` to `staff`.
 
-- **Staff** endpoints (`RequireStaff`) accept role `staff` or `admin`.
-- **Admin** endpoints (`RequireAdmin`) accept role `admin` only.
+Authorization levels are hierarchical:
 
-A session whose staff `version` differs from the configured `STAFF_VERSION` is
-rejected with `401` and must log in again.
+- **Staff** endpoints (`RequireStaff`) accept `staff`, `admin`, or `superadmin`.
+- **Admin** endpoints (`RequireAdmin`) accept `admin` or `superadmin`.
+
+A session whose staff `version` differs from the database-managed
+`STAFF_VERSION` config item is rejected with `401` and must log in again.
+Changes to that item apply after a successful save.
 
 Sessions are created by `GET /login`, which redirects through CAS and sets both
 cookies. `GET /logout` destroys the local session and redirects through CAS
@@ -157,10 +166,10 @@ curl "$BASE/healthz"
 ### `GET /login`
 
 **Description:** Starts or completes CAS login. Without a `ticket` it redirects
-(`302`) to the CAS login URL. With a `ticket` it validates the ticket, maps CAS
-groups to a staff/admin role, upserts the staff row and work years, creates a
-session, sets the `sessionid` (HttpOnly) and `csrf_token` cookies, then
-redirects to `next`. Login also bumps the `staff` change counter.
+(`302`) to the CAS login URL. With a `ticket` it validates the ticket, resolves
+the role from CAS realms with group fallback, upserts the staff row and work
+years, creates a session, sets the `sessionid` (HttpOnly) and `csrf_token`
+cookies, then redirects to `next`. Login also bumps the `staff` change counter.
 
 **Query parameters**
 
@@ -171,7 +180,7 @@ redirects to `next`. Login also bumps the `staff` change counter.
 
 **Response `302 Found`** with a `Location` header (CAS login page, or `next`).
 
-**Error responses:** `403` (invalid ticket, no qualifying groups), `500`
+**Error responses:** `403` (invalid ticket, no qualifying realm or groups), `500`
 (failed to resolve staff or create session), `502` (CAS unreachable), `503`
 (CAS not configured).
 
@@ -217,7 +226,7 @@ session cookie or a Keycloak bearer token.
 | `realname` | string | Display name. |
 | `email` | string | Email address. |
 | `qq_number` | string | QQ number from the `qq-number` login claim (`""` if unset). |
-| `role` | string | `staff` or `admin` (`""` if unknown). |
+| `role` | string | `staff`, `admin`, `superadmin`, or `""` if unknown. |
 
 ```json
 {
@@ -812,6 +821,304 @@ curl -X DELETE "$BASE/api/admin/rooms/1" \
   -b cookies.txt -H "X-CSRF-Token: $CSRF"
 ```
 
+## Admin: configuration
+
+All configuration endpoints require `admin` or `superadmin`; ordinary `staff`
+users receive `403`. Group endpoints are available to both allowed roles.
+Item endpoints are scoped by the item's `role_level`: an `admin` can access only
+`admin` items, while a `superadmin` can access items at every level. Direct
+requests for items outside the caller's scope return `404`.
+
+Configuration group object:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | integer | Group id. |
+| `name` | string | Unique machine-readable name, max 64 characters. Immutable after creation. |
+| `display_name` | string | Human-readable name, max 128 characters. |
+| `sort_order` | integer | Non-negative position among groups. |
+
+Configuration item object:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | integer | Item id. |
+| `name` | string | Globally unique machine-readable name, max 128 characters. Immutable after creation. |
+| `value` | string | Canonical text representation of the value. Omitted when `writeonly` is `true`. |
+| `value_type` | string | `int`, `double`, `boolean`, or `string`. |
+| `display_name` | string | Human-readable name, max 128 characters. |
+| `is_required` | boolean | When true, an empty value is rejected. |
+| `role_level` | string | Role-level metadata: `staff`, `admin`, or `superadmin`. Defaults to `admin`. |
+| `writeonly` | boolean | When true, the stored value is available only to internal backend code and is never returned through this API. Defaults to `false`. |
+| `group_id` | integer | Owning configuration group. |
+| `sort_order` | integer | Non-negative position within the group. |
+
+Integer and double values are normalized to canonical decimal representations.
+Booleans must be `true` or `false`. Optional items may have an empty value.
+Write-only items can still be created, updated, and deleted through the normal
+item endpoints.
+
+The backend seeds and reserves `SYNC_POLL_INTERVAL`, `STAFF_VERSION`,
+`RECORD_ACTION_WINDOW`, `RECORD_PHOTO_MAX_COUNT`,
+`RECORD_PHOTO_MAX_SIZE_BYTES`, `SERVICE_DATE_REMINDER_ENABLED`,
+`SERVICE_DATE_REMINDER_LEAD_TIMES`, `MESSAGE_GATEWAY_ACCOUNT`,
+`TAGGER_LLM_API_KEY`, `TAGGER_LLM_BASE_URL`, `TAGGER_LLM_MODEL`,
+`TAGGER_AGENT_POOL_SIZE`, `TAGGER_CONTEXT_TOKENS`, and `TAGGER_TIMEOUT`. Their
+types, required flags, and write-only flags are fixed and their values receive
+key-specific validation. Initial values come from the external
+`runtime_settings.json` file beside `.env`; environment variables with these
+names may only initialize a missing item during migration and are ignored once
+the row exists. `TAGGER_LLM_API_KEY` is optional and write-only: its value is
+never returned by the API. All successful saves apply without restarting the
+backend; tagger changes atomically replace the active pool generation.
+
+### `GET /api/admin/config`
+
+**Description:** Returns the configuration catalog visible to the caller as two
+flat arrays. An `admin` receives only items whose `role_level` is `admin`; a
+`superadmin` receives all items. All groups are returned. Groups are ordered by
+`sort_order`, then `id`. Items are ordered by their group's `sort_order`,
+`group_id`, item `sort_order`, and item `id`.
+
+**Response `200 OK`**
+
+```json
+{
+  "groups": [
+    {
+      "id": 1,
+      "name": "booking",
+      "display_name": "预约设置",
+      "sort_order": 0
+    }
+  ],
+  "items": [
+    {
+      "id": 10,
+      "name": "max_booking_days",
+      "value": "7",
+      "value_type": "int",
+      "display_name": "最多提前预约天数",
+      "is_required": true,
+      "role_level": "admin",
+      "writeonly": false,
+      "group_id": 1,
+      "sort_order": 0
+    }
+  ]
+}
+```
+
+Both arrays are always present and are empty arrays when no records exist.
+Items contain `group_id` only; they do not embed a group object.
+For an item with `writeonly: true`, the `value` property is omitted.
+
+**Error responses:** `401`, `403`, `500`.
+
+**curl**
+
+```bash
+curl "$BASE/api/admin/config" -b cookies.txt
+```
+
+### `GET /api/admin/config/groups/{id}`
+
+**Description:** Returns one configuration group.
+
+**Response `200 OK`** — configuration group object.
+
+**Error responses:** `400` (invalid id), `401`, `403`, `404`.
+
+**curl**
+
+```bash
+curl "$BASE/api/admin/config/groups/1" -b cookies.txt
+```
+
+### `POST /api/admin/config/groups`
+
+**Description:** Creates a configuration group. The name is immutable after
+creation.
+
+**Request body**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | string | yes | Unique machine name, max 64 characters. |
+| `display_name` | string | yes | Human-readable name, max 128 characters. |
+| `sort_order` | integer | no | Non-negative position. Defaults to `0`. |
+
+**Response `201 Created`** — configuration group object.
+
+**Error responses:** `400` (invalid fields), `401`, `403`, `409` (name already
+taken).
+
+**curl**
+
+```bash
+curl -X POST "$BASE/api/admin/config/groups" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"booking","display_name":"预约设置","sort_order":0}'
+```
+
+### `PUT /api/admin/config/groups/{id}`
+
+**Description:** Updates a configuration group. Omitted fields are unchanged.
+The group name cannot be changed.
+
+**Request body**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `display_name` | string | no | Human-readable name, max 128 characters. |
+| `sort_order` | integer | no | Non-negative position. |
+
+**Response `200 OK`** — updated configuration group object.
+
+**Error responses:** `400`, `401`, `403`, `404`.
+
+**curl**
+
+```bash
+curl -X PUT "$BASE/api/admin/config/groups/1" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF" \
+  -H 'Content-Type: application/json' \
+  -d '{"display_name":"预约配置","sort_order":2}'
+```
+
+### `DELETE /api/admin/config/groups/{id}`
+
+**Description:** Deletes an empty configuration group. Groups containing items
+cannot be deleted.
+
+**Response `204 No Content`**
+
+**Error responses:** `400`, `401`, `403`, `404`, `409` (group still has items).
+
+**curl**
+
+```bash
+curl -X DELETE "$BASE/api/admin/config/groups/1" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF"
+```
+
+### `GET /api/admin/config/items/{id}`
+
+**Description:** Returns one configuration item when it is visible to the
+caller. The response contains `group_id` and does not embed the group object.
+The `value` property is omitted for write-only items.
+
+**Response `200 OK`** — configuration item object.
+
+**Error responses:** `400` (invalid id), `401`, `403`, `404` (missing or outside
+the caller's item scope).
+
+**curl**
+
+```bash
+curl "$BASE/api/admin/config/items/10" -b cookies.txt
+```
+
+### `POST /api/admin/config/items`
+
+**Description:** Creates a configuration item. The name is immutable after
+creation, and `group_id` must reference an existing group. An `admin` may create
+only `admin` items; a `superadmin` may create any level.
+
+**Request body**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | string | yes | Globally unique machine name, max 128 characters. |
+| `value` | string | no | Defaults to an empty string. Must match `value_type`. |
+| `value_type` | string | yes | `int`, `double`, `boolean`, or `string`. |
+| `display_name` | string | yes | Human-readable name, max 128 characters. |
+| `is_required` | boolean | no | Rejects an empty value when true. Defaults to `false`. |
+| `role_level` | string | no | `staff`, `admin`, or `superadmin`. Defaults to `admin`. |
+| `writeonly` | boolean | no | Hide the stored value from API responses. Defaults to `false`. |
+| `group_id` | integer | yes | Existing configuration group id. |
+| `sort_order` | integer | no | Non-negative position within the group. Defaults to `0`. |
+
+**Response `201 Created`** — configuration item object. For a write-only item,
+the submitted `value` is not echoed in the response.
+
+**Error responses:** `400` (invalid fields or value), `401`, `403` (item level
+outside the caller's scope), `404` (group not found), `409` (item name already
+taken).
+
+**curl**
+
+```bash
+curl -X POST "$BASE/api/admin/config/items" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"max_booking_days","value":"7","value_type":"int","display_name":"最多提前预约天数","is_required":true,"role_level":"admin","writeonly":true,"group_id":1,"sort_order":0}'
+```
+
+### `PUT /api/admin/config/items/{id}`
+
+**Description:** Updates a configuration item. Omitted fields are unchanged.
+The item name cannot be changed. The final value is validated against the final
+`value_type` and `is_required` settings.
+An `admin` may update only items that are currently `admin` level and cannot
+change them to another level. A `superadmin` may update items at every level.
+Known runtime settings take effect after a successful save for subsequent
+operations. Existing operations may finish with the previous value. Enabling
+reminders requires configured gateway credentials; invalid settings are rejected
+without changing the saved or active values. Disabling reminders pauses new
+discovery and delivery; a message already submitted may still be delivered.
+Pending reminders for removed lead times are cancelled with the save; claimed
+jobs are checked before delivery. Increasing the action window cannot restore
+actions already expired or pruned from the journal under the previous window.
+
+**Request body**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `value` | string | no | New value. |
+| `value_type` | string | no | `int`, `double`, `boolean`, or `string`. |
+| `display_name` | string | no | Human-readable name, max 128 characters. |
+| `is_required` | boolean | no | Whether an empty value is allowed. |
+| `role_level` | string | no | `staff`, `admin`, or `superadmin`. |
+| `writeonly` | boolean | no | Hide the stored value from API responses. |
+| `group_id` | integer | no | Move the item to another existing group. |
+| `sort_order` | integer | no | Non-negative position within the group. |
+
+**Response `200 OK`** — updated configuration item object. When the resulting
+item is write-only, the current value is not included in the response.
+
+**Error responses:** `400` (invalid fields or value), `401`, `403` (changing an
+item to a level outside the caller's scope), `404` (hidden item or target group
+not found).
+
+**curl**
+
+```bash
+curl -X PUT "$BASE/api/admin/config/items/10" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF" \
+  -H 'Content-Type: application/json' \
+  -d '{"value":"14","display_name":"最多提前预约天数","writeonly":true,"group_id":2,"sort_order":1}'
+```
+
+### `DELETE /api/admin/config/items/{id}`
+
+**Description:** Deletes a configuration item. Built-in runtime settings cannot
+be deleted and return `400`. Delete authorization follows the item's current
+`role_level`; write-only status does not prevent deletion.
+
+**Response `204 No Content`**
+
+**Error responses:** `400`, `401`, `403`, `404` (missing or outside the
+caller's item scope).
+
+**curl**
+
+```bash
+curl -X DELETE "$BASE/api/admin/config/items/10" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF"
+```
+
 ## Admin: records
 
 Record lifecycle states:
@@ -1026,9 +1333,9 @@ list. Staff or admin only. Bumps the `record` counter.
 | `photo` | file | yes | One JPEG, PNG, or WebP image. |
 
 The server detects the image type from the bytes, so the part's declared
-`Content-Type` is ignored. The request and file are limited by
-`RECORD_PHOTO_MAX_SIZE_BYTES`; the record is limited by
-`RECORD_PHOTO_MAX_COUNT`.
+`Content-Type` is ignored. The request and file are limited by the
+database-managed `RECORD_PHOTO_MAX_SIZE_BYTES` config item; the record is
+limited by `RECORD_PHOTO_MAX_COUNT`.
 
 **Response `201 Created`** — the new photo object. A `Location` header points at
 its position URL.
@@ -1274,8 +1581,8 @@ curl -X POST "$BASE/api/admin/records/1/no-show" \
 **Description:** Undoes the caller's most recent reversible action on a record,
 restoring the previous snapshot. Staff or admin; each staff member can only
 revert their own actions. Reverts are strict LIFO and only valid inside
-`RECORD_ACTION_WINDOW` (default `5m`). Reverting is also refused when the record
-has changed since the action.
+the database-managed `RECORD_ACTION_WINDOW` (default `5m`). Reverting is also
+refused when the record has changed since the action.
 
 **Response `200 OK`** — admin record view after the restore.
 
@@ -1301,8 +1608,8 @@ Staff object:
 | `realname` | string | Display name. |
 | `email` | string | Email address. |
 | `qq_number` | string | QQ number, synced from the `qq-number` login claim. A missing claim does not clear it. |
-| `role` | string | `staff`, `admin`, or `""`. |
-| `version` | integer | Login version; compared with `STAFF_VERSION`. |
+| `role` | string | `staff`, `admin`, `superadmin`, or `""`. |
+| `version` | integer | Login version; compared with the database-managed `STAFF_VERSION` config item. |
 
 Staff list item adds:
 
@@ -1751,7 +2058,8 @@ changes. Counters are best-effort: a Redis failure is logged and never fails the
 underlying write.
 
 Groups: `record`, `room`, `work_schedule`, `service_date`, `staff`,
-`announcement`.
+`announcement`, `config`. Successful configuration group and item writes bump
+`config`; reads and failed writes do not. The counter contains no settings values.
 
 ### `GET /api/admin/sync`
 
@@ -1766,7 +2074,8 @@ Groups: `record`, `room`, `work_schedule`, `service_date`, `staff`,
   "work_schedule": 5,
   "service_date": 9,
   "staff": 2,
-  "announcement": 7
+  "announcement": 7,
+  "config": 1
 }
 ```
 
@@ -1781,7 +2090,7 @@ curl "$BASE/api/admin/sync" -b cookies.txt
 ### `GET /api/admin/sync/config`
 
 **Description:** Reports the recommended polling interval. `interval_ms` is `0`
-when periodic polling is disabled.
+when periodic polling is disabled. The value reflects the current runtime setting.
 
 **Response `200 OK`**
 
@@ -2519,4 +2828,7 @@ curl "$BASE/api/announcement/toc/"
 See [CONFIGURATION.md](CONFIGURATION.md) for every environment variable and
 deployment setting. Settings that affect API behavior are noted inline above:
 `CLINIC_API_KEY`, `CLINIC_TIMEZONE`, `STAFF_VERSION`, `SYNC_POLL_INTERVAL`,
-`SESSION_*`, `CAS_*`, and `KEYCLOAK_*`.
+`RECORD_ACTION_WINDOW`, `RECORD_PHOTO_MAX_COUNT`,
+`RECORD_PHOTO_MAX_SIZE_BYTES`, the service-date reminder settings,
+`MESSAGE_GATEWAY_ACCOUNT`, the `TAGGER_*` settings, `SESSION_*`, `CAS_*`, and
+`KEYCLOAK_*`.

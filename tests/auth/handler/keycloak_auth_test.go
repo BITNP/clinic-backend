@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -216,42 +217,142 @@ func TestKeycloakAuthenticator_AuthenticateStampsVersion(t *testing.T) {
 	}
 }
 
-func TestKeycloakAuthenticator_AuthenticateAdminRole(t *testing.T) {
-	key, kid, staffSvc, _ := setupKeycloakTest(t)
+func TestKeycloakAuthenticator_AuthenticateRealmRoles(t *testing.T) {
+	key, kid, staffSvc, db := setupKeycloakTest(t)
 	fake := httptest.NewServer(jwksHandler(key, kid))
 	defer fake.Close()
 
 	a := authhandler.NewKeycloakAuthenticator(fake.URL+"/realms/fake", "clinic-backend", staffSvc)
 
-	token, err := signTestJWT(key, kid, fake.URL+"/realms/fake/", "clinic-backend", "admin01", "Admin One", []string{"/management", "/clinic"})
-	if err != nil {
-		t.Fatalf("sign jwt: %v", err)
+	tests := []struct {
+		name     string
+		username string
+		realms   []string
+		groups   []string
+		want     authhandler.StaffRole
+	}{
+		{
+			name:     "association vice chair is superadmin",
+			username: "superadmin-vice-chair",
+			realms:   []string{"position-clinic-advisor", "position-association-vice-chair-clinic"},
+			groups:   []string{"/management", "/clinic"},
+			want:     authhandler.RoleSuperAdmin,
+		},
+		{
+			name:     "clinic head is superadmin without groups",
+			username: "superadmin-head",
+			realms:   []string{" Position-Clinic-Head "},
+			want:     authhandler.RoleSuperAdmin,
+		},
+		{
+			name:     "clinic maintainer is superadmin without groups",
+			username: "superadmin-maintainer",
+			realms:   []string{"clinic-maintainer"},
+			want:     authhandler.RoleSuperAdmin,
+		},
+		{
+			name:     "clinic advisor is admin",
+			username: "admin-advisor",
+			realms:   []string{"position-clinic-advisor"},
+			want:     authhandler.RoleAdmin,
+		},
+		{
+			name:     "clinic deputy head is admin",
+			username: "admin-deputy-head",
+			realms:   []string{"position-clinic-deputy-head"},
+			want:     authhandler.RoleAdmin,
+		},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			token, err := signTestJWTExtra(
+				key, kid, fake.URL+"/realms/fake/", "clinic-backend",
+				tt.username, "Role Test", tt.groups,
+				map[string]any{"realm": tt.realms},
+			)
+			if err != nil {
+				t.Fatalf("sign jwt: %v", err)
+			}
 
-	_, role, err := a.Authenticate(token)
-	if err != nil {
-		t.Fatalf("authenticate: %v", err)
-	}
-	if role != authhandler.RoleAdmin {
-		t.Errorf("role: got %q", role)
+			staff, role, err := a.Authenticate(token)
+			if err != nil {
+				t.Fatalf("authenticate: %v", err)
+			}
+			if role != tt.want {
+				t.Errorf("role: got %q, want %q", role, tt.want)
+			}
+
+			var stored staffmodel.ClinicStaff
+			if err := db.First(&stored, staff.ID).Error; err != nil {
+				t.Fatalf("load staff: %v", err)
+			}
+			if stored.Role != string(tt.want) {
+				t.Errorf("stored role: got %q, want %q", stored.Role, tt.want)
+			}
+		})
 	}
 }
 
-func TestKeycloakAuthenticator_RejectNoGroups(t *testing.T) {
+func TestKeycloakAuthenticator_GroupFallbackIsStaff(t *testing.T) {
 	key, kid, staffSvc, _ := setupKeycloakTest(t)
 	fake := httptest.NewServer(jwksHandler(key, kid))
 	defer fake.Close()
 
 	a := authhandler.NewKeycloakAuthenticator(fake.URL+"/realms/fake", "clinic-backend", staffSvc)
 
-	token, err := signTestJWT(key, kid, fake.URL+"/realms/fake/", "clinic-backend", "user01", "User One", []string{"/other"})
+	tests := []struct {
+		name   string
+		realms []string
+		groups []string
+	}{
+		{name: "clinic group", groups: []string{"/clinic"}},
+		{name: "management no longer elevates", groups: []string{"/management", "/clinic"}},
+		{name: "unknown realm does not elevate", realms: []string{"position-other"}, groups: []string{"/management", "/clinic"}},
+	}
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			extra := map[string]any{}
+			if len(tt.realms) > 0 {
+				extra["realm"] = tt.realms
+			}
+			token, err := signTestJWTExtra(
+				key, kid, fake.URL+"/realms/fake/", "clinic-backend",
+				"staff-fallback-"+strconv.Itoa(i), "Staff Fallback", tt.groups, extra,
+			)
+			if err != nil {
+				t.Fatalf("sign jwt: %v", err)
+			}
+
+			_, role, err := a.Authenticate(token)
+			if err != nil {
+				t.Fatalf("authenticate: %v", err)
+			}
+			if role != authhandler.RoleStaff {
+				t.Errorf("role: got %q, want %q", role, authhandler.RoleStaff)
+			}
+		})
+	}
+}
+
+func TestKeycloakAuthenticator_RejectNoRealmOrClinicGroup(t *testing.T) {
+	key, kid, staffSvc, _ := setupKeycloakTest(t)
+	fake := httptest.NewServer(jwksHandler(key, kid))
+	defer fake.Close()
+
+	a := authhandler.NewKeycloakAuthenticator(fake.URL+"/realms/fake", "clinic-backend", staffSvc)
+
+	token, err := signTestJWTExtra(
+		key, kid, fake.URL+"/realms/fake/", "clinic-backend",
+		"user01", "User One", []string{"/other"},
+		map[string]any{"realm": []string{"position-other"}},
+	)
 	if err != nil {
 		t.Fatalf("sign jwt: %v", err)
 	}
 
 	_, _, err = a.Authenticate(token)
 	if err == nil {
-		t.Fatal("expected error for user without clinic groups")
+		t.Fatal("expected error for user without an authorized realm or clinic group")
 	}
 }
 

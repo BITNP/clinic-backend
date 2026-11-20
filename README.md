@@ -51,6 +51,7 @@ for the file-placement and dependency rules to follow when extending the backend
 ```bash
 cd clinic-backend
 cp .env.example .env   # fill in the required values (see CONFIGURATION.md)
+cp runtime_settings.example.json runtime_settings.json
 docker compose up --build   # build locally
 ```
 
@@ -69,6 +70,7 @@ docker compose up -d --pull always
 # or as a one-off container
 docker run -d --name clinic-backend -p 8080:8080 \
   -e CLINIC_API_KEY=your-secret \
+  -v "$PWD/runtime_settings.json:/app/runtime_settings.json:ro" \
   ghcr.io/bitnp/clinic-backend:latest
 ```
 
@@ -82,12 +84,13 @@ echo $PAT | docker login ghcr.io -u Potato-Yao --password-stdin
 
 ## Deploy to a server
 
-`docker-compose.prod.yml` is a standalone deploy config — only this file, `.env`,
-`deploy/rustfs/` and the packaged image tarball are needed on the server, no
-source checkout. It runs the backend, the admin frontend, the health monitor, a
-bundled Redis service and RustFS object storage, and connects to the Postgres
-already running on the server via `host.containers.internal` (no bundled
-database), like the other clinic services. It refuses to start if
+`docker-compose.prod.yml` is a standalone deploy config — only this file,
+`.env`, `runtime_settings.json`, `deploy/rustfs/` and the packaged image tarball
+are needed on the server, no source checkout. It runs the backend, the admin
+frontend, the health monitor, a bundled Redis service and RustFS object storage,
+and connects to the Postgres already running on the server via
+`host.containers.internal` (no bundled database), like the other clinic
+services. It refuses to start if
 `CLINIC_API_KEY`, `MAINTAINER_QQ_IDS`, `MESSAGE_GATEWAY_ACCOUNT_TOKEN`, the
 required S3 settings, or the RustFS provisioning credentials are missing.
 
@@ -101,6 +104,8 @@ a machine that can and copy the tarball over:
 # the backend starts.
 cp .env.example .env
 chmod 600 .env
+cp runtime_settings.example.json runtime_settings.json
+chmod 600 runtime_settings.json
 
 # Load the image tags from .env, then pull and bundle every image used by the
 # production compose file.
@@ -129,7 +134,8 @@ docker save -o clinic-images.tar \
 
 sha256sum clinic-images.tar > clinic-images.tar.sha256
 
-scp clinic-images.tar clinic-images.tar.sha256 docker-compose.prod.yml .env server:
+scp clinic-images.tar clinic-images.tar.sha256 docker-compose.prod.yml \
+  .env runtime_settings.json server:
 ssh server 'mkdir -p deploy message-gateway'
 scp -r deploy/rustfs server:deploy/
 scp ../message-gateway/docker-compose.yml \
@@ -394,13 +400,20 @@ logged and never fails the underlying write.
 The backend can remind admins assigned to a service window when tickets remain
 pending. It scans every minute and on startup, finds pending tickets by date and
 room, and sends a QQ private message through the account-scoped message gateway.
-Set the following backend environment variables to enable it:
+The reminder switch and lead times are stored in the database, initialized from
+the external `runtime_settings.json`, and managed from the admin configuration
+API:
 
-- `SERVICE_DATE_REMINDER_ENABLED=true` (default `false`).
-- `SERVICE_DATE_REMINDER_LEAD_TIMES=5h,3h` (default shown): unique, positive
+- `SERVICE_DATE_REMINDER_ENABLED` is a boolean, default `false`.
+- `SERVICE_DATE_REMINDER_LEAD_TIMES` defaults to `5h,3h`: unique, positive
   Go durations in whole seconds. Each is relative to the service start time.
+- `MESSAGE_GATEWAY_ACCOUNT` defaults to `qq` and affects the next delivery.
+
+Legacy same-named environment variables can initialize a missing row once, but
+are ignored after it exists. The remaining reminder settings are
+environment-backed:
+
 - `MESSAGE_GATEWAY_URL`: gateway base URL.
-- `MESSAGE_GATEWAY_ACCOUNT=qq`: gateway account name (default `qq`).
 - `MESSAGE_GATEWAY_ACCOUNT_TOKEN`: the account's gateway `client_token`.
 - `MESSAGE_GATEWAY_TIMEOUT=5s` (default shown): request timeout.
 - `SERVICE_DATE_REMINDER_TEMPLATE`: optional Go text template with `Date`,

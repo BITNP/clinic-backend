@@ -1,13 +1,80 @@
 # Configuration
 
-All runtime and deployment settings for `clinic-backend` in one place. The
-backend reads environment variables; Docker Compose reads them from `.env`
-(template: `.env.example`). Defaults below come from the Go code unless a
-compose file overrides them.
+All runtime and deployment settings for `clinic-backend` in one place. Most
+deployment settings are environment variables; Docker Compose reads them from
+`.env` (template: `.env.example`). Database-managed config items receive their
+initial values from `runtime_settings.json`, which must sit beside `.env`.
+Defaults below come from Go code, that external JSON file, or a compose file as
+noted.
 
 - API behavior that depends on these settings is documented in [API.md](API.md).
 - Deployment procedures are in [README.md](README.md).
 - RustFS operations are in [deploy/rustfs/README.md](deploy/rustfs/README.md).
+
+## Database-managed runtime settings
+
+The backend embeds `internal/config/service/data/template.json`, which defines
+the reserved groups and item metadata but contains no values. At every startup
+the backend reads `runtime_settings.json` from its working directory, beside
+`.env`, validates that every reserved item is present, and uses those values
+only when creating missing database rows. Existing values are preserved, while
+reserved display names, types, groups, ordering, required flags, and write-only
+flags are synchronized from the template. The database becomes authoritative
+for values immediately after initialization.
+
+`runtime_settings.json` is an external deployment file and is gitignored. Start
+from [`runtime_settings.example.json`](runtime_settings.example.json), keep the
+real file at the same filesystem level as `.env`, and mount it read-only at
+`/app/runtime_settings.json` in containers. Missing files, extra or missing
+items, and invalid values stop startup with an error.
+
+```json
+{
+  "SYNC_POLL_INTERVAL": "10s",
+  "STAFF_VERSION": "0",
+  "TAGGER_LLM_API_KEY": "",
+  "TAGGER_LLM_BASE_URL": "",
+  "TAGGER_LLM_MODEL": "",
+  "TAGGER_AGENT_POOL_SIZE": "4",
+  "TAGGER_CONTEXT_TOKENS": "32000",
+  "TAGGER_TIMEOUT": "30s",
+  "RECORD_ACTION_WINDOW": "5m",
+  "RECORD_PHOTO_MAX_COUNT": "9",
+  "RECORD_PHOTO_MAX_SIZE_BYTES": "10485760",
+  "SERVICE_DATE_REMINDER_ENABLED": "false",
+  "SERVICE_DATE_REMINDER_LEAD_TIMES": "5h,3h",
+  "MESSAGE_GATEWAY_ACCOUNT": "qq"
+}
+```
+
+During the first upgrade that introduces an item, a non-empty legacy
+environment value with the same name may initialize that missing row. Once the
+row exists, the database is authoritative and the environment value is ignored.
+Changes made through `/api/admin/config` apply after a successful save.
+Operations already in progress may finish with their previous settings. Browser
+tabs refresh their sync interval periodically.
+
+| Config item | Default | Description |
+| --- | --- | --- |
+| `SYNC_POLL_INTERVAL` | `10s` | Recommended client polling interval reported by `/sync/config`; `0s` disables periodic polling. |
+| `STAFF_VERSION` | `0` | Raise to force all staff to log in again. Non-negative integer. |
+| `RECORD_ACTION_WINDOW` | `5m` | Positive Go duration for how long a staff action stays revertible. |
+| `RECORD_PHOTO_MAX_COUNT` | `9` | Positive maximum number of ordered photos attached to one record. |
+| `RECORD_PHOTO_MAX_SIZE_BYTES` | `10485760` | Positive maximum size of one uploaded photo in bytes. |
+| `SERVICE_DATE_REMINDER_ENABLED` | `false` | Strict boolean controlling the pending-ticket reminder worker. |
+| `SERVICE_DATE_REMINDER_LEAD_TIMES` | `5h,3h` | Comma-separated unique positive Go durations using whole seconds, relative to service start. |
+| `MESSAGE_GATEWAY_ACCOUNT` | `qq` | Account segment used for pending-ticket reminder delivery. |
+| `TAGGER_LLM_API_KEY` | empty | Optional write-only key for the in-process tagger. Its value is never returned by the API. |
+| `TAGGER_LLM_BASE_URL` | empty | OpenAI-compatible endpoint; required when the API key is non-empty. |
+| `TAGGER_LLM_MODEL` | empty | Model ID; required when the API key is non-empty. |
+| `TAGGER_AGENT_POOL_SIZE` | `4` | Long-lived models and sessions per tag set. Minimum `1`. |
+| `TAGGER_CONTEXT_TOKENS` | `32000` | Session reset threshold. Must be positive. |
+| `TAGGER_TIMEOUT` | `30s` | Positive per-call and pool-wait timeout. |
+
+These names are reserved: their `value_type`, required flag, and value validation
+are enforced by the config service. They are seeded into the `system`, `record`,
+and `reminder` groups. `MAINTAINER_QQ_IDS` is not part of this backend catalog;
+it remains a `clinic-health-monitor` environment setting.
 
 ## Backend environment variables
 
@@ -20,7 +87,6 @@ compose file overrides them.
 | `CLINIC_DB_DSN` | `clinic.db` | Database connection string. The dev compose default is `postgres://clinic:clinic@db:5432/clinic?sslmode=disable`; the prod default points at `host.containers.internal:5432`. |
 | `DB_SLOW_QUERY` | `500ms` | Slow-query log threshold. |
 | `CLINIC_TIMEZONE` | `UTC+8` | Timezone for appointment day boundaries and announcement times. |
-| `SYNC_POLL_INTERVAL` | `10s` | Recommended client polling interval reported by `/sync/config`; `0s` disables periodic polling. Negative values stop startup. |
 | `REDIS_ADDR` | — (required) | Redis for sync counters and the revert journal. The backend refuses to start without a reachable Redis. |
 | `REDIS_PASSWORD` | empty | Redis password. In the production compose stack it is also applied to the bundled Redis service. |
 | `REDIS_DB` | `0` | Redis database number. |
@@ -28,14 +94,9 @@ compose file overrides them.
 
 ### Records
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `RECORD_ACTION_WINDOW` | `5m` | How long a staff action stays revertible. |
-| `RECORD_PHOTO_MAX_COUNT` | `9` | Maximum number of ordered photos attached to one record. |
-| `RECORD_PHOTO_MAX_SIZE_BYTES` | `10485760` (10 MiB) | Maximum size of one uploaded photo in bytes. |
-
-Both photo limits must be positive integers. Invalid values stop startup with a
-nonzero exit status.
+The photo count and per-file byte limit are database-managed
+`RECORD_PHOTO_MAX_COUNT` and `RECORD_PHOTO_MAX_SIZE_BYTES` settings above.
+Both limits apply to the next request immediately after a successful save.
 
 ### Sessions and authentication
 
@@ -46,7 +107,6 @@ nonzero exit status.
 | `SESSION_COOKIE_SECURE` | `false` | Set `Secure` on session cookies. |
 | `SESSION_COOKIE_SAMESITE` | `lax` | `none`, `lax`, or `strict`. |
 | `SESSION_TTL` | `336h` | Session lifetime. |
-| `STAFF_VERSION` | `0` | Raise to force all staff to log in again. Sessions created with an older version are rejected. |
 | `APP_BASE_URL` | empty | Public frontend URL used for CAS return URLs. Required when `CAS_SERVER_URL` is set. |
 | `CAS_SERVER_URL` | empty | CAS server. When empty, `/login` returns `503`. |
 | `CAS_DEFAULT_REDIRECT` | `/manage/` (code) | Fallback post-login path. `.env.example` and the compose files set `/`. |
@@ -61,21 +121,21 @@ long-lived chat models per tag set, one pool for record tags and one for
 liquid-metal tags. Each model owns a session preloaded with the system prompt.
 Requests are dispatched to an idle session. A session is reset back to its
 system prompt when its context reaches `TAGGER_CONTEXT_TOKENS`; the chat model
-is reused. Tagging is disabled while `TAGGER_LLM_API_KEY` is empty.
+is reused. Tagging is disabled while the database-managed
+`TAGGER_LLM_API_KEY` config item is empty.
 
-At startup the backend sends one minimal chat completion to the configured
-provider and logs whether the connection succeeded. The check has a 10-second
-timeout and does not stop startup when it fails; tagging requests keep failing
-until the provider is reachable.
+The API key is a write-only config item, so the admin API never returns its
+stored value. All tagger settings shown above are database-managed and can be
+changed through the system settings page. A successful save builds a complete
+candidate tagger generation before the database commit and atomically swaps it
+in afterwards. In-flight calls finish on the previous generation. Pool-size
+increases start new work immediately; decreases let excess in-flight calls
+finish while preventing additional old-limit concurrency.
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `TAGGER_LLM_API_KEY` | empty | Enables the tagger when non-empty; otherwise new records keep the default `no_pending` tag. |
-| `TAGGER_LLM_BASE_URL` | required when enabled | OpenAI-compatible endpoint. |
-| `TAGGER_LLM_MODEL` | required when enabled | Model ID. |
-| `TAGGER_AGENT_POOL_SIZE` | `4` | Long-lived chat models and sessions per tag set. Minimum `1`. |
-| `TAGGER_CONTEXT_TOKENS` | `32000` | Session reset threshold. Must be below the model's context window. |
-| `TAGGER_TIMEOUT` | `30s` | Per-call timeout, including waiting for a free session. |
+Changing the API key, endpoint, model, timeout, or context limit rebuilds both
+tagger pools without restarting the backend. The backend does not verify
+provider connectivity during save, so an incorrectly secured key can still
+produce request-time provider errors.
 
 Prompt caching is provider-dependent. The system prompt is a stable prefix for
 each session, so providers with prefix caching can reuse it across calls.
@@ -110,14 +170,20 @@ start the sample stack separately if you need it.
 There is no global gateway access key. Each gateway account has its own
 `client_token` in `message-gateway/accounts.json`; that token is used as the
 bearer token for the account's URL. The account's `access_token` is the private
-NapCat token and must not be given to clients. The backend has no business
-caller wired to the gateway yet. The first consumer is
-`clinic-health-monitor`, which uses its own client token in the production
-stack.
+NapCat token and must not be given to clients. Pending-ticket reminders use the
+selected database account. `clinic-health-monitor` uses its own client token in
+the production stack.
 
 The legacy `NAPCAT_*` and `MESSAGE_*` variables belong to the frozen
 `internal/message` copy and must not be set in new deployments. In particular,
 keep `NAPCAT_BASE_URL` empty so the in-process manager stays disabled.
+
+The pending-ticket reminder account is the database-managed
+`MESSAGE_GATEWAY_ACCOUNT` item above. It is resolved before each delivery, so a
+successful save affects the next reminder send. The environment-backed
+`MESSAGE_GATEWAY_ACCOUNT_TOKEN` must correspond to the selected account;
+changing the token still requires a backend restart. `MESSAGE_GATEWAY_URL` and
+`MESSAGE_GATEWAY_TIMEOUT` also remain environment-backed.
 
 The gateway queue is in-memory and assumes one gateway instance per sender/QQ
 account. Pending messages are lost on gateway restart. See
@@ -280,12 +346,12 @@ Compose, see [Local development](#local-development).
 ### Production stack (`docker-compose.prod.yml`)
 
 `docker-compose.prod.yml` is a standalone deploy config: only this file,
-`.env`, `deploy/rustfs/` and the packaged image tarball are needed on the
-server. It runs the backend, the admin frontend, the health monitor, a bundled
-Redis service, and RustFS object storage, and connects to the Postgres already
-running on the server via `host.containers.internal` (no bundled database). The
-message gateway is deployed separately from `../message-gateway`; NapCat is
-external to that stack, with an optional sample in
+`.env`, `runtime_settings.json`, `deploy/rustfs/` and the packaged image tarball
+are needed on the server. It runs the backend, the admin frontend, the health
+monitor, a bundled Redis service, and RustFS object storage, and connects to the
+Postgres already running on the server via `host.containers.internal` (no
+bundled database). The message gateway is deployed separately from
+`../message-gateway`; NapCat is external to that stack, with an optional sample in
 `../message-gateway/docker-compose.napcat.yml`. The backend and health monitor
 join the `message-gateway` external network. It refuses to start if
 `CLINIC_API_KEY`, the required S3 settings, the RustFS provisioning
@@ -333,8 +399,9 @@ Do not use `--pull always` or `docker compose pull` for this stack: those bypass
 reach. Every bundled service in the production compose file uses
 `pull_policy: never` and is served from the loaded tarball.
 
-Override any setting via `.env` or environment variables, for example
-`CLINIC_API_KEY=secret docker compose up --build`.
+Override any environment-backed setting via `.env` or environment variables,
+for example `CLINIC_API_KEY=secret docker compose up --build`. Database-managed
+settings are changed through the admin configuration API.
 
 ## Admin frontend
 
@@ -354,8 +421,9 @@ same-origin from the browser's perspective.
 
 ## Local development
 
-`scripts/dev.sh` automates the local stack. It loads `.env` (values there
-override existing environment variables) and then starts:
+`scripts/dev.sh` automates the local stack. It creates `runtime_settings.json`
+from the example when missing, loads `.env` (values there override existing
+environment variables), and then starts:
 
 1. the fake CAS server on `:9999`;
 2. Redis on `:6379` (container, falling back to `redis-server`);
@@ -405,7 +473,6 @@ Defaults applied by `scripts/dev.sh` when the variables are unset:
 | `APP_BASE_URL` | `http://127.0.0.1:5173` |
 | `CAS_DEFAULT_REDIRECT` | `/` |
 | `SESSION_COOKIE_SAMESITE` | `lax` |
-| `STAFF_VERSION` | `0` |
 
 Manual setup:
 
@@ -440,8 +507,6 @@ export CAS_SERVER_URL=http://127.0.0.1:9999
 export APP_BASE_URL=http://127.0.0.1:5173
 export CAS_DEFAULT_REDIRECT=/
 export SESSION_COOKIE_SAMESITE=lax
-# Optional: raise to force all staff to log in again; defaults to 0
-export STAFF_VERSION=0
 # If not using scripts/dev.sh, export the required S3_* settings from
 # "Object storage (S3)" before starting.
 go run .                       # runs on :8080
@@ -451,9 +516,9 @@ cd path/to/clinic_admin_frontend
 pnpm dev                       # runs on :5173
 ```
 
-Sessions whose staff `version` differs from `STAFF_VERSION` are rejected until
-the staff log in again, so each time you raise `STAFF_VERSION` all staff are
-forced through the login page once.
+Sessions whose staff `version` differs from the database-managed
+`STAFF_VERSION` are rejected until the staff log in again. Raising the config
+item forces existing staff sessions through the login page again.
 
 ## Storage integration tests
 

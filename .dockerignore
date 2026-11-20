@@ -3,6 +3,7 @@
 .idea
 .env
 .env.example
+runtime_settings.json
 clinic.db
 clinic.db-shm
 clinic.db-wal

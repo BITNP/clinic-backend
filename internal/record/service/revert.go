@@ -88,12 +88,13 @@ func (s *AdminRecordService) applyRevertibleOne(ctx context.Context, actorID int
 	if s.actions == nil {
 		return nil
 	}
-	windows, err := s.actions.Windows(ctx, actorID, time.Now().UTC())
+	window := s.actions.Window()
+	windows, err := s.actions.windows(ctx, actorID, time.Now().UTC(), window)
 	if err != nil {
 		return err
 	}
 	if w, ok := windows[rec.ID]; ok {
-		applyRevertible(w, rec, s.actions.Window(), v)
+		applyRevertible(w, rec, window, v)
 	}
 	return nil
 }
@@ -104,13 +105,14 @@ func (s *AdminRecordService) applyRevertibleList(ctx context.Context, actorID in
 	if s.actions == nil || len(recs) == 0 {
 		return nil
 	}
-	windows, err := s.actions.Windows(ctx, actorID, time.Now().UTC())
+	window := s.actions.Window()
+	windows, err := s.actions.windows(ctx, actorID, time.Now().UTC(), window)
 	if err != nil {
 		return err
 	}
 	for i := range recs {
 		if w, ok := windows[recs[i].ID]; ok {
-			applyRevertible(w, recs[i], s.actions.Window(), &views[i])
+			applyRevertible(w, recs[i], window, &views[i])
 		}
 	}
 	return nil
@@ -142,14 +144,17 @@ func (s *AdminRecordService) Revert(ctx context.Context, actorID int, id uint) (
 		return AdminRecordView{}, ErrRevertUnavailable
 	}
 	now := time.Now().UTC()
-	entry, ok, err := s.actions.Latest(ctx, actorID, id, now)
+	window := s.actions.Window()
+	windows, err := s.actions.windows(ctx, actorID, now, window)
 	if err != nil {
 		return AdminRecordView{}, fmt.Errorf("load latest action for record %d: %w", id, err)
 	}
+	entryWindow, ok := windows[id]
 	if !ok {
 		return AdminRecordView{}, ErrRevertUnavailable
 	}
-	if now.Sub(entry.CreatedAt) > s.actions.Window() {
+	entry := entryWindow.Latest
+	if now.Sub(entry.CreatedAt) > window {
 		return AdminRecordView{}, ErrRevertWindowExpired
 	}
 

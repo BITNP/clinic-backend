@@ -95,6 +95,23 @@ func TestSyncHandler_ConfigReturnsInterval(t *testing.T) {
 	}
 }
 
+func TestSyncHandlerConfigUsesCurrentInterval(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	interval := time.Second
+	h := changes.NewSyncHandler(changes.NewSyncService(newFakeSyncStore()), interval)
+	h.SetIntervalGetter(func() time.Duration { return interval })
+	r := gin.New()
+	r.GET("/config", h.GetConfig)
+	interval = 0
+	w := testutil.DoRequest(t, r, http.MethodGet, "/config", nil)
+	var body struct {
+		IntervalMS int64 `json:"interval_ms"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.IntervalMS != 0 {
+		t.Fatalf("current interval: %s (%v)", w.Body.String(), err)
+	}
+}
+
 func TestSyncHandler_SnapshotReturnsAllGroups(t *testing.T) {
 	r, _ := setupSyncHandlerRouter(t)
 

@@ -16,13 +16,26 @@ import (
 
 // ReminderDiscovery finds pending tickets and their assigned administrators.
 type ReminderDiscovery struct {
-	DB        *database.DB
-	Location  *time.Location
-	LeadTimes []time.Duration
+	DB              *database.DB
+	Location        *time.Location
+	LeadTimes       []time.Duration
+	LeadTimesGetter func() []time.Duration
+	Guard           func(func() error) error
 }
 
 func (d *ReminderDiscovery) Discover(ctx context.Context, now time.Time) error {
-	for _, lead := range d.LeadTimes {
+	if d.Guard != nil {
+		return d.Guard(func() error { return d.discover(ctx, now) })
+	}
+	return d.discover(ctx, now)
+}
+
+func (d *ReminderDiscovery) discover(ctx context.Context, now time.Time) error {
+	leadTimes := d.LeadTimes
+	if d.LeadTimesGetter != nil {
+		leadTimes = d.LeadTimesGetter()
+	}
+	for _, lead := range leadTimes {
 		from, until := ReminderStartWindow(now.UTC(), lead)
 		rows, err := d.DB.QueryContext(
 			ctx,

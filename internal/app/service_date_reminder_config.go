@@ -10,10 +10,9 @@ import (
 )
 
 const (
-	defaultServiceDateReminderLeadTimes = "5h,3h"
-	defaultServiceDateReminderAccount   = "qq"
-	defaultServiceDateReminderTimeout   = 5 * time.Second
-	defaultServiceDateReminderTemplate  = `[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待审核工单，请及时处理。`
+	defaultServiceDateReminderAccount  = "qq"
+	defaultServiceDateReminderTimeout  = 5 * time.Second
+	defaultServiceDateReminderTemplate = `[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待审核工单，请及时处理。`
 )
 
 // ServiceDateReminderConfig controls the pending-ticket reminder worker.
@@ -33,19 +32,21 @@ type ServiceDateReminderGatewayConfig struct {
 	Timeout      time.Duration
 }
 
-// LoadServiceDateReminderConfig reads and validates service-date reminder
-// settings. The message template and lead times are validated even while the
-// worker is disabled; gateway credentials are required only when enabled.
-func LoadServiceDateReminderConfig(getenv func(string) string) (ServiceDateReminderConfig, error) {
-	enabled, err := parseBoolSetting(getenv("SERVICE_DATE_REMINDER_ENABLED"), false)
-	if err != nil {
-		return ServiceDateReminderConfig{}, fmt.Errorf("invalid SERVICE_DATE_REMINDER_ENABLED: %w", err)
-	}
-
-	leadTimes, err := parseServiceDateReminderLeadTimes(getenv("SERVICE_DATE_REMINDER_LEAD_TIMES"))
-	if err != nil {
+// LoadServiceDateReminderConfig combines database-managed reminder settings
+// with environment-managed template and gateway credentials.
+func LoadServiceDateReminderConfig(
+	getenv func(string) string,
+	enabled bool,
+	leadTimes []time.Duration,
+	account string,
+) (ServiceDateReminderConfig, error) {
+	leadTimes = append([]time.Duration(nil), leadTimes...)
+	if err := validateServiceDateReminderLeadTimes(leadTimes); err != nil {
 		return ServiceDateReminderConfig{}, fmt.Errorf("invalid SERVICE_DATE_REMINDER_LEAD_TIMES: %w", err)
 	}
+	sort.Slice(leadTimes, func(i, j int) bool {
+		return leadTimes[i] > leadTimes[j]
+	})
 
 	messageTemplate, err := parseServiceDateReminderTemplate(getenv("SERVICE_DATE_REMINDER_TEMPLATE"))
 	if err != nil {
@@ -59,7 +60,7 @@ func LoadServiceDateReminderConfig(getenv func(string) string) (ServiceDateRemin
 		}
 	}
 
-	account := strings.TrimSpace(getenv("MESSAGE_GATEWAY_ACCOUNT"))
+	account = strings.TrimSpace(account)
 	if account == "" {
 		account = defaultServiceDateReminderAccount
 	}
@@ -93,34 +94,21 @@ func LoadServiceDateReminderConfig(getenv func(string) string) (ServiceDateRemin
 	}, nil
 }
 
-func parseServiceDateReminderLeadTimes(raw string) ([]time.Duration, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		raw = defaultServiceDateReminderLeadTimes
+func validateServiceDateReminderLeadTimes(leadTimes []time.Duration) error {
+	if len(leadTimes) == 0 {
+		return fmt.Errorf("at least one lead time is required")
 	}
-
-	parts := strings.Split(raw, ",")
-	leadTimes := make([]time.Duration, 0, len(parts))
-	seen := make(map[time.Duration]struct{}, len(parts))
-	for _, part := range parts {
-		leadTime, err := time.ParseDuration(strings.TrimSpace(part))
-		if err != nil {
-			return nil, err
-		}
+	seen := make(map[time.Duration]struct{}, len(leadTimes))
+	for _, leadTime := range leadTimes {
 		if leadTime <= 0 || leadTime%time.Second != 0 {
-			return nil, fmt.Errorf("%s must be positive and use whole seconds", leadTime)
+			return fmt.Errorf("%s must be positive and use whole seconds", leadTime)
 		}
 		if _, ok := seen[leadTime]; ok {
-			return nil, fmt.Errorf("duplicate lead time %s", leadTime)
+			return fmt.Errorf("duplicate lead time %s", leadTime)
 		}
 		seen[leadTime] = struct{}{}
-		leadTimes = append(leadTimes, leadTime)
 	}
-
-	sort.Slice(leadTimes, func(i, j int) bool {
-		return leadTimes[i] > leadTimes[j]
-	})
-	return leadTimes, nil
+	return nil
 }
 
 func parseServiceDateReminderTemplate(raw string) (*template.Template, error) {

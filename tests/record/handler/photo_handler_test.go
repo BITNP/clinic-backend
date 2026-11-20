@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -33,6 +34,7 @@ type fakePhotoObject struct {
 
 type fakePhotoStorage struct {
 	objects map[string]fakePhotoObject
+	putErr  error
 }
 
 func newFakePhotoStorage() *fakePhotoStorage {
@@ -40,6 +42,9 @@ func newFakePhotoStorage() *fakePhotoStorage {
 }
 
 func (f *fakePhotoStorage) Put(_ context.Context, key string, body io.ReadSeeker, size int64, contentType string) (string, error) {
+	if f.putErr != nil {
+		return "", f.putErr
+	}
 	data, err := io.ReadAll(body)
 	if err != nil {
 		return "", err
@@ -239,6 +244,25 @@ func TestPhotoHandlerCreate(t *testing.T) {
 	}
 	if len(photos) != 1 {
 		t.Fatalf("photos = %d, want 1", len(photos))
+	}
+}
+
+func TestPhotoHandlerUnexpectedStorageError(t *testing.T) {
+	handler, _, rec, store := setupPhotoHandlerTest(t, 9, 1024)
+	store.putErr = errors.New("storage unavailable")
+	target := fmt.Sprintf("/api/admin/records/%d/photos", rec.ID)
+	req := multipartPhotoRequest(t, http.MethodPost, target, photoPart{field: "photo", filename: "repair.jpg", data: handlerTestJPEG})
+
+	c, w := newPhotoContext(http.MethodPost, target, req.Body)
+	c.Request.Header = req.Header
+	c.Params = recordParams(rec.ID, "")
+	handler.Create(c)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), store.putErr.Error()) {
+		t.Errorf("body = %s, want underlying storage error", w.Body.String())
 	}
 }
 

@@ -19,18 +19,19 @@ import (
 
 // CASAuthConfig configures the CAS login/logout handlers.
 type CASAuthConfig struct {
-	Client         authclient.CASClient
-	SessionService *authservice.SessionService
-	StaffService   *staffservice.StaffService
-	SyncService    *changes.SyncService
-	BaseURL        string
-	DefaultNext    string
-	CookieName     string
-	CSRFCookieName string
-	CookieSecure   bool
-	CookieSameSite http.SameSite
-	SessionTTL     time.Duration
-	StaffVersion   int
+	Client             authclient.CASClient
+	SessionService     *authservice.SessionService
+	StaffService       *staffservice.StaffService
+	SyncService        *changes.SyncService
+	BaseURL            string
+	DefaultNext        string
+	CookieName         string
+	CSRFCookieName     string
+	CookieSecure       bool
+	CookieSameSite     http.SameSite
+	SessionTTL         time.Duration
+	StaffVersion       int
+	StaffVersionGetter func() int
 }
 
 // CASAuthHandler implements GET /login and GET /logout.
@@ -81,9 +82,9 @@ func (h *CASAuthHandler) Login(c *gin.Context) {
 
 	log.Printf("cas login attributes: %v", attrs.Raw)
 
-	role := determineRole(attrs.Groups)
+	role := determineCASRole(attrs.Realms, attrs.Groups)
 	if role == "" {
-		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "insufficient group membership"})
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "insufficient realm or group membership"})
 		return
 	}
 
@@ -93,8 +94,8 @@ func (h *CASAuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	log.Printf("cas login parsed: user=%q realname=%q qq_number=%q groups=%v staff_id=%d stored_qq_number=%q",
-		attrs.User, attrs.Realname, attrs.QQNumber, attrs.Groups, staff.ID, staff.QQNumber)
+	log.Printf("cas login parsed: user=%q realname=%q qq_number=%q groups=%v realms=%v staff_id=%d stored_qq_number=%q",
+		attrs.User, attrs.Realname, attrs.QQNumber, attrs.Groups, attrs.Realms, staff.ID, staff.QQNumber)
 
 	if err := h.cfg.StaffService.UpdateRole(staff.ID, string(role)); err != nil {
 		log.Printf("warning: failed to persist role %s for staff %d: %v", role, staff.ID, err)
@@ -104,7 +105,11 @@ func (h *CASAuthHandler) Login(c *gin.Context) {
 		log.Printf("warning: failed to record work years for staff %d: %v", staff.ID, err)
 	}
 
-	if err := h.cfg.StaffService.UpdateVersion(staff.ID, h.cfg.StaffVersion); err != nil {
+	version := h.cfg.StaffVersion
+	if h.cfg.StaffVersionGetter != nil {
+		version = h.cfg.StaffVersionGetter()
+	}
+	if err := h.cfg.StaffService.UpdateVersion(staff.ID, version); err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to finalize login"})
 		return
 	}

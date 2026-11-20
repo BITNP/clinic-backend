@@ -10,6 +10,7 @@ import (
 type ReminderWorker struct {
 	Discovery *ReminderDiscovery
 	Delivery  *ReminderDelivery
+	Enabled   func() bool
 }
 
 func (w *ReminderWorker) Run(ctx context.Context) {
@@ -20,6 +21,14 @@ func (w *ReminderWorker) Run(ctx context.Context) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
+		if w.Enabled != nil && !w.Enabled() {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				continue
+			}
+		}
 		scanCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		err := w.Discovery.Discover(scanCtx, time.Now())
 		cancel()
@@ -44,6 +53,9 @@ func (w *ReminderWorker) deliverLoop(ctx context.Context, wake <-chan struct{}) 
 	for {
 		processed := 0
 		for i := 0; i < 10 && ctx.Err() == nil; i++ {
+			if w.Enabled != nil && !w.Enabled() {
+				break
+			}
 			claimCtx, stop := context.WithTimeout(ctx, 10*time.Second)
 			job, err := w.Delivery.Claim(claimCtx, time.Now())
 			stop()

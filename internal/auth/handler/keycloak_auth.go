@@ -30,7 +30,8 @@ type KeycloakAuthenticator struct {
 	staffSvc *staffservice.StaffService
 	syncSvc  *changes.SyncService
 
-	staffVersion int
+	staffVersion       int
+	staffVersionGetter func() int
 
 	mu     sync.RWMutex
 	cached *cachedJWKS
@@ -56,6 +57,18 @@ func (a *KeycloakAuthenticator) SetStaffVersion(version int) {
 	a.staffVersion = version
 }
 
+// SetStaffVersionGetter supplies the current required version.
+func (a *KeycloakAuthenticator) SetStaffVersionGetter(getter func() int) {
+	a.staffVersionGetter = getter
+}
+
+func (a *KeycloakAuthenticator) currentStaffVersion() int {
+	if a.staffVersionGetter != nil {
+		return a.staffVersionGetter()
+	}
+	return a.staffVersion
+}
+
 // Configured reports whether realm URL and client ID are both set.
 func (a *KeycloakAuthenticator) Configured() bool {
 	return a.realmURL != "" && a.clientID != ""
@@ -74,9 +87,10 @@ func (a *KeycloakAuthenticator) Authenticate(tokenStr string) (staffmodel.Clinic
 	}
 
 	groups := extractGroups(claims)
-	role := determineRole(groups)
+	realms := extractStringClaim(claims, "realm")
+	role := determineKeycloakRole(realms, groups)
 	if role == "" {
-		return staffmodel.ClinicStaff{}, "", errors.New("insufficient group membership")
+		return staffmodel.ClinicStaff{}, "", errors.New("insufficient realm or group membership")
 	}
 
 	accountID := extractAccountID(claims)
@@ -100,7 +114,7 @@ func (a *KeycloakAuthenticator) Authenticate(tokenStr string) (staffmodel.Clinic
 		log.Printf("warning: failed to record work years for staff %d: %v", staff.ID, err)
 	}
 
-	if err := a.staffSvc.UpdateVersion(staff.ID, a.staffVersion); err != nil {
+	if err := a.staffSvc.UpdateVersion(staff.ID, a.currentStaffVersion()); err != nil {
 		log.Printf("warning: failed to update version for staff %d: %v", staff.ID, err)
 	}
 
@@ -123,17 +137,23 @@ func (a *KeycloakAuthenticator) bumpStaffSync() {
 }
 
 func extractGroups(claims jwt.MapClaims) []string {
-	switch v := claims["groups"].(type) {
+	return extractStringClaim(claims, "groups")
+}
+
+func extractStringClaim(claims jwt.MapClaims, key string) []string {
+	switch v := claims[key].(type) {
 	case []any:
-		groups := make([]string, 0, len(v))
-		for _, g := range v {
-			if s, ok := g.(string); ok {
-				groups = append(groups, s)
+		values := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				values = append(values, s)
 			}
 		}
-		return groups
+		return values
 	case []string:
 		return v
+	case string:
+		return []string{v}
 	}
 	return nil
 }

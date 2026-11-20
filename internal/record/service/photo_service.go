@@ -42,10 +42,12 @@ type PhotoUpload struct {
 
 // PhotoService owns ordered photos attached to a record.
 type PhotoService struct {
-	db           *database.DB
-	store        photoStorage
-	maxCount     int
-	maxSizeBytes int64
+	db             *database.DB
+	store          photoStorage
+	maxCount       int
+	maxCountGetter func() int
+	maxSizeBytes   int64
+	maxSizeGetter  func() int64
 }
 
 // NewPhotoService creates a photo service. The database and storage are
@@ -70,13 +72,25 @@ func NewPhotoService(db *database.DB, store photoStorage, maxCount int, maxSizeB
 	}, nil
 }
 
+// SetMaxCountGetter supplies the current configured photo limit.
+func (s *PhotoService) SetMaxCountGetter(getter func() int) { s.maxCountGetter = getter }
+
+// SetMaxSizeGetter supplies the current configured per-photo size limit.
+func (s *PhotoService) SetMaxSizeGetter(getter func() int64) { s.maxSizeGetter = getter }
+
 // MaxCount is the maximum number of photos a record may have.
 func (s *PhotoService) MaxCount() int {
+	if s.maxCountGetter != nil {
+		return s.maxCountGetter()
+	}
 	return s.maxCount
 }
 
 // MaxSizeBytes is the maximum size of one photo.
 func (s *PhotoService) MaxSizeBytes() int64 {
+	if s.maxSizeGetter != nil {
+		return s.maxSizeGetter()
+	}
 	return s.maxSizeBytes
 }
 
@@ -130,6 +144,7 @@ func (s *PhotoService) Get(ctx context.Context, recordID uint, position int) (re
 // Append validates and uploads a photo, then inserts it at the end of the
 // record's ordered photo list.
 func (s *PhotoService) Append(ctx context.Context, recordID uint, upload PhotoUpload) (recordmodel.ClinicRecordPhoto, error) {
+	maxCount := s.MaxCount()
 	if err := s.ensureRecord(ctx, recordID); err != nil {
 		return recordmodel.ClinicRecordPhoto{}, err
 	}
@@ -157,7 +172,7 @@ func (s *PhotoService) Append(ctx context.Context, recordID uint, upload PhotoUp
 		).Scan(&count); err != nil {
 			return fmt.Errorf("count photos for record %d: %w", recordID, err)
 		}
-		if count >= int64(s.maxCount) {
+		if count >= int64(maxCount) {
 			return ErrPhotoLimitReached
 		}
 		var err error
@@ -451,7 +466,7 @@ func (s *PhotoService) validateUpload(upload PhotoUpload) (string, error) {
 	if upload.Reader == nil || upload.Size <= 0 {
 		return "", ErrPhotoFileRequired
 	}
-	if upload.Size > s.maxSizeBytes {
+	if upload.Size > s.MaxSizeBytes() {
 		return "", ErrPhotoTooLarge
 	}
 	contentType, err := detectPhotoContentType(upload.Reader)

@@ -348,6 +348,137 @@ func TestRecordTagger_RunsConfiguredWorkers(t *testing.T) {
 	}
 }
 
+func TestRecordTagger_ResizeWorkers(t *testing.T) {
+	db, tagSvc := seedTaggerTags(t)
+	matched, ok := tagSvc.ByTitle("风扇故障")
+	if !ok {
+		t.Fatal("expected 风扇故障 tag in catalog")
+	}
+
+	var mu sync.Mutex
+	active := 0
+	maxBeforeShrink := 0
+	maxAfterShrink := 0
+	shrunk := false
+	started := make(chan struct{}, 5)
+	done := make(chan struct{}, 5)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseAll := func() { releaseOnce.Do(func() { close(release) }) }
+
+	agent := &fakeTagAgent{tagFn: func(string) (tagger.Result, error) {
+		mu.Lock()
+		active++
+		if shrunk {
+			if active > maxAfterShrink {
+				maxAfterShrink = active
+			}
+		} else if active > maxBeforeShrink {
+			maxBeforeShrink = active
+		}
+		mu.Unlock()
+		started <- struct{}{}
+		<-release
+		mu.Lock()
+		active--
+		mu.Unlock()
+		done <- struct{}{}
+		return tagger.Result{Name: "风扇故障", Reason: "fan issue"}, nil
+	}}
+
+	for i := 0; i < 5; i++ {
+		record := recordmodel.ClinicRecord{
+			Realname:        "r",
+			PhoneNum:        "p",
+			Status:          recordmodel.RecordStatusPending,
+			AppointmentTime: time.Now(),
+			QuestionDesc:    "fan",
+			RoomID:          1,
+		}
+		if err := db.Create(&record).Error; err != nil {
+			t.Fatalf("create record: %v", err)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan struct{})
+	svc := taggingservice.NewRecordTagger(agent, testutil.RawDB(t, db), tagSvc)
+	svc.SetWorkers(3)
+	go func() {
+		defer close(runDone)
+		svc.Run(ctx)
+	}()
+	defer func() {
+		releaseAll()
+		cancel()
+		<-runDone
+	}()
+
+	var records []recordmodel.ClinicRecord
+	if err := db.Find(&records).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, record := range records {
+		svc.Enqueue(record.ID, "fan", "", "")
+	}
+	for i := 0; i < 3; i++ {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatal("initial workers did not start")
+		}
+	}
+
+	mu.Lock()
+	shrunk = true
+	mu.Unlock()
+	svc.SetWorkers(1)
+	releaseAll()
+
+	for i := 0; i < 5; i++ {
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for resized workers")
+		}
+	}
+
+	mu.Lock()
+	gotBefore := maxBeforeShrink
+	gotAfter := maxAfterShrink
+	mu.Unlock()
+	if gotBefore != 3 {
+		t.Errorf("max active before shrink = %d, want 3", gotBefore)
+	}
+	if gotAfter > 1 {
+		t.Errorf("max active after shrink = %d, want at most 1", gotAfter)
+	}
+	if matched.ID == 0 {
+		t.Fatal("matched tag was not loaded")
+	}
+}
+
+func TestRecordTagger_SetTaggersReplacesGeneration(t *testing.T) {
+	_, tagSvc := seedTaggerTags(t)
+	first := &fakeTagAgent{tagFn: func(string) (tagger.Result, error) {
+		return tagger.Result{Name: "first"}, nil
+	}}
+	second := &fakeTagAgent{tagFn: func(string) (tagger.Result, error) {
+		return tagger.Result{Name: "second"}, nil
+	}}
+	svc := taggingservice.NewRecordTagger(first, nil, tagSvc)
+
+	name, err := svc.Tag(context.Background(), "text")
+	if err != nil || name != "first" {
+		t.Fatalf("initial Tag() = %q, %v", name, err)
+	}
+	svc.SetTaggers(second, nil, 2)
+	name, err = svc.Tag(context.Background(), "text")
+	if err != nil || name != "second" {
+		t.Fatalf("updated Tag() = %q, %v", name, err)
+	}
+}
+
 func TestRecordTagger_WorkerAssignsTagAndLiquidMetalStatus(t *testing.T) {
 	db, tagSvc := seedTaggerTags(t)
 	matched, ok := tagSvc.ByTitle("风扇故障")

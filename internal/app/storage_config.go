@@ -14,7 +14,8 @@ const (
 	defaultGetURLTTL = 10 * time.Minute
 )
 
-func loadStorageService(getenv func(string) string) (*storage.Service, error) {
+// LoadStorageService reads storage settings and builds the configured service.
+func LoadStorageService(getenv func(string) string) (*storage.Service, error) {
 	putURLTTL, err := parseDurationSetting(getenv("S3_PUT_URL_TTL"), defaultPutURLTTL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid S3_PUT_URL_TTL: %w", err)

@@ -23,8 +23,9 @@ const (
 type StaffRole string
 
 const (
-	RoleAdmin StaffRole = "admin"
-	RoleStaff StaffRole = "staff"
+	RoleSuperAdmin StaffRole = "superadmin"
+	RoleAdmin      StaffRole = "admin"
+	RoleStaff      StaffRole = "staff"
 )
 
 // ContextStaff extracts the ClinicStaff from the Gin context.
@@ -47,27 +48,35 @@ func ContextRole(c *gin.Context) (StaffRole, bool) {
 	return r, ok
 }
 
-// RequireStaff aborts with 403 unless the request is authenticated as staff or admin.
+// RequireStaff aborts with 403 unless the request has at least staff access.
 func RequireStaff(c *gin.Context) {
 	role, ok := ContextRole(c)
-	if !ok || (role != RoleStaff && role != RoleAdmin) {
+	if !ok || !hasStaffAccess(role) {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 	c.Next()
 }
 
-// RequireAdmin aborts with 403 unless the request is authenticated as admin.
+// RequireAdmin aborts with 403 unless the request has admin access.
 func RequireAdmin(c *gin.Context) {
 	role, ok := ContextRole(c)
-	if !ok || role != RoleAdmin {
+	if !ok || !hasAdminAccess(role) {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 	c.Next()
 }
 
-// determineRole maps group names to staff/admin roles using the same rules as Keycloak.
+func hasAdminAccess(role StaffRole) bool {
+	return role == RoleAdmin || role == RoleSuperAdmin
+}
+
+func hasStaffAccess(role StaffRole) bool {
+	return role == RoleStaff || hasAdminAccess(role)
+}
+
+// determineRole preserves the legacy group-based role rules used as a fallback.
 func determineRole(groups []string) StaffRole {
 	hasManagement := false
 	hasClinic := false
@@ -87,6 +96,55 @@ func determineRole(groups []string) StaffRole {
 		return RoleStaff
 	}
 	return ""
+}
+
+// determineRealmRole maps any configured realm value to its elevated role.
+// Superadmin roles are checked first so their precedence does not depend on the
+// order Keycloak returns the claims.
+func determineRealmRole(realms []string) StaffRole {
+	for _, realm := range realms {
+		switch strings.ToLower(strings.TrimSpace(realm)) {
+		case "clinic-maintainer", "position-association-vice-chair-clinic", "position-clinic-head":
+			return RoleSuperAdmin
+		}
+	}
+	for _, realm := range realms {
+		switch strings.ToLower(strings.TrimSpace(realm)) {
+		case "position-clinic-advisor", "position-clinic-deputy-head":
+			return RoleAdmin
+		}
+	}
+	return ""
+}
+
+// determineKeycloakRole applies realm roles before falling back to the clinic
+// group rule.
+func determineKeycloakRole(realms []string, groups []string) StaffRole {
+	if role := determineRealmRole(realms); role != "" {
+		return role
+	}
+	if hasClinicGroup(groups) {
+		return RoleStaff
+	}
+	return ""
+}
+
+// determineCASRole applies realm roles before preserving the legacy CAS group
+// fallback.
+func determineCASRole(realms []string, groups []string) StaffRole {
+	if role := determineRealmRole(realms); role != "" {
+		return role
+	}
+	return determineRole(groups)
+}
+
+func hasClinicGroup(groups []string) bool {
+	for _, group := range groups {
+		if strings.Contains(strings.ToLower(group), "clinic") {
+			return true
+		}
+	}
+	return false
 }
 
 // ExtractWorkYears parses group names of the form YYYY-XXXX and returns the
@@ -122,11 +180,12 @@ func parseGroupYear(group string) (int, bool) {
 
 // AdminAuthConfig configures the combined session + JWT authentication middleware.
 type AdminAuthConfig struct {
-	SessionService *authservice.SessionService
-	StaffService   *staffservice.StaffService
-	KeycloakAuth   *KeycloakAuthenticator
-	CookieName     string
-	StaffVersion   int
+	SessionService     *authservice.SessionService
+	StaffService       *staffservice.StaffService
+	KeycloakAuth       *KeycloakAuthenticator
+	CookieName         string
+	StaffVersion       int
+	StaffVersionGetter func() int
 }
 
 // NewAdminAuthMiddleware returns a Gin middleware that accepts either a CAS session
@@ -134,21 +193,30 @@ type AdminAuthConfig struct {
 // keys so that RequireStaff and RequireAdmin continue to work unchanged.
 func NewAdminAuthMiddleware(cfg AdminAuthConfig) gin.HandlerFunc {
 	m := &adminAuthMiddleware{
-		sessionSvc:   cfg.SessionService,
-		staffSvc:     cfg.StaffService,
-		kcAuth:       cfg.KeycloakAuth,
-		cookieName:   cfg.CookieName,
-		staffVersion: cfg.StaffVersion,
+		sessionSvc:         cfg.SessionService,
+		staffSvc:           cfg.StaffService,
+		kcAuth:             cfg.KeycloakAuth,
+		cookieName:         cfg.CookieName,
+		staffVersion:       cfg.StaffVersion,
+		staffVersionGetter: cfg.StaffVersionGetter,
 	}
 	return m.handle
 }
 
 type adminAuthMiddleware struct {
-	sessionSvc   *authservice.SessionService
-	staffSvc     *staffservice.StaffService
-	kcAuth       *KeycloakAuthenticator
-	cookieName   string
-	staffVersion int
+	sessionSvc         *authservice.SessionService
+	staffSvc           *staffservice.StaffService
+	kcAuth             *KeycloakAuthenticator
+	cookieName         string
+	staffVersion       int
+	staffVersionGetter func() int
+}
+
+func (m *adminAuthMiddleware) currentStaffVersion() int {
+	if m.staffVersionGetter != nil {
+		return m.staffVersionGetter()
+	}
+	return m.staffVersion
 }
 
 func (m *adminAuthMiddleware) handle(c *gin.Context) {
@@ -208,7 +276,7 @@ func (m *adminAuthMiddleware) handleSession(c *gin.Context) {
 		return
 	}
 
-	if staff.Version != m.staffVersion {
+	if staff.Version != m.currentStaffVersion() {
 		_ = m.sessionSvc.Delete(token)
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -233,11 +301,12 @@ func (m *adminAuthMiddleware) handleSession(c *gin.Context) {
 // anonymous (no staff/role in context).
 func NewOptionalAdminAuthMiddleware(cfg AdminAuthConfig) gin.HandlerFunc {
 	m := &adminAuthMiddleware{
-		sessionSvc:   cfg.SessionService,
-		staffSvc:     cfg.StaffService,
-		kcAuth:       cfg.KeycloakAuth,
-		cookieName:   cfg.CookieName,
-		staffVersion: cfg.StaffVersion,
+		sessionSvc:         cfg.SessionService,
+		staffSvc:           cfg.StaffService,
+		kcAuth:             cfg.KeycloakAuth,
+		cookieName:         cfg.CookieName,
+		staffVersion:       cfg.StaffVersion,
+		staffVersionGetter: cfg.StaffVersionGetter,
 	}
 	return m.optionalHandle
 }
@@ -284,7 +353,7 @@ func (m *adminAuthMiddleware) optionalTrySession(c *gin.Context) {
 		return
 	}
 
-	if staff.Version != m.staffVersion {
+	if staff.Version != m.currentStaffVersion() {
 		_ = m.sessionSvc.Delete(token)
 		return
 	}

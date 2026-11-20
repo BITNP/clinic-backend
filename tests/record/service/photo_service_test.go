@@ -257,6 +257,21 @@ func TestPhotoServiceAppendEnforcesMaxSize(t *testing.T) {
 	}
 }
 
+func TestPhotoServiceMaxSizeGetterAppliesImmediately(t *testing.T) {
+	_, _, svc, rec := setupPhotoServiceTest(t, 9, 3)
+	maxSize := int64(3)
+	svc.SetMaxSizeGetter(func() int64 { return maxSize })
+
+	if _, err := svc.Append(context.Background(), rec.ID, photoUpload(testJPEG)); !errors.Is(err, recordservice.ErrPhotoTooLarge) {
+		t.Fatalf("Append() error = %v, want ErrPhotoTooLarge", err)
+	}
+
+	maxSize = 4096
+	if _, err := svc.Append(context.Background(), rec.ID, photoUpload(testJPEG)); err != nil {
+		t.Fatalf("Append() after increasing limit: %v", err)
+	}
+}
+
 func TestPhotoServiceAppendRejectsUnsupportedType(t *testing.T) {
 	_, store, svc, rec := setupPhotoServiceTest(t, 9, 1024)
 	ctx := context.Background()

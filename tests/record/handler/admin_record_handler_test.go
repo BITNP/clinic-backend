@@ -127,3 +127,27 @@ func TestAdminRecordHandlerListSearchByRealname(t *testing.T) {
 		}
 	}
 }
+
+func TestAdminRecordHandlerRevertWithoutActionReturnsConflict(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open fake database: %v", err)
+	}
+	h := recordhandler.NewAdminRecordHandler(recordservice.NewAdminRecordService(testutil.RawDB(t, db)))
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("staff", staffmodel.ClinicStaff{ID: 7})
+	})
+	router.POST("/api/admin/records/:id/revert", h.Revert)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/records/1/revert", nil)
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusConflict, w.Body.String())
+	}
+}

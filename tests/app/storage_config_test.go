@@ -1,17 +1,13 @@
-package app
+package app_test
 
 import (
 	"context"
 	"net/url"
 	"strings"
 	"testing"
-)
 
-func envMap(values map[string]string) func(string) string {
-	return func(key string) string {
-		return values[key]
-	}
-}
+	"clinic-backend/internal/app"
+)
 
 func validStorageEnv() map[string]string {
 	return map[string]string{
@@ -27,12 +23,12 @@ func validStorageEnv() map[string]string {
 }
 
 func TestLoadStorageService_Valid(t *testing.T) {
-	service, err := loadStorageService(envMap(validStorageEnv()))
+	service, err := app.LoadStorageService(envMap(validStorageEnv()))
 	if err != nil {
-		t.Fatalf("loadStorageService() error = %v", err)
+		t.Fatalf("LoadStorageService() error = %v", err)
 	}
 	if service == nil {
-		t.Fatal("loadStorageService() returned a nil service")
+		t.Fatal("LoadStorageService() returned a nil service")
 	}
 
 	put, err := service.PresignPut(context.Background(), "photos/key.jpg", "image/jpeg")
@@ -53,9 +49,9 @@ func TestLoadStorageService_DefaultExpiry(t *testing.T) {
 	delete(values, "S3_PUT_URL_TTL")
 	delete(values, "S3_GET_URL_TTL")
 
-	service, err := loadStorageService(envMap(values))
+	service, err := app.LoadStorageService(envMap(values))
 	if err != nil {
-		t.Fatalf("loadStorageService() error = %v", err)
+		t.Fatalf("LoadStorageService() error = %v", err)
 	}
 
 	put, err := service.PresignPut(context.Background(), "photos/key.jpg", "image/jpeg")
@@ -72,7 +68,7 @@ func TestLoadStorageService_DefaultExpiry(t *testing.T) {
 }
 
 func TestLoadStorageService_EmptyConfiguration(t *testing.T) {
-	service, err := loadStorageService(envMap(nil))
+	service, err := app.LoadStorageService(envMap(nil))
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -102,7 +98,7 @@ func TestLoadStorageService_MissingRequiredSettings(t *testing.T) {
 			values := validStorageEnv()
 			delete(values, tt.key)
 
-			service, err := loadStorageService(envMap(values))
+			service, err := app.LoadStorageService(envMap(values))
 			if err == nil {
 				t.Fatal("expected an error")
 			}
@@ -159,7 +155,7 @@ func TestLoadStorageService_InvalidSettings(t *testing.T) {
 			values := validStorageEnv()
 			tt.mutate(values)
 
-			service, err := loadStorageService(envMap(values))
+			service, err := app.LoadStorageService(envMap(values))
 			if err == nil {
 				t.Fatal("expected an error")
 			}
@@ -174,12 +170,12 @@ func TestLoadStorageService_InvalidSettings(t *testing.T) {
 }
 
 func TestLoadStorageService_ConfigLoadingDoesNotContactStorage(t *testing.T) {
-	service, err := loadStorageService(envMap(validStorageEnv()))
+	service, err := app.LoadStorageService(envMap(validStorageEnv()))
 	if err != nil {
-		t.Fatalf("loadStorageService() error = %v", err)
+		t.Fatalf("LoadStorageService() error = %v", err)
 	}
 	if service == nil {
-		t.Fatal("loadStorageService() returned a nil service")
+		t.Fatal("LoadStorageService() returned a nil service")
 	}
 
 	// Signing is offline, so this must work even though nothing listens on the
@@ -194,7 +190,7 @@ func TestLoadStorageService_DoesNotExposeSecrets(t *testing.T) {
 	delete(values, "S3_ENDPOINT")
 	values["S3_SECRET_ACCESS_KEY"] = "super-secret-value"
 
-	_, err := loadStorageService(envMap(values))
+	_, err := app.LoadStorageService(envMap(values))
 	if err == nil {
 		t.Fatal("expected an error")
 	}

@@ -15,14 +15,15 @@ version: "3"
 #   systemctl --user enable --now podman.socket
 #   podman-compose -f docker-compose.prod.yml up -d
 #
-# Usage on the server (only this file, .env, deploy/rustfs/ and the image
-# tarball are needed):
+# Usage on the server (only this file, .env, runtime_settings.json,
+# deploy/rustfs/ and the image tarball are needed):
 #   docker load -i clinic-images.tar
 #   cp .env.example .env            # then set real secrets:
 #                                   #   CLINIC_API_KEY, APP_BASE_URL,
 #                                   #   CAS_SERVER_URL, CLINIC_DB_DSN,
 #                                   #   MAINTAINER_QQ_IDS, MESSAGE_GATEWAY_ACCOUNT_TOKEN,
 #                                   #   RUSTFS_*, S3_*, ...
+#   cp runtime_settings.example.json runtime_settings.json
 #   docker compose -f docker-compose.prod.yml up -d
 #
 # Override image tags with BACKEND_IMAGE_TAG / ADMIN_FRONTEND_IMAGE_TAG /
@@ -135,7 +136,6 @@ services:
       CLINIC_DB_DSN: ${CLINIC_DB_DSN:-postgres://${POSTGRES_USER:-clinic}:${POSTGRES_PASSWORD:-clinic}@host.containers.internal:5432/${POSTGRES_DB:-clinic}?sslmode=disable}
       CLINIC_API_KEY: ${CLINIC_API_KEY:?set CLINIC_API_KEY in .env}
       CLINIC_TIMEZONE: ${CLINIC_TIMEZONE:-Asia/Shanghai}
-      SYNC_POLL_INTERVAL: ${SYNC_POLL_INTERVAL:-10s}
       TZ: ${TZ:-Asia/Shanghai}
       REDIS_ADDR: ${REDIS_ADDR:-redis:6379}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
@@ -151,17 +151,8 @@ services:
       SESSION_TTL: ${SESSION_TTL:-336h}
       KEYCLOAK_REALM_URL: ${KEYCLOAK_REALM_URL:-}
       KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-}
-      TAGGER_LLM_API_KEY: ${TAGGER_LLM_API_KEY:-}
-      TAGGER_LLM_BASE_URL: ${TAGGER_LLM_BASE_URL:-}
-      TAGGER_LLM_MODEL: ${TAGGER_LLM_MODEL:-}
-      TAGGER_AGENT_POOL_SIZE: ${TAGGER_AGENT_POOL_SIZE:-4}
-      TAGGER_CONTEXT_TOKENS: ${TAGGER_CONTEXT_TOKENS:-32000}
-      TAGGER_TIMEOUT: ${TAGGER_TIMEOUT:-30s}
       MESSAGE_GATEWAY_URL: ${MESSAGE_GATEWAY_URL:-http://message-gateway:8081}
       MESSAGE_GATEWAY_TIMEOUT: ${MESSAGE_GATEWAY_TIMEOUT:-5s}
-      RECORD_ACTION_WINDOW: ${RECORD_ACTION_WINDOW:-5m}
-      RECORD_PHOTO_MAX_COUNT: ${RECORD_PHOTO_MAX_COUNT:-9}
-      RECORD_PHOTO_MAX_SIZE_BYTES: ${RECORD_PHOTO_MAX_SIZE_BYTES:-10485760}
       S3_ENDPOINT: ${S3_ENDPOINT:?set S3_ENDPOINT in .env}
       S3_INTERNAL_ENDPOINT: ${S3_INTERNAL_ENDPOINT:-http://rustfs:9000}
       S3_BUCKET: ${S3_BUCKET:?set S3_BUCKET in .env}
@@ -170,6 +161,8 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
       S3_PUT_URL_TTL: ${S3_PUT_URL_TTL:-5m}
       S3_GET_URL_TTL: ${S3_GET_URL_TTL:-10m}
+    volumes:
+      - ./runtime_settings.json:/app/runtime_settings.json:ro
     networks:
       - default
       - message-gateway
