@@ -33,7 +33,7 @@ func TestClinicConfigItem_CreateAndRetrieve(t *testing.T) {
 		DisplayName: "Maximum Booking Days",
 		IsRequired:  true,
 		RoleLevel:   configmodel.ConfigRoleLevelStaff,
-		IsReadable:  true,
+		WriteOnly:   true,
 		GroupID:     group.ID,
 		SortOrder:   3,
 	}
@@ -63,8 +63,8 @@ func TestClinicConfigItem_CreateAndRetrieve(t *testing.T) {
 	if retrieved.RoleLevel != item.RoleLevel {
 		t.Errorf("role_level = %q, want %q", retrieved.RoleLevel, item.RoleLevel)
 	}
-	if retrieved.IsReadable != item.IsReadable {
-		t.Errorf("is_readable = %t, want %t", retrieved.IsReadable, item.IsReadable)
+	if retrieved.WriteOnly != item.WriteOnly {
+		t.Errorf("writeonly = %t, want %t", retrieved.WriteOnly, item.WriteOnly)
 	}
 	if retrieved.Group == nil || retrieved.Group.ID != group.ID {
 		t.Errorf("group = %+v, want group %d", retrieved.Group, group.ID)
@@ -92,8 +92,8 @@ func TestClinicConfigItem_AccessDefaults(t *testing.T) {
 	if retrieved.RoleLevel != configmodel.ConfigRoleLevelAdmin {
 		t.Errorf("role_level = %q, want %q", retrieved.RoleLevel, configmodel.ConfigRoleLevelAdmin)
 	}
-	if retrieved.IsReadable {
-		t.Error("is_readable = true, want false")
+	if retrieved.WriteOnly {
+		t.Error("writeonly = true, want false")
 	}
 }
 
@@ -127,8 +127,8 @@ func TestClinicConfigItem_AutoMigrateAddsAccessDefaultsToExistingRows(t *testing
 	if retrieved.RoleLevel != configmodel.ConfigRoleLevelAdmin {
 		t.Errorf("role_level = %q, want %q", retrieved.RoleLevel, configmodel.ConfigRoleLevelAdmin)
 	}
-	if retrieved.IsReadable {
-		t.Error("is_readable = true, want false")
+	if retrieved.WriteOnly {
+		t.Error("writeonly = true, want false")
 	}
 }
 

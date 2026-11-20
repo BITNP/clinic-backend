@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	configmodel "clinic-backend/internal/config/model"
 	"clinic-backend/internal/database"
 	roommodel "clinic-backend/internal/room/model"
 	staffmodel "clinic-backend/internal/staff/model"
@@ -18,6 +19,10 @@ const defaultCampusName = "默认校区"
 // MigrateBeforeAutoMigrate applies column renames that AutoMigrate cannot do
 // safely after it has created the replacement column.
 func MigrateBeforeAutoMigrate(db *gorm.DB) error {
+	if err := renameConfigItemWriteOnlyColumn(db); err != nil {
+		return err
+	}
+
 	// clinic_staff.phone_num was replaced by email. AutoMigrate only adds
 	// missing columns, so rename an existing phone_num column explicitly.
 	if !db.Migrator().HasColumn(&staffmodel.ClinicStaff{}, "phone_num") {
@@ -25,6 +30,20 @@ func MigrateBeforeAutoMigrate(db *gorm.DB) error {
 	}
 	if err := db.Migrator().RenameColumn(&staffmodel.ClinicStaff{}, "phone_num", "email"); err != nil {
 		return fmt.Errorf("rename clinic_staff.phone_num to email: %w", err)
+	}
+	return nil
+}
+
+// renameConfigItemWriteOnlyColumn updates databases created while the access
+// attribute was briefly named is_readable.
+func renameConfigItemWriteOnlyColumn(db *gorm.DB) error {
+	model := &configmodel.ClinicConfigItem{}
+	if db.Migrator().HasColumn(model, "writeonly") ||
+		!db.Migrator().HasColumn(model, "is_readable") {
+		return nil
+	}
+	if err := db.Migrator().RenameColumn(model, "is_readable", "writeonly"); err != nil {
+		return fmt.Errorf("rename clinic_config_item.is_readable to writeonly: %w", err)
 	}
 	return nil
 }

@@ -154,8 +154,8 @@ func TestConfigHandler_CRUDAndFlatCatalog(t *testing.T) {
 	if item.Value != "7" || item.GroupID != group.ID {
 		t.Errorf("created item = %+v", item)
 	}
-	if item.RoleLevel != configmodel.ConfigRoleLevelAdmin || item.IsReadable {
-		t.Errorf("created item access = %q, %t; want admin, false", item.RoleLevel, item.IsReadable)
+	if item.RoleLevel != configmodel.ConfigRoleLevelAdmin || item.WriteOnly {
+		t.Errorf("created item access = %q, %t; want admin, false", item.RoleLevel, item.WriteOnly)
 	}
 
 	w = testutil.DoRequest(t, r, http.MethodGet, "/api/admin/config", nil)
@@ -198,8 +198,7 @@ func TestConfigHandler_CRUDAndFlatCatalog(t *testing.T) {
 		"value_type":   "boolean",
 		"display_name": "Enabled",
 		"is_required":  false,
-		"role_level":   "staff",
-		"is_readable":  true,
+		"writeonly":    false,
 		"sort_order":   4,
 	})
 	if w.Code != http.StatusOK {
@@ -211,8 +210,8 @@ func TestConfigHandler_CRUDAndFlatCatalog(t *testing.T) {
 	if item.Value != "false" || item.ValueType != configmodel.ConfigValueTypeBoolean {
 		t.Errorf("updated item = %+v", item)
 	}
-	if item.RoleLevel != configmodel.ConfigRoleLevelStaff || !item.IsReadable {
-		t.Errorf("updated item access = %q, %t; want staff, true", item.RoleLevel, item.IsReadable)
+	if item.RoleLevel != configmodel.ConfigRoleLevelAdmin || item.WriteOnly {
+		t.Errorf("updated item access = %q, %t; want admin, false", item.RoleLevel, item.WriteOnly)
 	}
 
 	w = testutil.DoRequest(t, r, http.MethodDelete, "/api/admin/config/items/"+testutil.Itoa(item.ID), nil)
@@ -222,6 +221,207 @@ func TestConfigHandler_CRUDAndFlatCatalog(t *testing.T) {
 	w = testutil.DoRequest(t, r, http.MethodDelete, "/api/admin/config/groups/"+testutil.Itoa(group.ID), nil)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("delete group: expected 204, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestConfigHandler_WriteOnlyValueIsOmitted(t *testing.T) {
+	r, svc, _ := setupConfigHandlerRouter(t, authhandler.RoleSuperAdmin)
+	group, err := svc.CreateGroup(configservice.CreateGroupInput{
+		Name:        "secrets",
+		DisplayName: "Secrets",
+	})
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+
+	w := testutil.DoRequest(t, r, http.MethodPost, "/api/admin/config/items", map[string]any{
+		"name":         "api_secret",
+		"value":        "initial-secret",
+		"value_type":   "string",
+		"display_name": "API Secret",
+		"role_level":   "superadmin",
+		"writeonly":    true,
+		"group_id":     group.ID,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create write-only item: %d %s", w.Code, w.Body)
+	}
+	if strings.Contains(w.Body.String(), "initial-secret") || strings.Contains(w.Body.String(), `"value":`) {
+		t.Fatalf("create response exposed write-only value: %s", w.Body)
+	}
+	var created configmodel.ClinicConfigItem
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode created item: %v", err)
+	}
+	stored, err := svc.GetItem(created.ID)
+	if err != nil {
+		t.Fatalf("get internally stored item: %v", err)
+	}
+	if stored.Value != "initial-secret" || !stored.WriteOnly {
+		t.Fatalf("stored write-only item = %+v", stored)
+	}
+
+	path := "/api/admin/config/items/" + testutil.Itoa(created.ID)
+	w = testutil.DoRequest(t, r, http.MethodGet, "/api/admin/config", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list catalog: %d %s", w.Code, w.Body)
+	}
+	if strings.Contains(w.Body.String(), "initial-secret") || strings.Contains(w.Body.String(), `"value":`) {
+		t.Fatalf("catalog exposed write-only value: %s", w.Body)
+	}
+
+	w = testutil.DoRequest(t, r, http.MethodGet, path, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("get write-only item: %d %s", w.Code, w.Body)
+	}
+	if strings.Contains(w.Body.String(), "initial-secret") || strings.Contains(w.Body.String(), `"value":`) {
+		t.Fatalf("get response exposed write-only value: %s", w.Body)
+	}
+
+	w = testutil.DoRequest(t, r, http.MethodPut, path, map[string]any{"value": "updated-secret"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("update write-only item: %d %s", w.Code, w.Body)
+	}
+	if strings.Contains(w.Body.String(), "updated-secret") || strings.Contains(w.Body.String(), `"value":`) {
+		t.Fatalf("update response exposed write-only value: %s", w.Body)
+	}
+	stored, err = svc.GetItem(created.ID)
+	if err != nil || stored.Value != "updated-secret" {
+		t.Fatalf("internally stored value = %q, error = %v", stored.Value, err)
+	}
+
+	w = testutil.DoRequest(t, r, http.MethodDelete, path, nil)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("delete write-only item: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestConfigHandler_AdminItemRoleScope(t *testing.T) {
+	r, svc, _ := setupConfigHandlerRouter(t, authhandler.RoleAdmin)
+	group, err := svc.CreateGroup(configservice.CreateGroupInput{
+		Name:        "scope",
+		DisplayName: "Scope",
+	})
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	createItem := func(name string, roleLevel configmodel.ConfigRoleLevel) configmodel.ClinicConfigItem {
+		t.Helper()
+		item, err := svc.CreateItem(configservice.CreateItemInput{
+			Name:        name,
+			Value:       "value",
+			ValueType:   configmodel.ConfigValueTypeString,
+			DisplayName: name,
+			RoleLevel:   roleLevel,
+			GroupID:     group.ID,
+		})
+		if err != nil {
+			t.Fatalf("create %s item: %v", roleLevel, err)
+		}
+		return item
+	}
+	adminItem := createItem("admin_item", configmodel.ConfigRoleLevelAdmin)
+	staffItem := createItem("staff_item", configmodel.ConfigRoleLevelStaff)
+	createItem("superadmin_item", configmodel.ConfigRoleLevelSuperAdmin)
+
+	w := testutil.DoRequest(t, r, http.MethodGet, "/api/admin/config", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list admin catalog: %d %s", w.Code, w.Body)
+	}
+	var catalog configservice.Catalog
+	if err := json.Unmarshal(w.Body.Bytes(), &catalog); err != nil {
+		t.Fatalf("decode admin catalog: %v", err)
+	}
+	if len(catalog.Items) != 1 || catalog.Items[0].ID != adminItem.ID {
+		t.Errorf("admin catalog items = %+v, want only item %d", catalog.Items, adminItem.ID)
+	}
+
+	staffPath := "/api/admin/config/items/" + testutil.Itoa(staffItem.ID)
+	adminPath := "/api/admin/config/items/" + testutil.Itoa(adminItem.ID)
+	if w := testutil.DoRequest(t, r, http.MethodGet, staffPath, nil); w.Code != http.StatusNotFound {
+		t.Fatalf("admin get staff item: %d %s", w.Code, w.Body)
+	}
+	if w := testutil.DoRequest(t, r, http.MethodPut, staffPath, map[string]any{"value": "changed"}); w.Code != http.StatusNotFound {
+		t.Fatalf("admin update staff item: %d %s", w.Code, w.Body)
+	}
+	if w := testutil.DoRequest(t, r, http.MethodPut, adminPath, map[string]any{"role_level": "staff"}); w.Code != http.StatusForbidden {
+		t.Fatalf("admin change admin item level: %d %s", w.Code, w.Body)
+	}
+	if w := testutil.DoRequest(t, r, http.MethodPost, "/api/admin/config/items", map[string]any{
+		"name": "forbidden_item", "value_type": "string", "display_name": "Forbidden",
+		"role_level": "staff", "group_id": group.ID,
+	}); w.Code != http.StatusForbidden {
+		t.Fatalf("admin create staff item: %d %s", w.Code, w.Body)
+	}
+	if w := testutil.DoRequest(t, r, http.MethodPost, "/api/admin/config/items", map[string]any{
+		"name": "admin_created", "value_type": "string", "display_name": "Admin Created",
+		"group_id": group.ID,
+	}); w.Code != http.StatusCreated {
+		t.Fatalf("admin create admin item: %d %s", w.Code, w.Body)
+	}
+	if w := testutil.DoRequest(t, r, http.MethodDelete, staffPath, nil); w.Code != http.StatusNotFound {
+		t.Fatalf("admin delete staff item: %d %s", w.Code, w.Body)
+	}
+	if w := testutil.DoRequest(t, r, http.MethodDelete, adminPath, nil); w.Code != http.StatusNoContent {
+		t.Fatalf("admin delete admin item: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestConfigHandler_SuperAdminItemRoleScope(t *testing.T) {
+	r, svc, _ := setupConfigHandlerRouter(t, authhandler.RoleSuperAdmin)
+	group, err := svc.CreateGroup(configservice.CreateGroupInput{
+		Name:        "scope",
+		DisplayName: "Scope",
+	})
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	staffItem, err := svc.CreateItem(configservice.CreateItemInput{
+		Name: "staff_item", Value: "value", ValueType: configmodel.ConfigValueTypeString,
+		DisplayName: "Staff Item", RoleLevel: configmodel.ConfigRoleLevelStaff, GroupID: group.ID,
+	})
+	if err != nil {
+		t.Fatalf("create staff item: %v", err)
+	}
+	superItem, err := svc.CreateItem(configservice.CreateItemInput{
+		Name: "super_item", Value: "value", ValueType: configmodel.ConfigValueTypeString,
+		DisplayName: "Super Item", RoleLevel: configmodel.ConfigRoleLevelSuperAdmin, GroupID: group.ID,
+	})
+	if err != nil {
+		t.Fatalf("create superadmin item: %v", err)
+	}
+
+	w := testutil.DoRequest(t, r, http.MethodGet, "/api/admin/config", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list superadmin catalog: %d %s", w.Code, w.Body)
+	}
+	var catalog configservice.Catalog
+	if err := json.Unmarshal(w.Body.Bytes(), &catalog); err != nil {
+		t.Fatalf("decode superadmin catalog: %v", err)
+	}
+	if len(catalog.Items) != 2 {
+		t.Errorf("superadmin catalog item count = %d, want 2", len(catalog.Items))
+	}
+
+	staffPath := "/api/admin/config/items/" + testutil.Itoa(staffItem.ID)
+	superPath := "/api/admin/config/items/" + testutil.Itoa(superItem.ID)
+	if w := testutil.DoRequest(t, r, http.MethodGet, staffPath, nil); w.Code != http.StatusOK {
+		t.Fatalf("superadmin get staff item: %d %s", w.Code, w.Body)
+	}
+	if w := testutil.DoRequest(t, r, http.MethodGet, superPath, nil); w.Code != http.StatusOK {
+		t.Fatalf("superadmin get superadmin item: %d %s", w.Code, w.Body)
+	}
+	if w := testutil.DoRequest(t, r, http.MethodPut, staffPath, map[string]any{"value": "updated"}); w.Code != http.StatusOK {
+		t.Fatalf("superadmin update staff item: %d %s", w.Code, w.Body)
+	}
+	if w := testutil.DoRequest(t, r, http.MethodPost, "/api/admin/config/items", map[string]any{
+		"name": "super_created", "value_type": "string", "display_name": "Super Created",
+		"role_level": "superadmin", "group_id": group.ID,
+	}); w.Code != http.StatusCreated {
+		t.Fatalf("superadmin create superadmin item: %d %s", w.Code, w.Body)
+	}
+	if w := testutil.DoRequest(t, r, http.MethodDelete, superPath, nil); w.Code != http.StatusNoContent {
+		t.Fatalf("superadmin delete superadmin item: %d %s", w.Code, w.Body)
 	}
 }
 

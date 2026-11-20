@@ -178,8 +178,8 @@ func TestConfigService_ItemCRUDNormalizesValue(t *testing.T) {
 	if item.Value != "7" {
 		t.Errorf("normalized value = %q, want 7", item.Value)
 	}
-	if item.RoleLevel != configmodel.ConfigRoleLevelAdmin || item.IsReadable {
-		t.Errorf("access defaults = %q, %t; want admin, false", item.RoleLevel, item.IsReadable)
+	if item.RoleLevel != configmodel.ConfigRoleLevelAdmin || item.WriteOnly {
+		t.Errorf("access defaults = %q, %t; want admin, false", item.RoleLevel, item.WriteOnly)
 	}
 
 	value := "false"
@@ -187,7 +187,7 @@ func TestConfigService_ItemCRUDNormalizesValue(t *testing.T) {
 	displayName := "Enabled"
 	required := false
 	roleLevel := configmodel.ConfigRoleLevelStaff
-	readable := true
+	writeOnly := true
 	groupID := secondGroup.ID
 	sortOrder := 3
 	updated, err := svc.UpdateItem(item.ID, configservice.UpdateItemInput{
@@ -196,7 +196,7 @@ func TestConfigService_ItemCRUDNormalizesValue(t *testing.T) {
 		DisplayName: &displayName,
 		IsRequired:  &required,
 		RoleLevel:   &roleLevel,
-		IsReadable:  &readable,
+		WriteOnly:   &writeOnly,
 		GroupID:     &groupID,
 		SortOrder:   &sortOrder,
 	})
@@ -209,17 +209,17 @@ func TestConfigService_ItemCRUDNormalizesValue(t *testing.T) {
 	if updated.GroupID != groupID || updated.SortOrder != sortOrder || updated.IsRequired {
 		t.Errorf("updated item relation/order = %+v", updated)
 	}
-	if updated.RoleLevel != roleLevel || !updated.IsReadable {
-		t.Errorf("updated access = %q, %t; want %q, true", updated.RoleLevel, updated.IsReadable, roleLevel)
+	if updated.RoleLevel != roleLevel || !updated.WriteOnly {
+		t.Errorf("updated access = %q, %t; want %q, true", updated.RoleLevel, updated.WriteOnly, roleLevel)
 	}
 
-	readable = false
-	updated, err = svc.UpdateItem(item.ID, configservice.UpdateItemInput{IsReadable: &readable})
+	writeOnly = false
+	updated, err = svc.UpdateItem(item.ID, configservice.UpdateItemInput{WriteOnly: &writeOnly})
 	if err != nil {
-		t.Fatalf("disable reading: %v", err)
+		t.Fatalf("disable write-only: %v", err)
 	}
-	if updated.IsReadable {
-		t.Error("is_readable = true after explicit false update")
+	if updated.WriteOnly {
+		t.Error("writeonly = true after explicit false update")
 	}
 
 	if err := svc.DeleteItem(item.ID); err != nil {
@@ -342,6 +342,121 @@ func TestConfigService_ItemValidation(t *testing.T) {
 	}
 	if item.Value != "" {
 		t.Errorf("optional empty value = %q, want empty", item.Value)
+	}
+}
+
+func TestConfigService_RoleScopedItemAccessAndWriteOnlyValues(t *testing.T) {
+	svc, _ := setupConfigServiceDB(t)
+	group := createGroup(t, svc, "access", 0)
+
+	createItem := func(name string, roleLevel configmodel.ConfigRoleLevel) configmodel.ClinicConfigItem {
+		t.Helper()
+		item, err := svc.CreateItem(configservice.CreateItemInput{
+			Name:        name,
+			Value:       "secret-" + name,
+			ValueType:   configmodel.ConfigValueTypeString,
+			DisplayName: name,
+			RoleLevel:   roleLevel,
+			WriteOnly:   true,
+			GroupID:     group.ID,
+		})
+		if err != nil {
+			t.Fatalf("create %s item: %v", roleLevel, err)
+		}
+		return item
+	}
+
+	adminItem := createItem("admin_secret", configmodel.ConfigRoleLevelAdmin)
+	staffItem := createItem("staff_secret", configmodel.ConfigRoleLevelStaff)
+	superItem := createItem("super_secret", configmodel.ConfigRoleLevelSuperAdmin)
+
+	adminCatalog, err := svc.ListCatalogFor(configmodel.ConfigRoleLevelAdmin)
+	if err != nil {
+		t.Fatalf("list admin catalog: %v", err)
+	}
+	if len(adminCatalog.Items) != 1 || adminCatalog.Items[0].ID != adminItem.ID {
+		t.Errorf("admin catalog items = %+v, want only item %d", adminCatalog.Items, adminItem.ID)
+	}
+	superCatalog, err := svc.ListCatalogFor(configmodel.ConfigRoleLevelSuperAdmin)
+	if err != nil {
+		t.Fatalf("list superadmin catalog: %v", err)
+	}
+	if len(superCatalog.Items) != 3 {
+		t.Fatalf("superadmin catalog item count = %d, want 3", len(superCatalog.Items))
+	}
+
+	if _, err := svc.GetItemFor(configmodel.ConfigRoleLevelAdmin, adminItem.ID); err != nil {
+		t.Fatalf("admin get admin item: %v", err)
+	}
+	if _, err := svc.GetItemFor(configmodel.ConfigRoleLevelAdmin, staffItem.ID); !errors.Is(err, configservice.ErrConfigItemNotFound) {
+		t.Fatalf("admin get staff item error = %v, want not found", err)
+	}
+	if _, err := svc.GetItemFor(configmodel.ConfigRoleLevelSuperAdmin, staffItem.ID); err != nil {
+		t.Fatalf("superadmin get staff item: %v", err)
+	}
+
+	internal, err := svc.GetItem(adminItem.ID)
+	if err != nil {
+		t.Fatalf("internal get write-only item: %v", err)
+	}
+	if internal.Value != "secret-admin_secret" || !internal.WriteOnly {
+		t.Errorf("internal write-only item = %+v", internal)
+	}
+
+	value := "updated-secret"
+	if _, err := svc.UpdateItemFor(
+		configmodel.ConfigRoleLevelAdmin,
+		adminItem.ID,
+		configservice.UpdateItemInput{Value: &value},
+	); err != nil {
+		t.Fatalf("admin update admin item: %v", err)
+	}
+	if _, err := svc.UpdateItemFor(
+		configmodel.ConfigRoleLevelAdmin,
+		staffItem.ID,
+		configservice.UpdateItemInput{Value: &value},
+	); !errors.Is(err, configservice.ErrConfigItemNotFound) {
+		t.Fatalf("admin update staff item error = %v, want not found", err)
+	}
+	staffRole := configmodel.ConfigRoleLevelStaff
+	if _, err := svc.UpdateItemFor(
+		configmodel.ConfigRoleLevelAdmin,
+		adminItem.ID,
+		configservice.UpdateItemInput{RoleLevel: &staffRole},
+	); !errors.Is(err, configservice.ErrConfigForbidden) {
+		t.Fatalf("admin elevate item error = %v, want forbidden", err)
+	}
+
+	if _, err := svc.CreateItemFor(configmodel.ConfigRoleLevelAdmin, configservice.CreateItemInput{
+		Name: "admin_created", ValueType: configmodel.ConfigValueTypeString,
+		DisplayName: "Admin Created", GroupID: group.ID,
+	}); err != nil {
+		t.Fatalf("admin create admin item: %v", err)
+	}
+	if _, err := svc.CreateItemFor(configmodel.ConfigRoleLevelAdmin, configservice.CreateItemInput{
+		Name: "admin_forbidden", ValueType: configmodel.ConfigValueTypeString,
+		DisplayName: "Admin Forbidden", RoleLevel: configmodel.ConfigRoleLevelSuperAdmin, GroupID: group.ID,
+	}); !errors.Is(err, configservice.ErrConfigForbidden) {
+		t.Fatalf("admin create superadmin item error = %v, want forbidden", err)
+	}
+	if _, err := svc.CreateItemFor(configmodel.ConfigRoleLevelSuperAdmin, configservice.CreateItemInput{
+		Name: "super_created", ValueType: configmodel.ConfigValueTypeString,
+		DisplayName: "Super Created", RoleLevel: configmodel.ConfigRoleLevelSuperAdmin, GroupID: group.ID,
+	}); err != nil {
+		t.Fatalf("superadmin create superadmin item: %v", err)
+	}
+
+	if err := svc.DeleteItemFor(configmodel.ConfigRoleLevelAdmin, staffItem.ID); !errors.Is(err, configservice.ErrConfigItemNotFound) {
+		t.Fatalf("admin delete staff item error = %v, want not found", err)
+	}
+	if err := svc.DeleteItemFor(configmodel.ConfigRoleLevelAdmin, adminItem.ID); err != nil {
+		t.Fatalf("admin delete admin item: %v", err)
+	}
+	if err := svc.DeleteItemFor(configmodel.ConfigRoleLevelSuperAdmin, staffItem.ID); err != nil {
+		t.Fatalf("superadmin delete staff item: %v", err)
+	}
+	if err := svc.DeleteItemFor(configmodel.ConfigRoleLevelSuperAdmin, superItem.ID); err != nil {
+		t.Fatalf("superadmin delete superadmin item: %v", err)
 	}
 }
 

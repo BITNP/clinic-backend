@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"clinic-backend/internal/app"
+	configmodel "clinic-backend/internal/config/model"
 	roommodel "clinic-backend/internal/room/model"
 	staffmodel "clinic-backend/internal/staff/model"
 
@@ -29,6 +30,15 @@ type legacyClinicRoom struct {
 
 func (legacyClinicRoom) TableName() string {
 	return "clinic_room"
+}
+
+type legacyClinicConfigItem struct {
+	ID         uint `gorm:"primaryKey;column:id"`
+	IsReadable bool `gorm:"column:is_readable;not null;default:false"`
+}
+
+func (legacyClinicConfigItem) TableName() string {
+	return "clinic_config_item"
 }
 
 func setupMigrationTestDB(t *testing.T) *gorm.DB {
@@ -72,6 +82,42 @@ func TestMigrateBeforeAutoMigrate_RenamesStaffPhoneColumn(t *testing.T) {
 	}
 	if email != staff.PhoneNum {
 		t.Errorf("email = %q, want %q", email, staff.PhoneNum)
+	}
+
+	if err := app.MigrateBeforeAutoMigrate(db); err != nil {
+		t.Fatalf("second migrate before auto: %v", err)
+	}
+}
+
+func TestMigrateBeforeAutoMigrate_RenamesConfigItemReadableColumn(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&legacyClinicConfigItem{}); err != nil {
+		t.Fatalf("migrate legacy config item: %v", err)
+	}
+	item := legacyClinicConfigItem{IsReadable: true}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatalf("seed legacy config item: %v", err)
+	}
+
+	if err := app.MigrateBeforeAutoMigrate(db); err != nil {
+		t.Fatalf("migrate before auto: %v", err)
+	}
+	if !db.Migrator().HasColumn(&configmodel.ClinicConfigItem{}, "writeonly") {
+		t.Error("expected clinic_config_item.writeonly to exist")
+	}
+	if db.Migrator().HasColumn(&configmodel.ClinicConfigItem{}, "is_readable") {
+		t.Error("expected clinic_config_item.is_readable to be renamed")
+	}
+
+	var writeOnly bool
+	if err := db.Raw("SELECT writeonly FROM clinic_config_item WHERE id = ?", item.ID).Scan(&writeOnly).Error; err != nil {
+		t.Fatalf("load writeonly: %v", err)
+	}
+	if !writeOnly {
+		t.Error("expected renamed value to be preserved")
 	}
 
 	if err := app.MigrateBeforeAutoMigrate(db); err != nil {

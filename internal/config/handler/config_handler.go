@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 
+	authhandler "clinic-backend/internal/auth/handler"
 	configmodel "clinic-backend/internal/config/model"
 	configservice "clinic-backend/internal/config/service"
 	"clinic-backend/internal/httpx"
@@ -36,7 +37,7 @@ type createItemRequest struct {
 	DisplayName string                      `json:"display_name" binding:"required,max=128"`
 	IsRequired  bool                        `json:"is_required"`
 	RoleLevel   configmodel.ConfigRoleLevel `json:"role_level" binding:"omitempty,oneof=staff admin superadmin"`
-	IsReadable  bool                        `json:"is_readable"`
+	WriteOnly   bool                        `json:"writeonly"`
 	GroupID     uint                        `json:"group_id" binding:"required"`
 	SortOrder   int                         `json:"sort_order" binding:"min=0"`
 }
@@ -47,18 +48,67 @@ type updateItemRequest struct {
 	DisplayName *string                      `json:"display_name" binding:"omitempty,max=128"`
 	IsRequired  *bool                        `json:"is_required"`
 	RoleLevel   *configmodel.ConfigRoleLevel `json:"role_level" binding:"omitempty,oneof=staff admin superadmin"`
-	IsReadable  *bool                        `json:"is_readable"`
+	WriteOnly   *bool                        `json:"writeonly"`
 	GroupID     *uint                        `json:"group_id" binding:"omitempty,gt=0"`
 	SortOrder   *int                         `json:"sort_order" binding:"omitempty,min=0"`
 }
 
+type configItemResponse struct {
+	ID          uint                        `json:"id"`
+	Name        string                      `json:"name"`
+	Value       *string                     `json:"value,omitempty"`
+	ValueType   configmodel.ConfigValueType `json:"value_type"`
+	DisplayName string                      `json:"display_name"`
+	IsRequired  bool                        `json:"is_required"`
+	RoleLevel   configmodel.ConfigRoleLevel `json:"role_level"`
+	WriteOnly   bool                        `json:"writeonly"`
+	GroupID     uint                        `json:"group_id"`
+	SortOrder   int                         `json:"sort_order"`
+}
+
+type configCatalogResponse struct {
+	Groups []configmodel.ClinicConfigGroup `json:"groups"`
+	Items  []configItemResponse            `json:"items"`
+}
+
+func newConfigItemResponse(item configmodel.ClinicConfigItem) configItemResponse {
+	response := configItemResponse{
+		ID:          item.ID,
+		Name:        item.Name,
+		ValueType:   item.ValueType,
+		DisplayName: item.DisplayName,
+		IsRequired:  item.IsRequired,
+		RoleLevel:   item.RoleLevel,
+		WriteOnly:   item.WriteOnly,
+		GroupID:     item.GroupID,
+		SortOrder:   item.SortOrder,
+	}
+	if !item.WriteOnly {
+		value := item.Value
+		response.Value = &value
+	}
+	return response
+}
+
+func configActorRole(c *gin.Context) configmodel.ConfigRoleLevel {
+	role, _ := authhandler.ContextRole(c)
+	return configmodel.ConfigRoleLevel(role)
+}
+
 func (h *ConfigHandler) ListCatalog(c *gin.Context) {
-	catalog, err := h.svc.ListCatalog()
+	catalog, err := h.svc.ListCatalogFor(configActorRole(c))
 	if err != nil {
 		writeConfigError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, catalog)
+	items := make([]configItemResponse, len(catalog.Items))
+	for i, item := range catalog.Items {
+		items[i] = newConfigItemResponse(item)
+	}
+	c.JSON(http.StatusOK, configCatalogResponse{
+		Groups: catalog.Groups,
+		Items:  items,
+	})
 }
 
 func (h *ConfigHandler) GetGroup(c *gin.Context) {
@@ -133,12 +183,12 @@ func (h *ConfigHandler) GetItem(c *gin.Context) {
 	if !ok {
 		return
 	}
-	item, err := h.svc.GetItem(id)
+	item, err := h.svc.GetItemFor(configActorRole(c), id)
 	if err != nil {
 		writeConfigError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, item)
+	c.JSON(http.StatusOK, newConfigItemResponse(item))
 }
 
 func (h *ConfigHandler) CreateItem(c *gin.Context) {
@@ -148,14 +198,14 @@ func (h *ConfigHandler) CreateItem(c *gin.Context) {
 		return
 	}
 
-	item, err := h.svc.CreateItem(configservice.CreateItemInput{
+	item, err := h.svc.CreateItemFor(configActorRole(c), configservice.CreateItemInput{
 		Name:        req.Name,
 		Value:       req.Value,
 		ValueType:   req.ValueType,
 		DisplayName: req.DisplayName,
 		IsRequired:  req.IsRequired,
 		RoleLevel:   req.RoleLevel,
-		IsReadable:  req.IsReadable,
+		WriteOnly:   req.WriteOnly,
 		GroupID:     req.GroupID,
 		SortOrder:   req.SortOrder,
 	})
@@ -163,7 +213,7 @@ func (h *ConfigHandler) CreateItem(c *gin.Context) {
 		writeConfigError(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, item)
+	c.JSON(http.StatusCreated, newConfigItemResponse(item))
 }
 
 func (h *ConfigHandler) UpdateItem(c *gin.Context) {
@@ -178,13 +228,13 @@ func (h *ConfigHandler) UpdateItem(c *gin.Context) {
 		return
 	}
 
-	item, err := h.svc.UpdateItem(id, configservice.UpdateItemInput{
+	item, err := h.svc.UpdateItemFor(configActorRole(c), id, configservice.UpdateItemInput{
 		Value:       req.Value,
 		ValueType:   req.ValueType,
 		DisplayName: req.DisplayName,
 		IsRequired:  req.IsRequired,
 		RoleLevel:   req.RoleLevel,
-		IsReadable:  req.IsReadable,
+		WriteOnly:   req.WriteOnly,
 		GroupID:     req.GroupID,
 		SortOrder:   req.SortOrder,
 	})
@@ -192,7 +242,7 @@ func (h *ConfigHandler) UpdateItem(c *gin.Context) {
 		writeConfigError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, item)
+	c.JSON(http.StatusOK, newConfigItemResponse(item))
 }
 
 func (h *ConfigHandler) DeleteItem(c *gin.Context) {
@@ -200,7 +250,7 @@ func (h *ConfigHandler) DeleteItem(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.svc.DeleteItem(id); err != nil {
+	if err := h.svc.DeleteItemFor(configActorRole(c), id); err != nil {
 		writeConfigError(c, err)
 		return
 	}
@@ -211,6 +261,7 @@ var configErrorMappings = []httpx.ErrStatus{
 	{Err: configservice.ErrConfigInvalidInput, Status: http.StatusBadRequest},
 	{Err: configservice.ErrConfigValueTypeInvalid, Status: http.StatusBadRequest},
 	{Err: configservice.ErrConfigValueInvalid, Status: http.StatusBadRequest},
+	{Err: configservice.ErrConfigForbidden, Status: http.StatusForbidden},
 	{Err: configservice.ErrConfigGroupNotFound, Status: http.StatusNotFound},
 	{Err: configservice.ErrConfigItemNotFound, Status: http.StatusNotFound},
 	{Err: configservice.ErrConfigGroupNameTaken, Status: http.StatusConflict},

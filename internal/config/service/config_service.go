@@ -26,11 +26,12 @@ var (
 	ErrConfigInvalidInput     = errors.New("invalid config input")
 	ErrConfigValueTypeInvalid = errors.New("invalid config value_type")
 	ErrConfigValueInvalid     = errors.New("invalid config value")
+	ErrConfigForbidden        = errors.New("config access forbidden")
 )
 
 const (
 	groupColumns = "id, name, display_name, sort_order"
-	itemColumns  = "id, name, value, value_type, display_name, is_required, role_level, is_readable, group_id, sort_order"
+	itemColumns  = "id, name, value, value_type, display_name, is_required, role_level, writeonly, group_id, sort_order"
 )
 
 // ConfigService contains the business logic for configuration groups and items.
@@ -107,7 +108,7 @@ type CreateItemInput struct {
 	DisplayName string
 	IsRequired  bool
 	RoleLevel   configmodel.ConfigRoleLevel
-	IsReadable  bool
+	WriteOnly   bool
 	GroupID     uint
 	SortOrder   int
 }
@@ -118,13 +119,25 @@ type UpdateItemInput struct {
 	DisplayName *string
 	IsRequired  *bool
 	RoleLevel   *configmodel.ConfigRoleLevel
-	IsReadable  *bool
+	WriteOnly   *bool
 	GroupID     *uint
 	SortOrder   *int
 }
 
 // ListCatalog returns every group and item in display order.
 func (s *ConfigService) ListCatalog() (Catalog, error) {
+	return s.listCatalog(nil)
+}
+
+// ListCatalogFor returns the configuration catalog visible to role.
+func (s *ConfigService) ListCatalogFor(role configmodel.ConfigRoleLevel) (Catalog, error) {
+	if err := validateConfigActorRole(role); err != nil {
+		return Catalog{}, err
+	}
+	return s.listCatalog(&role)
+}
+
+func (s *ConfigService) listCatalog(role *configmodel.ConfigRoleLevel) (Catalog, error) {
 	catalog := Catalog{
 		Groups: make([]configmodel.ClinicConfigGroup, 0),
 		Items:  make([]configmodel.ClinicConfigItem, 0),
@@ -136,7 +149,7 @@ func (s *ConfigService) ListCatalog() (Catalog, error) {
 		if err != nil {
 			return err
 		}
-		catalog.Items, err = listItems(tx)
+		catalog.Items, err = listItems(tx, role)
 		if err != nil {
 			return err
 		}
@@ -169,14 +182,18 @@ func listGroups(tx *sql.Tx) ([]configmodel.ClinicConfigGroup, error) {
 	return groups, nil
 }
 
-func listItems(tx *sql.Tx) ([]configmodel.ClinicConfigItem, error) {
-	rows, err := tx.Query(`
+func listItems(tx *sql.Tx, role *configmodel.ConfigRoleLevel) ([]configmodel.ClinicConfigItem, error) {
+	query := `
 		SELECT i.id, i.name, i.value, i.value_type, i.display_name,
-		       i.is_required, i.role_level, i.is_readable, i.group_id, i.sort_order
+		       i.is_required, i.role_level, i.writeonly, i.group_id, i.sort_order
 		FROM clinic_config_item AS i
-		JOIN clinic_config_group AS g ON g.id = i.group_id
-		ORDER BY g.sort_order ASC, g.id ASC, i.sort_order ASC, i.id ASC
-	`)
+		JOIN clinic_config_group AS g ON g.id = i.group_id`
+	if role != nil && *role != configmodel.ConfigRoleLevelSuperAdmin {
+		query += " WHERE i.role_level = 'admin'"
+	}
+	query += " ORDER BY g.sort_order ASC, g.id ASC, i.sort_order ASC, i.id ASC"
+
+	rows, err := tx.Query(query)
 	if err != nil {
 		return nil, fmt.Errorf("list config items: %w", err)
 	}
@@ -311,6 +328,24 @@ func (s *ConfigService) GetItem(id uint) (configmodel.ClinicConfigItem, error) {
 	return item, nil
 }
 
+// GetItemFor returns an item visible to role.
+func (s *ConfigService) GetItemFor(role configmodel.ConfigRoleLevel, id uint) (configmodel.ClinicConfigItem, error) {
+	if err := validateConfigActorRole(role); err != nil {
+		return configmodel.ClinicConfigItem{}, err
+	}
+	item, err := scanItem(s.db.QueryRow(
+		"SELECT "+itemColumns+" FROM clinic_config_item WHERE id = $1 AND ($2 = 'superadmin' OR role_level = 'admin')",
+		id, role,
+	))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return configmodel.ClinicConfigItem{}, ErrConfigItemNotFound
+		}
+		return configmodel.ClinicConfigItem{}, fmt.Errorf("get config item %d for role %s: %w", id, role, err)
+	}
+	return item, nil
+}
+
 func (s *ConfigService) CreateItem(in CreateItemInput) (configmodel.ClinicConfigItem, error) {
 	name, err := normalizeRequiredString("name", in.Name, 128)
 	if err != nil {
@@ -326,16 +361,9 @@ func (s *ConfigService) CreateItem(in CreateItemInput) (configmodel.ClinicConfig
 	if err := validateSortOrder(in.SortOrder); err != nil {
 		return configmodel.ClinicConfigItem{}, err
 	}
-	roleLevel := in.RoleLevel
-	if roleLevel == "" {
-		roleLevel = configmodel.ConfigRoleLevelAdmin
-	}
-	if !roleLevel.Valid() {
-		return configmodel.ClinicConfigItem{}, fmt.Errorf(
-			"%w: unsupported role_level %q",
-			ErrConfigInvalidInput,
-			roleLevel,
-		)
+	roleLevel, err := normalizeConfigRoleLevel(in.RoleLevel)
+	if err != nil {
+		return configmodel.ClinicConfigItem{}, err
 	}
 	value, err := normalizeConfigItemValue(name, in.Value, in.ValueType, in.IsRequired)
 	if err != nil {
@@ -350,10 +378,10 @@ func (s *ConfigService) CreateItem(in CreateItemInput) (configmodel.ClinicConfig
 		var err error
 		item, err = scanItem(tx.QueryRow(
 			`INSERT INTO clinic_config_item
-			 (name, value, value_type, display_name, is_required, role_level, is_readable, group_id, sort_order)
+			 (name, value, value_type, display_name, is_required, role_level, writeonly, group_id, sort_order)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 			 RETURNING `+itemColumns,
-			name, value, in.ValueType, displayName, in.IsRequired, roleLevel, in.IsReadable,
+			name, value, in.ValueType, displayName, in.IsRequired, roleLevel, in.WriteOnly,
 			in.GroupID, in.SortOrder,
 		))
 		if err != nil {
@@ -370,7 +398,41 @@ func (s *ConfigService) CreateItem(in CreateItemInput) (configmodel.ClinicConfig
 	return item, nil
 }
 
+// CreateItemFor creates an item when role may access its requested level.
+func (s *ConfigService) CreateItemFor(role configmodel.ConfigRoleLevel, in CreateItemInput) (configmodel.ClinicConfigItem, error) {
+	if err := validateConfigActorRole(role); err != nil {
+		return configmodel.ClinicConfigItem{}, err
+	}
+	roleLevel, err := normalizeConfigRoleLevel(in.RoleLevel)
+	if err != nil {
+		return configmodel.ClinicConfigItem{}, err
+	}
+	if !configRoleCanAccessItem(role, roleLevel) {
+		return configmodel.ClinicConfigItem{}, fmt.Errorf(
+			"%w: %s items cannot be created by %s",
+			ErrConfigForbidden,
+			roleLevel,
+			role,
+		)
+	}
+	in.RoleLevel = roleLevel
+	return s.CreateItem(in)
+}
+
 func (s *ConfigService) UpdateItem(id uint, in UpdateItemInput) (configmodel.ClinicConfigItem, error) {
+	return s.updateItem(id, in, nil)
+}
+
+// UpdateItemFor updates an item when role may access both its current and
+// resulting role levels.
+func (s *ConfigService) UpdateItemFor(role configmodel.ConfigRoleLevel, id uint, in UpdateItemInput) (configmodel.ClinicConfigItem, error) {
+	if err := validateConfigActorRole(role); err != nil {
+		return configmodel.ClinicConfigItem{}, err
+	}
+	return s.updateItem(id, in, &role)
+}
+
+func (s *ConfigService) updateItem(id uint, in UpdateItemInput, actorRole *configmodel.ConfigRoleLevel) (configmodel.ClinicConfigItem, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var candidate *RuntimeSettings
@@ -386,6 +448,9 @@ func (s *ConfigService) UpdateItem(id uint, in UpdateItemInput) (configmodel.Cli
 				return ErrConfigItemNotFound
 			}
 			return fmt.Errorf("get config item %d for update: %w", id, err)
+		}
+		if actorRole != nil && !configRoleCanAccessItem(*actorRole, item.RoleLevel) {
+			return ErrConfigItemNotFound
 		}
 
 		if in.Value != nil {
@@ -413,8 +478,16 @@ func (s *ConfigService) UpdateItem(id uint, in UpdateItemInput) (configmodel.Cli
 				item.RoleLevel,
 			)
 		}
-		if in.IsReadable != nil {
-			item.IsReadable = *in.IsReadable
+		if actorRole != nil && !configRoleCanAccessItem(*actorRole, item.RoleLevel) {
+			return fmt.Errorf(
+				"%w: %s items cannot be updated by %s",
+				ErrConfigForbidden,
+				item.RoleLevel,
+				*actorRole,
+			)
+		}
+		if in.WriteOnly != nil {
+			item.WriteOnly = *in.WriteOnly
 		}
 		if in.GroupID != nil {
 			if *in.GroupID == 0 {
@@ -437,15 +510,20 @@ func (s *ConfigService) UpdateItem(id uint, in UpdateItemInput) (configmodel.Cli
 			return err
 		}
 
+		query := `UPDATE clinic_config_item
+			SET value = $1, value_type = $2, display_name = $3,
+			    is_required = $4, role_level = $5, writeonly = $6,
+			    group_id = $7, sort_order = $8
+			WHERE id = $9`
+		if actorRole != nil && *actorRole != configmodel.ConfigRoleLevelSuperAdmin {
+			query += " AND role_level = 'admin'"
+		}
+		query += " RETURNING " + itemColumns
+
 		item, err = scanItem(tx.QueryRow(
-			`UPDATE clinic_config_item
-			 SET value = $1, value_type = $2, display_name = $3,
-			     is_required = $4, role_level = $5, is_readable = $6,
-			     group_id = $7, sort_order = $8
-			 WHERE id = $9
-			 RETURNING `+itemColumns,
+			query,
 			item.Value, item.ValueType, item.DisplayName, item.IsRequired,
-			item.RoleLevel, item.IsReadable, item.GroupID, item.SortOrder, id,
+			item.RoleLevel, item.WriteOnly, item.GroupID, item.SortOrder, id,
 		))
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -517,6 +595,40 @@ func (s *ConfigService) DeleteItem(id uint) error {
 	return nil
 }
 
+// DeleteItemFor deletes an item when role may access its level.
+func (s *ConfigService) DeleteItemFor(role configmodel.ConfigRoleLevel, id uint) error {
+	if err := validateConfigActorRole(role); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	item, err := s.GetItemFor(role, id)
+	if err != nil {
+		return err
+	}
+	if _, ok := runtimeSettingExpectedTypes[item.Name]; ok {
+		return fmt.Errorf("%w: built-in runtime settings cannot be deleted", ErrConfigInvalidInput)
+	}
+
+	query := "DELETE FROM clinic_config_item WHERE id = $1"
+	if role != configmodel.ConfigRoleLevelSuperAdmin {
+		query += " AND role_level = 'admin'"
+	}
+	result, err := s.db.Exec(query, id)
+	if err != nil {
+		return fmt.Errorf("delete config item %d for role %s: %w", id, role, err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check deleted config item %d for role %s: %w", id, role, err)
+	}
+	if affected == 0 {
+		return ErrConfigItemNotFound
+	}
+	return nil
+}
+
 func scanGroup(row interface{ Scan(...any) error }) (configmodel.ClinicConfigGroup, error) {
 	var group configmodel.ClinicConfigGroup
 	err := row.Scan(&group.ID, &group.Name, &group.DisplayName, &group.SortOrder)
@@ -533,11 +645,41 @@ func scanItem(row interface{ Scan(...any) error }) (configmodel.ClinicConfigItem
 		&item.DisplayName,
 		&item.IsRequired,
 		&item.RoleLevel,
-		&item.IsReadable,
+		&item.WriteOnly,
 		&item.GroupID,
 		&item.SortOrder,
 	)
 	return item, err
+}
+
+func validateConfigActorRole(role configmodel.ConfigRoleLevel) error {
+	if role != configmodel.ConfigRoleLevelAdmin &&
+		role != configmodel.ConfigRoleLevelSuperAdmin {
+		return fmt.Errorf("%w: unsupported role %q", ErrConfigForbidden, role)
+	}
+	return nil
+}
+
+func configRoleCanAccessItem(actorRole, itemRole configmodel.ConfigRoleLevel) bool {
+	if actorRole == configmodel.ConfigRoleLevelSuperAdmin {
+		return true
+	}
+	return actorRole == configmodel.ConfigRoleLevelAdmin &&
+		itemRole == configmodel.ConfigRoleLevelAdmin
+}
+
+func normalizeConfigRoleLevel(roleLevel configmodel.ConfigRoleLevel) (configmodel.ConfigRoleLevel, error) {
+	if roleLevel == "" {
+		roleLevel = configmodel.ConfigRoleLevelAdmin
+	}
+	if !roleLevel.Valid() {
+		return "", fmt.Errorf(
+			"%w: unsupported role_level %q",
+			ErrConfigInvalidInput,
+			roleLevel,
+		)
+	}
+	return roleLevel, nil
 }
 
 func ensureGroup(tx *sql.Tx, id uint) error {

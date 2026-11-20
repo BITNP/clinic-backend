@@ -823,8 +823,11 @@ curl -X DELETE "$BASE/api/admin/rooms/1" \
 
 ## Admin: configuration
 
-All configuration endpoints are **admin only** and accept only `admin` or
-`superadmin`. Ordinary `staff` users receive `403`.
+All configuration endpoints require `admin` or `superadmin`; ordinary `staff`
+users receive `403`. Group endpoints are available to both allowed roles.
+Item endpoints are scoped by the item's `role_level`: an `admin` can access only
+`admin` items, while a `superadmin` can access items at every level. Direct
+requests for items outside the caller's scope return `404`.
 
 Configuration group object:
 
@@ -841,17 +844,19 @@ Configuration item object:
 | --- | --- | --- |
 | `id` | integer | Item id. |
 | `name` | string | Globally unique machine-readable name, max 128 characters. Immutable after creation. |
-| `value` | string | Canonical text representation of the value. |
+| `value` | string | Canonical text representation of the value. Omitted when `writeonly` is `true`. |
 | `value_type` | string | `int`, `double`, `boolean`, or `string`. |
 | `display_name` | string | Human-readable name, max 128 characters. |
 | `is_required` | boolean | When true, an empty value is rejected. |
 | `role_level` | string | Role-level metadata: `staff`, `admin`, or `superadmin`. Defaults to `admin`. |
-| `is_readable` | boolean | Readability metadata for configuration consumers. Defaults to `false`. |
+| `writeonly` | boolean | When true, the stored value is available only to internal backend code and is never returned through this API. Defaults to `false`. |
 | `group_id` | integer | Owning configuration group. |
 | `sort_order` | integer | Non-negative position within the group. |
 
 Integer and double values are normalized to canonical decimal representations.
 Booleans must be `true` or `false`. Optional items may have an empty value.
+Write-only items can still be created, updated, and deleted through the normal
+item endpoints.
 
 The backend seeds and reserves `SYNC_POLL_INTERVAL`, `STAFF_VERSION`,
 `RECORD_ACTION_WINDOW`, `RECORD_PHOTO_MAX_COUNT`,
@@ -863,9 +868,11 @@ subsequent operations without restarting the backend.
 
 ### `GET /api/admin/config`
 
-**Description:** Returns the complete configuration catalog as two flat arrays.
-Groups are ordered by `sort_order`, then `id`. Items are ordered by their
-group's `sort_order`, `group_id`, item `sort_order`, and item `id`.
+**Description:** Returns the configuration catalog visible to the caller as two
+flat arrays. An `admin` receives only items whose `role_level` is `admin`; a
+`superadmin` receives all items. All groups are returned. Groups are ordered by
+`sort_order`, then `id`. Items are ordered by their group's `sort_order`,
+`group_id`, item `sort_order`, and item `id`.
 
 **Response `200 OK`**
 
@@ -888,7 +895,7 @@ group's `sort_order`, `group_id`, item `sort_order`, and item `id`.
       "display_name": "最多提前预约天数",
       "is_required": true,
       "role_level": "admin",
-      "is_readable": false,
+      "writeonly": false,
       "group_id": 1,
       "sort_order": 0
     }
@@ -898,6 +905,7 @@ group's `sort_order`, `group_id`, item `sort_order`, and item `id`.
 
 Both arrays are always present and are empty arrays when no records exist.
 Items contain `group_id` only; they do not embed a group object.
+For an item with `writeonly: true`, the `value` property is omitted.
 
 **Error responses:** `401`, `403`, `500`.
 
@@ -991,12 +999,14 @@ curl -X DELETE "$BASE/api/admin/config/groups/1" \
 
 ### `GET /api/admin/config/items/{id}`
 
-**Description:** Returns one configuration item with all attributes. The
-response contains `group_id` and does not embed the group object.
+**Description:** Returns one configuration item when it is visible to the
+caller. The response contains `group_id` and does not embed the group object.
+The `value` property is omitted for write-only items.
 
 **Response `200 OK`** — configuration item object.
 
-**Error responses:** `400`, `401`, `403`, `404`.
+**Error responses:** `400` (invalid id), `401`, `403`, `404` (missing or outside
+the caller's item scope).
 
 **curl**
 
@@ -1007,7 +1017,8 @@ curl "$BASE/api/admin/config/items/10" -b cookies.txt
 ### `POST /api/admin/config/items`
 
 **Description:** Creates a configuration item. The name is immutable after
-creation, and `group_id` must reference an existing group.
+creation, and `group_id` must reference an existing group. An `admin` may create
+only `admin` items; a `superadmin` may create any level.
 
 **Request body**
 
@@ -1019,14 +1030,16 @@ creation, and `group_id` must reference an existing group.
 | `display_name` | string | yes | Human-readable name, max 128 characters. |
 | `is_required` | boolean | no | Rejects an empty value when true. Defaults to `false`. |
 | `role_level` | string | no | `staff`, `admin`, or `superadmin`. Defaults to `admin`. |
-| `is_readable` | boolean | no | Readability metadata for configuration consumers. Defaults to `false`. |
+| `writeonly` | boolean | no | Hide the stored value from API responses. Defaults to `false`. |
 | `group_id` | integer | yes | Existing configuration group id. |
 | `sort_order` | integer | no | Non-negative position within the group. Defaults to `0`. |
 
-**Response `201 Created`** — configuration item object.
+**Response `201 Created`** — configuration item object. For a write-only item,
+the submitted `value` is not echoed in the response.
 
-**Error responses:** `400` (invalid fields or value), `401`, `403`, `404`
-(group not found), `409` (item name already taken).
+**Error responses:** `400` (invalid fields or value), `401`, `403` (item level
+outside the caller's scope), `404` (group not found), `409` (item name already
+taken).
 
 **curl**
 
@@ -1034,7 +1047,7 @@ creation, and `group_id` must reference an existing group.
 curl -X POST "$BASE/api/admin/config/items" \
   -b cookies.txt -H "X-CSRF-Token: $CSRF" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"max_booking_days","value":"7","value_type":"int","display_name":"最多提前预约天数","is_required":true,"role_level":"staff","is_readable":true,"group_id":1,"sort_order":0}'
+  -d '{"name":"max_booking_days","value":"7","value_type":"int","display_name":"最多提前预约天数","is_required":true,"role_level":"admin","writeonly":true,"group_id":1,"sort_order":0}'
 ```
 
 ### `PUT /api/admin/config/items/{id}`
@@ -1042,6 +1055,8 @@ curl -X POST "$BASE/api/admin/config/items" \
 **Description:** Updates a configuration item. Omitted fields are unchanged.
 The item name cannot be changed. The final value is validated against the final
 `value_type` and `is_required` settings.
+An `admin` may update only items that are currently `admin` level and cannot
+change them to another level. A `superadmin` may update items at every level.
 Known runtime settings take effect after a successful save for subsequent
 operations. Existing operations may finish with the previous value. Enabling
 reminders requires configured gateway credentials; invalid settings are rejected
@@ -1060,14 +1075,16 @@ actions already expired or pruned from the journal under the previous window.
 | `display_name` | string | no | Human-readable name, max 128 characters. |
 | `is_required` | boolean | no | Whether an empty value is allowed. |
 | `role_level` | string | no | `staff`, `admin`, or `superadmin`. |
-| `is_readable` | boolean | no | Readability metadata for configuration consumers. |
+| `writeonly` | boolean | no | Hide the stored value from API responses. |
 | `group_id` | integer | no | Move the item to another existing group. |
 | `sort_order` | integer | no | Non-negative position within the group. |
 
-**Response `200 OK`** — updated configuration item object.
+**Response `200 OK`** — updated configuration item object. When the resulting
+item is write-only, the current value is not included in the response.
 
-**Error responses:** `400` (invalid fields or value), `401`, `403`, `404`
-(item or target group not found).
+**Error responses:** `400` (invalid fields or value), `401`, `403` (changing an
+item to a level outside the caller's scope), `404` (hidden item or target group
+not found).
 
 **curl**
 
@@ -1075,17 +1092,19 @@ actions already expired or pruned from the journal under the previous window.
 curl -X PUT "$BASE/api/admin/config/items/10" \
   -b cookies.txt -H "X-CSRF-Token: $CSRF" \
   -H 'Content-Type: application/json' \
-  -d '{"value":"14","display_name":"最多提前预约天数","role_level":"staff","is_readable":true,"group_id":2,"sort_order":1}'
+  -d '{"value":"14","display_name":"最多提前预约天数","writeonly":true,"group_id":2,"sort_order":1}'
 ```
 
 ### `DELETE /api/admin/config/items/{id}`
 
 **Description:** Deletes a configuration item. Built-in runtime settings cannot
-be deleted and return `400`.
+be deleted and return `400`. Delete authorization follows the item's current
+`role_level`; write-only status does not prevent deletion.
 
 **Response `204 No Content`**
 
-**Error responses:** `400`, `401`, `403`, `404`.
+**Error responses:** `400`, `401`, `403`, `404` (missing or outside the
+caller's item scope).
 
 **curl**
 

@@ -48,7 +48,7 @@ type ClinicConfigItem struct {
 	DisplayName string             `gorm:"size:128;not null;column:display_name" json:"display_name"`
 	IsRequired  bool               `gorm:"not null;default:false;column:is_required" json:"is_required"`
 	RoleLevel   ConfigRoleLevel    `gorm:"size:16;not null;default:admin;column:role_level;check:chk_config_item_role_level,role_level IN ('staff', 'admin', 'superadmin')" json:"role_level"`
-	IsReadable  bool               `gorm:"not null;default:false;column:is_readable" json:"is_readable"`
+	WriteOnly   bool               `gorm:"not null;default:false;column:writeonly" json:"writeonly"`
 	GroupID     uint               `gorm:"not null;index:idx_config_item_group_order,priority:1;column:group_id" json:"group_id"`
 	Group       *ClinicConfigGroup `gorm:"foreignKey:GroupID;constraint:OnDelete:RESTRICT" json:"group,omitempty"`
 	SortOrder   int                `gorm:"not null;default:0;index:idx_config_item_group_order,priority:2;column:sort_order" json:"sort_order"`
