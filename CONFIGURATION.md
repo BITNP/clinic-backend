@@ -1,13 +1,36 @@
 # Configuration
 
-All runtime and deployment settings for `clinic-backend` in one place. The
-backend reads environment variables; Docker Compose reads them from `.env`
-(template: `.env.example`). Defaults below come from the Go code unless a
-compose file overrides them.
+All runtime and deployment settings for `clinic-backend` in one place. Most
+runtime settings are environment variables; Docker Compose reads them from
+`.env` (template: `.env.example`). Six application settings are stored in the
+database and can be edited through the admin configuration API. Defaults below
+come from the Go code unless a compose file overrides them.
 
 - API behavior that depends on these settings is documented in [API.md](API.md).
 - Deployment procedures are in [README.md](README.md).
 - RustFS operations are in [deploy/rustfs/README.md](deploy/rustfs/README.md).
+
+## Database-managed runtime settings
+
+The backend seeds these configuration groups and items at startup. When an item
+does not exist, its environment variable (if set) is imported once; otherwise
+the default below is used. After the row exists, the database is authoritative
+and changing the environment variable has no runtime effect. Changes made
+through `/api/admin/config` are loaded on the next backend restart.
+
+| Config item | Default | Description |
+| --- | --- | --- |
+| `SYNC_POLL_INTERVAL` | `10s` | Recommended client polling interval reported by `/sync/config`; `0s` disables periodic polling. |
+| `STAFF_VERSION` | `0` | Raise to force all staff to log in again. Non-negative integer. |
+| `RECORD_ACTION_WINDOW` | `5m` | Positive Go duration for how long a staff action stays revertible. |
+| `RECORD_PHOTO_MAX_COUNT` | `9` | Positive maximum number of ordered photos attached to one record. |
+| `SERVICE_DATE_REMINDER_ENABLED` | `false` | Strict boolean controlling the pending-ticket reminder worker. |
+| `SERVICE_DATE_REMINDER_LEAD_TIMES` | `5h,3h` | Comma-separated unique positive Go durations using whole seconds, relative to service start. |
+
+These names are reserved: their `value_type`, required flag, and value validation
+are enforced by the config service. They are seeded into the `system`, `record`,
+and `reminder` groups. `MAINTAINER_QQ_IDS` is not part of this backend catalog;
+it remains a `clinic-health-monitor` environment setting.
 
 ## Backend environment variables
 
@@ -20,7 +43,6 @@ compose file overrides them.
 | `CLINIC_DB_DSN` | `clinic.db` | Database connection string. The dev compose default is `postgres://clinic:clinic@db:5432/clinic?sslmode=disable`; the prod default points at `host.containers.internal:5432`. |
 | `DB_SLOW_QUERY` | `500ms` | Slow-query log threshold. |
 | `CLINIC_TIMEZONE` | `UTC+8` | Timezone for appointment day boundaries and announcement times. |
-| `SYNC_POLL_INTERVAL` | `10s` | Recommended client polling interval reported by `/sync/config`; `0s` disables periodic polling. Negative values stop startup. |
 | `REDIS_ADDR` | — (required) | Redis for sync counters and the revert journal. The backend refuses to start without a reachable Redis. |
 | `REDIS_PASSWORD` | empty | Redis password. In the production compose stack it is also applied to the bundled Redis service. |
 | `REDIS_DB` | `0` | Redis database number. |
@@ -30,12 +52,10 @@ compose file overrides them.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `RECORD_ACTION_WINDOW` | `5m` | How long a staff action stays revertible. |
-| `RECORD_PHOTO_MAX_COUNT` | `9` | Maximum number of ordered photos attached to one record. |
 | `RECORD_PHOTO_MAX_SIZE_BYTES` | `10485760` (10 MiB) | Maximum size of one uploaded photo in bytes. |
 
-Both photo limits must be positive integers. Invalid values stop startup with a
-nonzero exit status.
+The photo count is the database-managed `RECORD_PHOTO_MAX_COUNT` setting above.
+The size limit must be a positive integer; invalid values stop startup.
 
 ### Sessions and authentication
 
@@ -46,7 +66,6 @@ nonzero exit status.
 | `SESSION_COOKIE_SECURE` | `false` | Set `Secure` on session cookies. |
 | `SESSION_COOKIE_SAMESITE` | `lax` | `none`, `lax`, or `strict`. |
 | `SESSION_TTL` | `336h` | Session lifetime. |
-| `STAFF_VERSION` | `0` | Raise to force all staff to log in again. Sessions created with an older version are rejected. |
 | `APP_BASE_URL` | empty | Public frontend URL used for CAS return URLs. Required when `CAS_SERVER_URL` is set. |
 | `CAS_SERVER_URL` | empty | CAS server. When empty, `/login` returns `503`. |
 | `CAS_DEFAULT_REDIRECT` | `/manage/` (code) | Fallback post-login path. `.env.example` and the compose files set `/`. |
@@ -405,7 +424,6 @@ Defaults applied by `scripts/dev.sh` when the variables are unset:
 | `APP_BASE_URL` | `http://127.0.0.1:5173` |
 | `CAS_DEFAULT_REDIRECT` | `/` |
 | `SESSION_COOKIE_SAMESITE` | `lax` |
-| `STAFF_VERSION` | `0` |
 
 Manual setup:
 
@@ -440,8 +458,6 @@ export CAS_SERVER_URL=http://127.0.0.1:9999
 export APP_BASE_URL=http://127.0.0.1:5173
 export CAS_DEFAULT_REDIRECT=/
 export SESSION_COOKIE_SAMESITE=lax
-# Optional: raise to force all staff to log in again; defaults to 0
-export STAFF_VERSION=0
 # If not using scripts/dev.sh, export the required S3_* settings from
 # "Object storage (S3)" before starting.
 go run .                       # runs on :8080
@@ -451,9 +467,9 @@ cd path/to/clinic_admin_frontend
 pnpm dev                       # runs on :5173
 ```
 
-Sessions whose staff `version` differs from `STAFF_VERSION` are rejected until
-the staff log in again, so each time you raise `STAFF_VERSION` all staff are
-forced through the login page once.
+Sessions whose staff `version` differs from the database-managed
+`STAFF_VERSION` are rejected until the staff log in again. Raising the config
+item and restarting the backend forces all staff through the login page once.
 
 ## Storage integration tests
 

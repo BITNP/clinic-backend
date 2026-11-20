@@ -215,6 +215,35 @@ func TestConfigHandler_ValidationAndConflicts(t *testing.T) {
 	}
 }
 
+func TestConfigHandler_UpdateKnownRuntimeSetting(t *testing.T) {
+	r, svc, db := setupConfigHandlerRouter(t, authhandler.RoleAdmin)
+	if err := svc.EnsureRuntimeSettings(func(string) string { return "" }); err != nil {
+		t.Fatalf("seed runtime settings: %v", err)
+	}
+
+	var item configmodel.ClinicConfigItem
+	if err := db.Where("name = ?", "RECORD_ACTION_WINDOW").First(&item).Error; err != nil {
+		t.Fatalf("get action window setting: %v", err)
+	}
+	path := "/api/admin/config/items/" + testutil.Itoa(item.ID)
+
+	w := testutil.DoRequest(t, r, http.MethodPut, path, map[string]any{"value": "later"})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid duration: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	w = testutil.DoRequest(t, r, http.MethodPut, path, map[string]any{"value": "2m"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("valid duration: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &item); err != nil {
+		t.Fatalf("decode updated item: %v", err)
+	}
+	if item.Value != "2m" {
+		t.Errorf("value = %q, want 2m", item.Value)
+	}
+}
+
 func TestConfigHandler_Authorization(t *testing.T) {
 	routes := []struct {
 		method string

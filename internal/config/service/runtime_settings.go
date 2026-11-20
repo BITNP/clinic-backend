@@ -186,7 +186,7 @@ func configItemExists(tx *sql.Tx, name string) (bool, error) {
 
 // LoadRuntimeSettings reads and validates the database-managed runtime settings.
 func (s *ConfigService) LoadRuntimeSettings() (RuntimeSettings, error) {
-	values := make(map[string]string, len(runtimeSettingDefinitions))
+	settings := RuntimeSettings{}
 	for _, setting := range runtimeSettingDefinitions {
 		var value string
 		var valueType configmodel.ConfigValueType
@@ -206,24 +206,23 @@ func (s *ConfigService) LoadRuntimeSettings() (RuntimeSettings, error) {
 		if err != nil {
 			return RuntimeSettings{}, err
 		}
-		values[setting.Name] = normalized
-	}
 
-	settings := RuntimeSettings{}
-	for name, value := range values {
-		switch name {
+		switch setting.Name {
 		case runtimeSettingSyncPollInterval:
-			settings.SyncPollInterval, _ = time.ParseDuration(value)
+			settings.SyncPollInterval, err = time.ParseDuration(normalized)
 		case runtimeSettingStaffVersion:
-			settings.StaffVersion, _ = strconv.Atoi(value)
+			settings.StaffVersion, err = strconv.Atoi(normalized)
 		case runtimeSettingRecordActionWindow:
-			settings.RecordActionWindow, _ = time.ParseDuration(value)
+			settings.RecordActionWindow, err = time.ParseDuration(normalized)
 		case runtimeSettingRecordPhotoMaxCount:
-			settings.RecordPhotoMaxCount, _ = strconv.Atoi(value)
+			settings.RecordPhotoMaxCount, err = strconv.Atoi(normalized)
 		case runtimeSettingServiceReminderEnabled:
-			settings.ServiceDateReminderEnabled = value == "true"
+			settings.ServiceDateReminderEnabled = normalized == "true"
 		case runtimeSettingServiceReminderLeadTimes:
-			settings.ServiceDateReminderLeadTimes, _ = parseRuntimeLeadTimes(value)
+			settings.ServiceDateReminderLeadTimes, err = parseRuntimeLeadTimes(normalized)
+		}
+		if err != nil {
+			return RuntimeSettings{}, fmt.Errorf("parse runtime config %s: %w", setting.Name, err)
 		}
 	}
 	return settings, nil

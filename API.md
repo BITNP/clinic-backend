@@ -57,8 +57,9 @@ Authorization levels are hierarchical:
 - **Staff** endpoints (`RequireStaff`) accept `staff`, `admin`, or `superadmin`.
 - **Admin** endpoints (`RequireAdmin`) accept `admin` or `superadmin`.
 
-A session whose staff `version` differs from the configured `STAFF_VERSION` is
-rejected with `401` and must log in again.
+A session whose staff `version` differs from the database-managed
+`STAFF_VERSION` config item is rejected with `401` and must log in again.
+Changes to that item apply after the backend restarts.
 
 Sessions are created by `GET /login`, which redirects through CAS and sets both
 cookies. `GET /logout` destroys the local session and redirects through CAS
@@ -850,6 +851,12 @@ Configuration item object:
 Integer and double values are normalized to canonical decimal representations.
 Booleans must be `true` or `false`. Optional items may have an empty value.
 
+The backend seeds and reserves `SYNC_POLL_INTERVAL`, `STAFF_VERSION`,
+`RECORD_ACTION_WINDOW`, `RECORD_PHOTO_MAX_COUNT`,
+`SERVICE_DATE_REMINDER_ENABLED`, and `SERVICE_DATE_REMINDER_LEAD_TIMES`. Their
+types and required flags are fixed and their values receive key-specific
+validation. Runtime changes are loaded when the backend restarts.
+
 ### `GET /api/admin/config`
 
 **Description:** Returns the complete configuration catalog as two flat arrays.
@@ -1284,7 +1291,7 @@ list. Staff or admin only. Bumps the `record` counter.
 The server detects the image type from the bytes, so the part's declared
 `Content-Type` is ignored. The request and file are limited by
 `RECORD_PHOTO_MAX_SIZE_BYTES`; the record is limited by
-`RECORD_PHOTO_MAX_COUNT`.
+the database-managed `RECORD_PHOTO_MAX_COUNT` config item.
 
 **Response `201 Created`** — the new photo object. A `Location` header points at
 its position URL.
@@ -1530,8 +1537,8 @@ curl -X POST "$BASE/api/admin/records/1/no-show" \
 **Description:** Undoes the caller's most recent reversible action on a record,
 restoring the previous snapshot. Staff or admin; each staff member can only
 revert their own actions. Reverts are strict LIFO and only valid inside
-`RECORD_ACTION_WINDOW` (default `5m`). Reverting is also refused when the record
-has changed since the action.
+the database-managed `RECORD_ACTION_WINDOW` (default `5m`). Reverting is also
+refused when the record has changed since the action.
 
 **Response `200 OK`** — admin record view after the restore.
 
@@ -1558,7 +1565,7 @@ Staff object:
 | `email` | string | Email address. |
 | `qq_number` | string | QQ number, synced from the `qq-number` login claim. A missing claim does not clear it. |
 | `role` | string | `staff`, `admin`, `superadmin`, or `""`. |
-| `version` | integer | Login version; compared with `STAFF_VERSION`. |
+| `version` | integer | Login version; compared with the database-managed `STAFF_VERSION` config item. |
 
 Staff list item adds:
 
@@ -2775,4 +2782,5 @@ curl "$BASE/api/announcement/toc/"
 See [CONFIGURATION.md](CONFIGURATION.md) for every environment variable and
 deployment setting. Settings that affect API behavior are noted inline above:
 `CLINIC_API_KEY`, `CLINIC_TIMEZONE`, `STAFF_VERSION`, `SYNC_POLL_INTERVAL`,
-`SESSION_*`, `CAS_*`, and `KEYCLOAK_*`.
+`RECORD_ACTION_WINDOW`, `RECORD_PHOTO_MAX_COUNT`, the service-date reminder
+settings, `SESSION_*`, `CAS_*`, and `KEYCLOAK_*`.

@@ -115,6 +115,38 @@ func TestLoadServiceDateReminderConfigDisabledDoesNotRequireGatewayToken(t *test
 	}
 }
 
+func TestLoadServiceDateReminderConfigWithValues_UsesDatabaseSettings(t *testing.T) {
+	values := validServiceDateReminderEnv()
+	values["SERVICE_DATE_REMINDER_ENABLED"] = "false"
+	values["SERVICE_DATE_REMINDER_LEAD_TIMES"] = "1h"
+
+	cfg, err := app.LoadServiceDateReminderConfigWithValues(
+		envMap(values),
+		true,
+		[]time.Duration{2 * time.Hour, 30 * time.Minute},
+	)
+	if err != nil {
+		t.Fatalf("LoadServiceDateReminderConfigWithValues() error = %v", err)
+	}
+	if !cfg.Enabled {
+		t.Error("Enabled = false, want database value true")
+	}
+	if len(cfg.LeadTimes) != 2 || cfg.LeadTimes[0] != 2*time.Hour || cfg.LeadTimes[1] != 30*time.Minute {
+		t.Errorf("LeadTimes = %v, want [2h 30m]", cfg.LeadTimes)
+	}
+}
+
+func TestLoadServiceDateReminderConfigWithValues_RejectsInvalidLeadTimes(t *testing.T) {
+	_, err := app.LoadServiceDateReminderConfigWithValues(
+		envMap(validServiceDateReminderEnv()),
+		true,
+		[]time.Duration{0},
+	)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+}
+
 func TestLoadServiceDateReminderConfigInvalidValues(t *testing.T) {
 	tests := []struct {
 		name   string

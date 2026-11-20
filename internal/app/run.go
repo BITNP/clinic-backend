@@ -49,16 +49,6 @@ func Run() {
 		log.Fatalf("storage configuration: %v", err)
 	}
 
-	photoCfg, err := LoadPhotoConfig(os.Getenv)
-	if err != nil {
-		log.Fatalf("photo configuration: %v", err)
-	}
-
-	reminderCfg, err := LoadServiceDateReminderConfig(os.Getenv)
-	if err != nil {
-		log.Fatalf("reminder configuration: %v", err)
-	}
-
 	msgCfg, err := LoadMessageConfig(os.Getenv)
 	if err != nil {
 		log.Fatalf("message configuration: %v", err)
@@ -80,6 +70,32 @@ func Run() {
 	}
 
 	db, rawDB := openDatabase()
+	configSvc := configservice.NewConfigService(rawDB)
+	if err := configSvc.EnsureRuntimeSettings(os.Getenv); err != nil {
+		closeDatabase(db)
+		log.Fatalf("seed runtime configuration: %v", err)
+	}
+	runtimeSettings, err := configSvc.LoadRuntimeSettings()
+	if err != nil {
+		closeDatabase(db)
+		log.Fatalf("load runtime configuration: %v", err)
+	}
+
+	photoCfg, err := LoadPhotoConfigWithMaxCount(os.Getenv, runtimeSettings.RecordPhotoMaxCount)
+	if err != nil {
+		closeDatabase(db)
+		log.Fatalf("photo configuration: %v", err)
+	}
+
+	reminderCfg, err := LoadServiceDateReminderConfigWithValues(
+		os.Getenv,
+		runtimeSettings.ServiceDateReminderEnabled,
+		runtimeSettings.ServiceDateReminderLeadTimes,
+	)
+	if err != nil {
+		closeDatabase(db)
+		log.Fatalf("reminder configuration: %v", err)
+	}
 
 	photoSvc, err := recordservice.NewPhotoService(rawDB, storageSvc, photoCfg.MaxCount, photoCfg.MaxSizeBytes)
 	if err != nil {
@@ -123,11 +139,7 @@ func Run() {
 	// Sync counters live in Redis so every backend replica shares them. Clients
 	// poll Snapshot and refresh when a value differs from their last-seen one.
 	syncSvc := changes.NewSyncService(changes.NewRedisStore(redisClient))
-	syncPollInterval := envDuration("SYNC_POLL_INTERVAL", 10*time.Second)
-	if syncPollInterval < 0 {
-		log.Fatalf("invalid SYNC_POLL_INTERVAL: must not be negative")
-	}
-	syncH := changes.NewSyncHandler(syncSvc, syncPollInterval)
+	syncH := changes.NewSyncHandler(syncSvc, runtimeSettings.SyncPollInterval)
 
 	recordTagSvc := taggingservice.NewRecordTagService(rawDB)
 	if _, err := recordTagSvc.SeedDefault(); err != nil {
@@ -224,7 +236,6 @@ func Run() {
 
 	staffSvc := staffservice.NewStaffService(rawDB)
 	staffH := staffhandler.NewStaffHandler(staffSvc)
-	configSvc := configservice.NewConfigService(rawDB)
 	configH := confighandler.NewConfigHandler(configSvc)
 
 	sessionTTL := envDuration("SESSION_TTL", 336*time.Hour)
@@ -234,7 +245,7 @@ func Run() {
 	adminRecordSvc.SetRecordTagService(recordTagSvc)
 	recordActionSvc := recordservice.NewRecordActionService(
 		recordservice.NewRedisRecordActionStore(redisClient),
-		envDuration("RECORD_ACTION_WINDOW", 5*time.Minute),
+		runtimeSettings.RecordActionWindow,
 	)
 	adminRecordSvc.SetRecordActionService(recordActionSvc)
 	adminRecordH := recordhandler.NewAdminRecordHandler(adminRecordSvc)
@@ -255,9 +266,8 @@ func Run() {
 	keycloakAuth := authhandler.NewKeycloakAuthenticator(keycloakRealm, keycloakClient, staffSvc)
 	keycloakAuth.SetSyncService(syncSvc)
 
-	// Current required login version. Raise STAFF_VERSION at deploy time to
-	// force every staff member to re-login once.
-	staffVersion := envInt("STAFF_VERSION", 0)
+	// Current required login version, loaded from the database config item.
+	staffVersion := runtimeSettings.StaffVersion
 	keycloakAuth.SetStaffVersion(staffVersion)
 
 	casServerURL := os.Getenv("CAS_SERVER_URL")

@@ -49,6 +49,29 @@ func TestLoadPhotoConfig_TrimsWhitespace(t *testing.T) {
 	}
 }
 
+func TestLoadPhotoConfigWithMaxCount_UsesDatabaseCount(t *testing.T) {
+	cfg, err := app.LoadPhotoConfigWithMaxCount(envMap(map[string]string{
+		"RECORD_PHOTO_MAX_COUNT":      "99",
+		"RECORD_PHOTO_MAX_SIZE_BYTES": "2048000",
+	}), 4)
+	if err != nil {
+		t.Fatalf("LoadPhotoConfigWithMaxCount() error = %v", err)
+	}
+	if cfg.MaxCount != 4 {
+		t.Errorf("MaxCount = %d, want database value 4", cfg.MaxCount)
+	}
+	if cfg.MaxSizeBytes != 2048000 {
+		t.Errorf("MaxSizeBytes = %d, want 2048000", cfg.MaxSizeBytes)
+	}
+}
+
+func TestLoadPhotoConfigWithMaxCount_RejectsNonPositiveCount(t *testing.T) {
+	_, err := app.LoadPhotoConfigWithMaxCount(envMap(nil), 0)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+}
+
 func TestLoadPhotoConfig_InvalidValues(t *testing.T) {
 	tests := []struct {
 		name string

@@ -26,7 +26,15 @@ func LoadPhotoConfig(getenv func(string) string) (PhotoConfig, error) {
 	if err != nil {
 		return PhotoConfig{}, fmt.Errorf("invalid RECORD_PHOTO_MAX_COUNT: %w", err)
 	}
+	return LoadPhotoConfigWithMaxCount(getenv, maxCount)
+}
 
+// LoadPhotoConfigWithMaxCount combines the database-managed photo count with
+// environment-managed upload settings.
+func LoadPhotoConfigWithMaxCount(getenv func(string) string, maxCount int) (PhotoConfig, error) {
+	if maxCount <= 0 {
+		return PhotoConfig{}, errors.New("invalid RECORD_PHOTO_MAX_COUNT: must be positive")
+	}
 	maxSizeBytes, err := parsePositiveInt64Setting(getenv("RECORD_PHOTO_MAX_SIZE_BYTES"), defaultRecordPhotoMaxSizeBytes)
 	if err != nil {
 		return PhotoConfig{}, fmt.Errorf("invalid RECORD_PHOTO_MAX_SIZE_BYTES: %w", err)

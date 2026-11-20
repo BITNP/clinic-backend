@@ -46,6 +46,23 @@ func LoadServiceDateReminderConfig(getenv func(string) string) (ServiceDateRemin
 	if err != nil {
 		return ServiceDateReminderConfig{}, fmt.Errorf("invalid SERVICE_DATE_REMINDER_LEAD_TIMES: %w", err)
 	}
+	return LoadServiceDateReminderConfigWithValues(getenv, enabled, leadTimes)
+}
+
+// LoadServiceDateReminderConfigWithValues combines database-managed reminder
+// switches and lead times with environment-managed template and gateway data.
+func LoadServiceDateReminderConfigWithValues(
+	getenv func(string) string,
+	enabled bool,
+	leadTimes []time.Duration,
+) (ServiceDateReminderConfig, error) {
+	leadTimes = append([]time.Duration(nil), leadTimes...)
+	if err := validateServiceDateReminderLeadTimes(leadTimes); err != nil {
+		return ServiceDateReminderConfig{}, fmt.Errorf("invalid SERVICE_DATE_REMINDER_LEAD_TIMES: %w", err)
+	}
+	sort.Slice(leadTimes, func(i, j int) bool {
+		return leadTimes[i] > leadTimes[j]
+	})
 
 	messageTemplate, err := parseServiceDateReminderTemplate(getenv("SERVICE_DATE_REMINDER_TEMPLATE"))
 	if err != nil {
@@ -101,26 +118,38 @@ func parseServiceDateReminderLeadTimes(raw string) ([]time.Duration, error) {
 
 	parts := strings.Split(raw, ",")
 	leadTimes := make([]time.Duration, 0, len(parts))
-	seen := make(map[time.Duration]struct{}, len(parts))
 	for _, part := range parts {
 		leadTime, err := time.ParseDuration(strings.TrimSpace(part))
 		if err != nil {
 			return nil, err
 		}
-		if leadTime <= 0 || leadTime%time.Second != 0 {
-			return nil, fmt.Errorf("%s must be positive and use whole seconds", leadTime)
-		}
-		if _, ok := seen[leadTime]; ok {
-			return nil, fmt.Errorf("duplicate lead time %s", leadTime)
-		}
-		seen[leadTime] = struct{}{}
 		leadTimes = append(leadTimes, leadTime)
+	}
+	if err := validateServiceDateReminderLeadTimes(leadTimes); err != nil {
+		return nil, err
 	}
 
 	sort.Slice(leadTimes, func(i, j int) bool {
 		return leadTimes[i] > leadTimes[j]
 	})
 	return leadTimes, nil
+}
+
+func validateServiceDateReminderLeadTimes(leadTimes []time.Duration) error {
+	if len(leadTimes) == 0 {
+		return fmt.Errorf("at least one lead time is required")
+	}
+	seen := make(map[time.Duration]struct{}, len(leadTimes))
+	for _, leadTime := range leadTimes {
+		if leadTime <= 0 || leadTime%time.Second != 0 {
+			return fmt.Errorf("%s must be positive and use whole seconds", leadTime)
+		}
+		if _, ok := seen[leadTime]; ok {
+			return fmt.Errorf("duplicate lead time %s", leadTime)
+		}
+		seen[leadTime] = struct{}{}
+	}
+	return nil
 }
 
 func parseServiceDateReminderTemplate(raw string) (*template.Template, error) {
