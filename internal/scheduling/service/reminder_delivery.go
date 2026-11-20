@@ -29,6 +29,23 @@ type ReminderDelivery struct {
 	Template                *template.Template
 	Lease                   time.Duration
 	Now                     func() time.Time
+	Settings                func() (bool, []time.Duration)
+}
+
+func (d *ReminderDelivery) checkSettings(ctx context.Context, job *schedulingmodel.ServiceDateReminder, now time.Time) (bool, error) {
+	if d.Settings == nil {
+		return true, nil
+	}
+	enabled, leadTimes := d.Settings()
+	if !enabled {
+		return false, d.finish(ctx, job, map[string]any{"status": "pending", "next_attempt_at": now})
+	}
+	for _, lead := range leadTimes {
+		if int64(lead/time.Second) == job.LeadTimeSeconds {
+			return true, nil
+		}
+	}
+	return false, d.finish(ctx, job, map[string]any{"status": "cancelled"})
 }
 
 func (d *ReminderDelivery) Claim(ctx context.Context, now time.Time) (*schedulingmodel.ServiceDateReminder, error) {
@@ -136,6 +153,9 @@ func (d *ReminderDelivery) finish(ctx context.Context, job *schedulingmodel.Serv
 // Deliver rechecks eligibility and sends one claimed job.
 func (d *ReminderDelivery) Deliver(ctx context.Context, job *schedulingmodel.ServiceDateReminder, now time.Time) error {
 	cancelJob := func() error { return d.finish(ctx, job, map[string]any{"status": "cancelled"}) }
+	if allowed, err := d.checkSettings(ctx, job, now); !allowed || err != nil {
+		return err
+	}
 	date, err := scanServiceDate(d.DB.QueryRowContext(
 		ctx,
 		"SELECT "+serviceDateColumns+" FROM clinic_service_date WHERE id = $1",
@@ -206,6 +226,9 @@ func (d *ReminderDelivery) Deliver(ctx context.Context, job *schedulingmodel.Ser
 	}
 	req.Header.Set("Authorization", "Bearer "+d.Token)
 	req.Header.Set("Content-Type", "application/json")
+	if allowed, err := d.checkSettings(ctx, job, now); !allowed || err != nil {
+		return err
+	}
 	resp, err := d.Client.Do(req)
 	if err != nil {
 		return d.retry(ctx, job, now, fmt.Errorf("submit reminder: %w", err))

@@ -18,7 +18,8 @@ The backend embeds
 missing groups and items at startup. Existing rows are never overwritten, so the
 database becomes authoritative after first initialization. These settings are
 not read from environment variables. Changes made through `/api/admin/config`
-are loaded on the next backend restart.
+apply after a successful save. Operations already in progress may finish with
+their previous settings. Browser tabs refresh their sync interval periodically.
 
 | Config item | Default | Description |
 | --- | --- | --- |

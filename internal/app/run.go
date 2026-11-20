@@ -341,10 +341,25 @@ func Run() {
 	defer stop()
 
 	var reminderDone <-chan struct{}
-	if reminderCfg.Enabled {
+	{
 		discovery := &schedulingservice.ReminderDiscovery{DB: rawDB, Location: serviceDateLoc, LeadTimes: reminderCfg.LeadTimes}
 		delivery := &schedulingservice.ReminderDelivery{DB: rawDB, Discovery: discovery, Client: &http.Client{Timeout: reminderCfg.Gateway.Timeout}, BaseURL: reminderCfg.Gateway.BaseURL, Account: reminderCfg.Gateway.Account, Token: reminderCfg.Gateway.AccountToken, Template: reminderCfg.MessageTemplate, Lease: reminderCfg.Gateway.Timeout + 45*time.Second}
-		worker := &schedulingservice.ReminderWorker{Discovery: discovery, Delivery: delivery}
+		leadTimes := func() []time.Duration { return configSvc.Current().ServiceDateReminderLeadTimes }
+		enabled := func() bool { return configSvc.Current().ServiceDateReminderEnabled }
+		discovery.LeadTimesGetter = leadTimes
+		discovery.Guard = func(run func() error) error {
+			return configSvc.WithRuntimeSettings(func(settings configservice.RuntimeSettings) error {
+				if !settings.ServiceDateReminderEnabled {
+					return nil
+				}
+				return run()
+			})
+		}
+		delivery.Settings = func() (bool, []time.Duration) {
+			settings := configSvc.Current()
+			return settings.ServiceDateReminderEnabled, settings.ServiceDateReminderLeadTimes
+		}
+		worker := &schedulingservice.ReminderWorker{Discovery: discovery, Delivery: delivery, Enabled: enabled}
 		done := make(chan struct{})
 		reminderDone = done
 		go func() { defer close(done); worker.Run(ctx) }()

@@ -856,8 +856,8 @@ The backend seeds and reserves `SYNC_POLL_INTERVAL`, `STAFF_VERSION`,
 `SERVICE_DATE_REMINDER_ENABLED`, and `SERVICE_DATE_REMINDER_LEAD_TIMES`. Their
 types and required flags are fixed and their values receive key-specific
 validation. Initial values come from the embedded runtime settings seed catalog;
-environment variables with these names are ignored. Runtime changes are loaded
-when the backend restarts.
+environment variables with these names are ignored. Successful saves apply to
+subsequent operations without restarting the backend.
 
 ### `GET /api/admin/config`
 
@@ -1036,6 +1036,14 @@ curl -X POST "$BASE/api/admin/config/items" \
 **Description:** Updates a configuration item. Omitted fields are unchanged.
 The item name cannot be changed. The final value is validated against the final
 `value_type` and `is_required` settings.
+Known runtime settings take effect after a successful save for subsequent
+operations. Existing operations may finish with the previous value. Enabling
+reminders requires configured gateway credentials; invalid settings are rejected
+without changing the saved or active values. Disabling reminders pauses new
+discovery and delivery; a message already submitted may still be delivered.
+Pending reminders for removed lead times are cancelled with the save; claimed
+jobs are checked before delivery. Increasing the action window cannot restore
+actions already expired or pruned from the journal under the previous window.
 
 **Request body**
 
@@ -1064,7 +1072,8 @@ curl -X PUT "$BASE/api/admin/config/items/10" \
 
 ### `DELETE /api/admin/config/items/{id}`
 
-**Description:** Deletes a configuration item.
+**Description:** Deletes a configuration item. Built-in runtime settings cannot
+be deleted and return `400`.
 
 **Response `204 No Content`**
 
