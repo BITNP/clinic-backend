@@ -86,16 +86,26 @@ type RecordActionStore interface {
 // RecordActionService maintains a sliding-window stack of reversible actions
 // per staff member.
 type RecordActionService struct {
-	store  RecordActionStore
-	window time.Duration
+	store        RecordActionStore
+	window       time.Duration
+	windowGetter func() time.Duration
 }
 
 func NewRecordActionService(store RecordActionStore, window time.Duration) *RecordActionService {
 	return &RecordActionService{store: store, window: window}
 }
 
+// SetWindowGetter supplies the current configured action window.
+func (s *RecordActionService) SetWindowGetter(getter func() time.Duration) { s.windowGetter = getter }
+
 // Window is the sliding window during which an action stays revertible.
 func (s *RecordActionService) Window() time.Duration {
+	if s == nil {
+		return 0
+	}
+	if s.windowGetter != nil {
+		return s.windowGetter()
+	}
 	return s.window
 }
 
@@ -105,7 +115,7 @@ func (s *RecordActionService) Record(ctx context.Context, entry RecordActionEntr
 	if s == nil || s.store == nil {
 		return nil
 	}
-	ttl := s.window + time.Minute
+	ttl := s.Window() + time.Minute
 	if err := s.store.Push(ctx, entry.ActorID, entry, ttl); err != nil {
 		return fmt.Errorf("push record action: %w", err)
 	}
@@ -121,10 +131,14 @@ type RecordWindow struct {
 // Windows returns the actor's in-window actions grouped by record. The latest
 // action per record is the only one that can be reverted (strict LIFO).
 func (s *RecordActionService) Windows(ctx context.Context, actorID int, now time.Time) (map[uint]RecordWindow, error) {
+	return s.windows(ctx, actorID, now, s.Window())
+}
+
+func (s *RecordActionService) windows(ctx context.Context, actorID int, now time.Time, window time.Duration) (map[uint]RecordWindow, error) {
 	if s == nil || s.store == nil {
 		return map[uint]RecordWindow{}, nil
 	}
-	entries, err := s.store.Window(ctx, actorID, now.Add(-s.window))
+	entries, err := s.store.Window(ctx, actorID, now.Add(-window))
 	if err != nil {
 		return nil, fmt.Errorf("read record actions: %w", err)
 	}

@@ -106,6 +106,7 @@ func Run() {
 		closeDatabase(db)
 		log.Fatalf("photo service: %v", err)
 	}
+	photoSvc.SetMaxCountGetter(func() int { return configSvc.Current().RecordPhotoMaxCount })
 	photoH := recordhandler.NewPhotoHandler(photoSvc)
 
 	// Redis is required infrastructure: fail fast if it is not configured or
@@ -251,6 +252,7 @@ func Run() {
 		recordservice.NewRedisRecordActionStore(redisClient),
 		runtimeSettings.RecordActionWindow,
 	)
+	recordActionSvc.SetWindowGetter(func() time.Duration { return configSvc.Current().RecordActionWindow })
 	adminRecordSvc.SetRecordActionService(recordActionSvc)
 	adminRecordH := recordhandler.NewAdminRecordHandler(adminRecordSvc)
 
