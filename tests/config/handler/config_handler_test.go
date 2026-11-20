@@ -296,6 +296,48 @@ func TestConfigHandler_WriteOnlyValueIsOmitted(t *testing.T) {
 	}
 }
 
+func TestConfigHandler_TaggerAPIKeyStaysWriteOnly(t *testing.T) {
+	r, svc, db := setupConfigHandlerRouter(t, authhandler.RoleAdmin)
+	if err := svc.EnsureRuntimeSettingsWithInitialTaggerAPIKey("legacy-provider-key"); err != nil {
+		t.Fatalf("seed runtime settings: %v", err)
+	}
+
+	var item configmodel.ClinicConfigItem
+	if err := db.Where("name = ?", "TAGGER_LLM_API_KEY").First(&item).Error; err != nil {
+		t.Fatalf("get tagger API key item: %v", err)
+	}
+	path := "/api/admin/config/items/" + testutil.Itoa(item.ID)
+
+	w := testutil.DoRequest(t, r, http.MethodGet, "/api/admin/config", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list catalog: %d %s", w.Code, w.Body)
+	}
+	if strings.Contains(w.Body.String(), "legacy-provider-key") {
+		t.Fatalf("catalog exposed tagger API key: %s", w.Body)
+	}
+
+	w = testutil.DoRequest(t, r, http.MethodPut, path, map[string]any{"value": "replacement-provider-key"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("update tagger API key: %d %s", w.Code, w.Body)
+	}
+	if strings.Contains(w.Body.String(), "replacement-provider-key") || strings.Contains(w.Body.String(), `"value":`) {
+		t.Fatalf("update response exposed tagger API key: %s", w.Body)
+	}
+	stored, err := svc.GetItem(item.ID)
+	if err != nil || stored.Value != "replacement-provider-key" {
+		t.Fatalf("stored tagger API key = %q, error = %v", stored.Value, err)
+	}
+
+	w = testutil.DoRequest(t, r, http.MethodPut, path, map[string]any{"writeonly": false})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("declassify tagger API key: %d %s", w.Code, w.Body)
+	}
+	w = testutil.DoRequest(t, r, http.MethodDelete, path, nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("delete built-in tagger API key: %d %s", w.Code, w.Body)
+	}
+}
+
 func TestConfigHandler_AdminItemRoleScope(t *testing.T) {
 	r, svc, _ := setupConfigHandlerRouter(t, authhandler.RoleAdmin)
 	group, err := svc.CreateGroup(configservice.CreateGroupInput{

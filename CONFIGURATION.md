@@ -83,7 +83,15 @@ long-lived chat models per tag set, one pool for record tags and one for
 liquid-metal tags. Each model owns a session preloaded with the system prompt.
 Requests are dispatched to an idle session. A session is reset back to its
 system prompt when its context reaches `TAGGER_CONTEXT_TOKENS`; the chat model
-is reused. Tagging is disabled while `TAGGER_LLM_API_KEY` is empty.
+is reused. Tagging is disabled while the database-managed
+`TAGGER_LLM_API_KEY` config item is empty.
+
+The API key is a write-only config item, so the admin API never returns its
+stored value. It can be created or replaced through the system settings page
+and takes effect after the backend restarts. On the first startup after this
+setting is introduced, a legacy `TAGGER_LLM_API_KEY` environment value seeds
+the database item if it does not exist yet. After that, the database value is
+authoritative.
 
 At startup the backend sends one minimal chat completion to the configured
 provider and logs whether the connection succeeded. The check has a 10-second
@@ -92,7 +100,7 @@ until the provider is reachable.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `TAGGER_LLM_API_KEY` | empty | Enables the tagger when non-empty; otherwise new records keep the default `no_pending` tag. |
+| `TAGGER_LLM_API_KEY` | empty | Legacy bootstrap value only. Seeds the write-only database config item when first created; later changes must be made through the admin API. |
 | `TAGGER_LLM_BASE_URL` | required when enabled | OpenAI-compatible endpoint. |
 | `TAGGER_LLM_MODEL` | required when enabled | Model ID. |
 | `TAGGER_AGENT_POOL_SIZE` | `4` | Long-lived chat models and sessions per tag set. Minimum `1`. |

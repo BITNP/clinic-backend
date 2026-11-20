@@ -860,11 +860,14 @@ item endpoints.
 
 The backend seeds and reserves `SYNC_POLL_INTERVAL`, `STAFF_VERSION`,
 `RECORD_ACTION_WINDOW`, `RECORD_PHOTO_MAX_COUNT`,
-`SERVICE_DATE_REMINDER_ENABLED`, and `SERVICE_DATE_REMINDER_LEAD_TIMES`. Their
-types and required flags are fixed and their values receive key-specific
-validation. Initial values come from the embedded runtime settings seed catalog;
-environment variables with these names are ignored. Successful saves apply to
-subsequent operations without restarting the backend.
+`SERVICE_DATE_REMINDER_ENABLED`, `SERVICE_DATE_REMINDER_LEAD_TIMES`, and
+`TAGGER_LLM_API_KEY`. Their types, required flags, and write-only flags are fixed
+and their values receive key-specific validation. Initial values come from the
+embedded runtime settings seed catalog; environment variables with these names
+are ignored after initial seeding. `TAGGER_LLM_API_KEY` is optional and
+write-only: its value is never returned by the API. Changes to it take effect
+after the backend restarts. Other successful saves apply to subsequent
+operations without restarting the backend.
 
 ### `GET /api/admin/config`
 
@@ -2823,4 +2826,4 @@ See [CONFIGURATION.md](CONFIGURATION.md) for every environment variable and
 deployment setting. Settings that affect API behavior are noted inline above:
 `CLINIC_API_KEY`, `CLINIC_TIMEZONE`, `STAFF_VERSION`, `SYNC_POLL_INTERVAL`,
 `RECORD_ACTION_WINDOW`, `RECORD_PHOTO_MAX_COUNT`, the service-date reminder
-settings, `SESSION_*`, `CAS_*`, and `KEYCLOAK_*`.
+settings, `TAGGER_LLM_API_KEY`, `SESSION_*`, `CAS_*`, and `KEYCLOAK_*`.

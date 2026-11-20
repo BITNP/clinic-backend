@@ -24,6 +24,7 @@ const (
 	runtimeSettingRecordPhotoMaxCount      = "RECORD_PHOTO_MAX_COUNT"
 	runtimeSettingServiceReminderEnabled   = "SERVICE_DATE_REMINDER_ENABLED"
 	runtimeSettingServiceReminderLeadTimes = "SERVICE_DATE_REMINDER_LEAD_TIMES"
+	runtimeSettingTaggerLLMAPIKey          = "TAGGER_LLM_API_KEY"
 )
 
 //go:embed data/runtime_settings.json
@@ -42,6 +43,7 @@ type runtimeSettingDefinition struct {
 	GroupName    string                      `json:"group"`
 	SortOrder    int                         `json:"sort_order"`
 	IsRequired   bool                        `json:"is_required"`
+	WriteOnly    bool                        `json:"writeonly"`
 	DefaultValue string                      `json:"default_value"`
 }
 
@@ -57,6 +59,7 @@ var runtimeSettingExpectedTypes = map[string]configmodel.ConfigValueType{
 	runtimeSettingRecordPhotoMaxCount:      configmodel.ConfigValueTypeInt,
 	runtimeSettingServiceReminderEnabled:   configmodel.ConfigValueTypeBoolean,
 	runtimeSettingServiceReminderLeadTimes: configmodel.ConfigValueTypeString,
+	runtimeSettingTaggerLLMAPIKey:          configmodel.ConfigValueTypeString,
 }
 
 var (
@@ -127,8 +130,21 @@ func validateRuntimeSeed(seed runtimeSettingsSeed) error {
 				expectedType,
 			)
 		}
-		if !item.IsRequired {
-			return fmt.Errorf("runtime settings seed item %s must be required", item.Name)
+		if item.IsRequired == runtimeSettingIsOptional(item.Name) {
+			return fmt.Errorf(
+				"runtime settings seed item %s has is_required=%t; want %t",
+				item.Name,
+				item.IsRequired,
+				!runtimeSettingIsOptional(item.Name),
+			)
+		}
+		if item.WriteOnly != runtimeSettingIsWriteOnly(item.Name) {
+			return fmt.Errorf(
+				"runtime settings seed item %s has writeonly=%t; want %t",
+				item.Name,
+				item.WriteOnly,
+				runtimeSettingIsWriteOnly(item.Name),
+			)
 		}
 		if item.SortOrder < 0 {
 			return fmt.Errorf("runtime settings seed item %s has a negative sort_order", item.Name)
@@ -157,11 +173,22 @@ type RuntimeSettings struct {
 	RecordPhotoMaxCount          int
 	ServiceDateReminderEnabled   bool
 	ServiceDateReminderLeadTimes []time.Duration
+	TaggerLLMAPIKey              string
 }
 
 // EnsureRuntimeSettings inserts missing groups and settings from the embedded
 // seed catalog. Existing rows are never overwritten.
 func (s *ConfigService) EnsureRuntimeSettings() error {
+	return s.ensureRuntimeSettings("")
+}
+
+// EnsureRuntimeSettingsWithInitialTaggerAPIKey seeds a missing tagger API key
+// from the legacy environment setting. Existing database values are preserved.
+func (s *ConfigService) EnsureRuntimeSettingsWithInitialTaggerAPIKey(initialAPIKey string) error {
+	return s.ensureRuntimeSettings(strings.TrimSpace(initialAPIKey))
+}
+
+func (s *ConfigService) ensureRuntimeSettings(initialTaggerAPIKey string) error {
 	seed, err := loadRuntimeSeed()
 	if err != nil {
 		return err
@@ -195,7 +222,11 @@ func (s *ConfigService) EnsureRuntimeSettings() error {
 				continue
 			}
 
-			value, err := validateRuntimeSettingValue(setting.Name, setting.DefaultValue)
+			defaultValue := setting.DefaultValue
+			if setting.Name == runtimeSettingTaggerLLMAPIKey && initialTaggerAPIKey != "" {
+				defaultValue = initialTaggerAPIKey
+			}
+			value, err := validateRuntimeSettingValue(setting.Name, defaultValue)
 			if err != nil {
 				return fmt.Errorf("initialize %s: %w", setting.Name, err)
 			}
@@ -203,11 +234,11 @@ func (s *ConfigService) EnsureRuntimeSettings() error {
 			groupID := groupIDs[setting.GroupName]
 			if _, err := tx.Exec(
 				`INSERT INTO clinic_config_item
-				 (name, value, value_type, display_name, is_required, group_id, sort_order)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7)
+				 (name, value, value_type, display_name, is_required, writeonly, group_id, sort_order)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 				 ON CONFLICT (name) DO NOTHING`,
 				setting.Name, value, setting.ValueType, setting.DisplayName,
-				setting.IsRequired, groupID, setting.SortOrder,
+				setting.IsRequired, setting.WriteOnly, groupID, setting.SortOrder,
 			); err != nil {
 				return fmt.Errorf("seed config item %s: %w", setting.Name, err)
 			}
@@ -244,10 +275,11 @@ func loadRuntimeSettings(q interface{ QueryRow(string, ...any) *sql.Row }) (Runt
 		var value string
 		var valueType configmodel.ConfigValueType
 		var required bool
+		var writeOnly bool
 		err = q.QueryRow(
-			"SELECT value, value_type, is_required FROM clinic_config_item WHERE name = $1",
+			"SELECT value, value_type, is_required, writeonly FROM clinic_config_item WHERE name = $1",
 			setting.Name,
-		).Scan(&value, &valueType, &required)
+		).Scan(&value, &valueType, &required, &writeOnly)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return RuntimeSettings{}, fmt.Errorf("runtime config %s is missing", setting.Name)
@@ -255,7 +287,7 @@ func loadRuntimeSettings(q interface{ QueryRow(string, ...any) *sql.Row }) (Runt
 			return RuntimeSettings{}, fmt.Errorf("load runtime config %s: %w", setting.Name, err)
 		}
 
-		normalized, err := validateKnownRuntimeSetting(setting.Name, valueType, required, value)
+		normalized, err := validateKnownRuntimeSetting(setting.Name, valueType, required, writeOnly, value)
 		if err != nil {
 			return RuntimeSettings{}, err
 		}
@@ -273,6 +305,8 @@ func loadRuntimeSettings(q interface{ QueryRow(string, ...any) *sql.Row }) (Runt
 			settings.ServiceDateReminderEnabled = normalized == "true"
 		case runtimeSettingServiceReminderLeadTimes:
 			settings.ServiceDateReminderLeadTimes, err = parseRuntimeLeadTimes(normalized)
+		case runtimeSettingTaggerLLMAPIKey:
+			settings.TaggerLLMAPIKey = normalized
 		}
 		if err != nil {
 			return RuntimeSettings{}, fmt.Errorf("parse runtime config %s: %w", setting.Name, err)
@@ -285,6 +319,7 @@ func validateKnownRuntimeSetting(
 	name string,
 	valueType configmodel.ConfigValueType,
 	required bool,
+	writeOnly bool,
 	value string,
 ) (string, error) {
 	seed, err := loadRuntimeSeed()
@@ -312,8 +347,21 @@ func validateKnownRuntimeSetting(
 			setting.ValueType,
 		)
 	}
-	if !required {
-		return "", fmt.Errorf("%w: %s must be required", ErrConfigInvalidInput, name)
+	if required != !runtimeSettingIsOptional(name) {
+		return "", fmt.Errorf(
+			"%w: %s must have is_required=%t",
+			ErrConfigInvalidInput,
+			name,
+			!runtimeSettingIsOptional(name),
+		)
+	}
+	if writeOnly != runtimeSettingIsWriteOnly(name) {
+		return "", fmt.Errorf(
+			"%w: %s must have writeonly=%t",
+			ErrConfigInvalidInput,
+			name,
+			runtimeSettingIsWriteOnly(name),
+		)
 	}
 	return validateRuntimeSettingValue(name, value)
 }
@@ -366,9 +414,19 @@ func validateRuntimeSettingValue(name, raw string) (string, error) {
 			parts[i] = formatRuntimeDuration(leadTime)
 		}
 		return strings.Join(parts, ","), nil
+	case runtimeSettingTaggerLLMAPIKey:
+		return value, nil
 	default:
 		return "", fmt.Errorf("%w: unsupported runtime setting %s", ErrConfigInvalidInput, name)
 	}
+}
+
+func runtimeSettingIsOptional(name string) bool {
+	return name == runtimeSettingTaggerLLMAPIKey
+}
+
+func runtimeSettingIsWriteOnly(name string) bool {
+	return name == runtimeSettingTaggerLLMAPIKey
 }
 
 func parseRuntimeDuration(name, raw string) (time.Duration, error) {

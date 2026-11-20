@@ -36,6 +36,16 @@
       "default_value": "0"
     },
     {
+      "name": "TAGGER_LLM_API_KEY",
+      "display_name": "标签模型 API 密钥（重启后生效）",
+      "value_type": "string",
+      "group": "system",
+      "sort_order": 2,
+      "is_required": false,
+      "writeonly": true,
+      "default_value": ""
+    },
+    {
       "name": "RECORD_ACTION_WINDOW",
       "display_name": "操作撤销时限",
       "value_type": "string",

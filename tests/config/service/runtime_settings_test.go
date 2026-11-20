@@ -159,6 +159,9 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	if settings.ServiceDateReminderEnabled {
 		t.Error("ServiceDateReminderEnabled = true, want false")
 	}
+	if settings.TaggerLLMAPIKey != "" {
+		t.Errorf("TaggerLLMAPIKey = %q, want empty", settings.TaggerLLMAPIKey)
+	}
 	if len(settings.ServiceDateReminderLeadTimes) != 2 ||
 		settings.ServiceDateReminderLeadTimes[0] != 5*time.Hour ||
 		settings.ServiceDateReminderLeadTimes[1] != 3*time.Hour {
@@ -172,8 +175,16 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	if err := db.Model(&configmodel.ClinicConfigItem{}).Count(&itemCount).Error; err != nil {
 		t.Fatalf("count items: %v", err)
 	}
-	if groupCount != 3 || itemCount != 6 {
-		t.Errorf("seeded counts = %d groups, %d items; want 3 and 6", groupCount, itemCount)
+	if groupCount != 3 || itemCount != 7 {
+		t.Errorf("seeded counts = %d groups, %d items; want 3 and 7", groupCount, itemCount)
+	}
+
+	var taggerKey configmodel.ClinicConfigItem
+	if err := db.Where("name = ?", "TAGGER_LLM_API_KEY").First(&taggerKey).Error; err != nil {
+		t.Fatalf("get tagger API key item: %v", err)
+	}
+	if taggerKey.Value != "" || !taggerKey.WriteOnly || taggerKey.IsRequired {
+		t.Errorf("tagger API key item = %+v", taggerKey)
 	}
 
 	var maintainerCount int64
@@ -196,6 +207,7 @@ func TestConfigService_EnsureRuntimeSettingsUsesJSONAndIgnoresEnvironment(t *tes
 	t.Setenv("RECORD_PHOTO_MAX_COUNT", "5")
 	t.Setenv("SERVICE_DATE_REMINDER_ENABLED", "true")
 	t.Setenv("SERVICE_DATE_REMINDER_LEAD_TIMES", "3h,7h")
+	t.Setenv("TAGGER_LLM_API_KEY", "ignored-environment-key")
 
 	if err := svc.EnsureRuntimeSettings(); err != nil {
 		t.Fatalf("ensure runtime settings: %v", err)
@@ -209,13 +221,47 @@ func TestConfigService_EnsureRuntimeSettingsUsesJSONAndIgnoresEnvironment(t *tes
 		settings.StaffVersion != 0 ||
 		settings.RecordActionWindow != 5*time.Minute ||
 		settings.RecordPhotoMaxCount != 9 ||
-		settings.ServiceDateReminderEnabled {
+		settings.ServiceDateReminderEnabled ||
+		settings.TaggerLLMAPIKey != "" {
 		t.Errorf("JSON defaults = %+v", settings)
 	}
 	if len(settings.ServiceDateReminderLeadTimes) != 2 ||
 		settings.ServiceDateReminderLeadTimes[0] != 5*time.Hour ||
 		settings.ServiceDateReminderLeadTimes[1] != 3*time.Hour {
 		t.Errorf("JSON lead times = %v, want [5h 3h]", settings.ServiceDateReminderLeadTimes)
+	}
+}
+
+func TestConfigService_EnsuresTaggerAPIKeyFromLegacyEnvironmentOnce(t *testing.T) {
+	svc, db := setupConfigServiceDB(t)
+	if err := svc.EnsureRuntimeSettingsWithInitialTaggerAPIKey("legacy-key"); err != nil {
+		t.Fatalf("ensure runtime settings: %v", err)
+	}
+
+	var item configmodel.ClinicConfigItem
+	if err := db.Where("name = ?", "TAGGER_LLM_API_KEY").First(&item).Error; err != nil {
+		t.Fatalf("get tagger API key item: %v", err)
+	}
+	if item.Value != "legacy-key" || !item.WriteOnly || item.IsRequired {
+		t.Errorf("seeded tagger API key item = %+v", item)
+	}
+
+	settings, err := svc.LoadRuntimeSettings()
+	if err != nil {
+		t.Fatalf("load runtime settings: %v", err)
+	}
+	if settings.TaggerLLMAPIKey != "legacy-key" {
+		t.Errorf("TaggerLLMAPIKey = %q, want legacy-key", settings.TaggerLLMAPIKey)
+	}
+
+	if err := svc.EnsureRuntimeSettingsWithInitialTaggerAPIKey("replacement-key"); err != nil {
+		t.Fatalf("ensure runtime settings second time: %v", err)
+	}
+	if err := db.Where("name = ?", "TAGGER_LLM_API_KEY").First(&item).Error; err != nil {
+		t.Fatalf("get tagger API key item after reseed: %v", err)
+	}
+	if item.Value != "legacy-key" {
+		t.Errorf("tagger API key = %q, want existing legacy-key", item.Value)
 	}
 }
 
@@ -301,5 +347,25 @@ func TestConfigService_ValidatesKnownRuntimeSettings(t *testing.T) {
 	valueType := configmodel.ConfigValueTypeInt
 	if _, err := svc.UpdateItem(item.ID, configservice.UpdateItemInput{ValueType: &valueType}); !errors.Is(err, configservice.ErrConfigValueTypeInvalid) {
 		t.Fatalf("expected fixed value-type error, got %v", err)
+	}
+
+	taggerKey, err := svc.CreateItem(configservice.CreateItemInput{
+		Name:        "TAGGER_LLM_API_KEY",
+		Value:       "provider-key",
+		ValueType:   configmodel.ConfigValueTypeString,
+		DisplayName: "Tagger API Key",
+		WriteOnly:   true,
+		GroupID:     group.ID,
+	})
+	if err != nil {
+		t.Fatalf("create tagger API key setting: %v", err)
+	}
+	required = true
+	if _, err := svc.UpdateItem(taggerKey.ID, configservice.UpdateItemInput{IsRequired: &required}); !errors.Is(err, configservice.ErrConfigInvalidInput) {
+		t.Fatalf("expected optional tagger key error, got %v", err)
+	}
+	writeOnly := false
+	if _, err := svc.UpdateItem(taggerKey.ID, configservice.UpdateItemInput{WriteOnly: &writeOnly}); !errors.Is(err, configservice.ErrConfigInvalidInput) {
+		t.Fatalf("expected write-only tagger key error, got %v", err)
 	}
 }

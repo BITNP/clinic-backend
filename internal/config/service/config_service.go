@@ -365,7 +365,7 @@ func (s *ConfigService) CreateItem(in CreateItemInput) (configmodel.ClinicConfig
 	if err != nil {
 		return configmodel.ClinicConfigItem{}, err
 	}
-	value, err := normalizeConfigItemValue(name, in.Value, in.ValueType, in.IsRequired)
+	value, err := normalizeConfigItemValue(name, in.Value, in.ValueType, in.IsRequired, in.WriteOnly)
 	if err != nil {
 		return configmodel.ClinicConfigItem{}, err
 	}
@@ -502,7 +502,13 @@ func (s *ConfigService) updateItem(id uint, in UpdateItemInput, actorRole *confi
 			item.SortOrder = *in.SortOrder
 		}
 
-		item.Value, err = normalizeConfigItemValue(item.Name, item.Value, item.ValueType, item.IsRequired)
+		item.Value, err = normalizeConfigItemValue(
+			item.Name,
+			item.Value,
+			item.ValueType,
+			item.IsRequired,
+			item.WriteOnly,
+		)
 		if err != nil {
 			return err
 		}
@@ -754,9 +760,10 @@ func normalizeConfigItemValue(
 	value string,
 	valueType configmodel.ConfigValueType,
 	required bool,
+	writeOnly bool,
 ) (string, error) {
 	if _, ok := runtimeSettingExpectedTypes[name]; ok {
-		return validateKnownRuntimeSetting(name, valueType, required, value)
+		return validateKnownRuntimeSetting(name, valueType, required, writeOnly, value)
 	}
 	return normalizeValue(value, valueType, required)
 }

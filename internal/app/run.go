@@ -71,7 +71,7 @@ func Run() {
 
 	db, rawDB := openDatabase()
 	configSvc := configservice.NewConfigService(rawDB)
-	if err := configSvc.EnsureRuntimeSettings(); err != nil {
+	if err := configSvc.EnsureRuntimeSettingsWithInitialTaggerAPIKey(os.Getenv("TAGGER_LLM_API_KEY")); err != nil {
 		closeDatabase(db)
 		log.Fatalf("seed runtime configuration: %v", err)
 	}
@@ -161,13 +161,13 @@ func Run() {
 		log.Fatalf("failed to backfill record tag_id: %v", err)
 	}
 
-	taggerAPIKey := os.Getenv("TAGGER_LLM_API_KEY")
+	taggerAPIKey := strings.TrimSpace(runtimeSettings.TaggerLLMAPIKey)
 	var recordTagger *taggingservice.RecordTagger
 	if taggerAPIKey != "" {
 		taggerBaseURL := os.Getenv("TAGGER_LLM_BASE_URL")
 		taggerModel := os.Getenv("TAGGER_LLM_MODEL")
 		if taggerBaseURL == "" || taggerModel == "" {
-			log.Fatal("TAGGER_LLM_BASE_URL and TAGGER_LLM_MODEL are required when TAGGER_LLM_API_KEY is set")
+			log.Fatal("TAGGER_LLM_BASE_URL and TAGGER_LLM_MODEL are required when the TAGGER_LLM_API_KEY config item is set")
 		}
 
 		poolCfg := tagger.PoolConfig{
@@ -212,7 +212,7 @@ func Run() {
 		recordTagger.SetLiquidMetalTagger(taggingservice.NewLiquidMetalTagger(liquidMetalPool, liquidMetalSet))
 		log.Printf("tagger agent: enabled (model %s, %d sessions per tag set, context limit %d tokens)", taggerModel, poolCfg.Size, poolCfg.ContextTokens)
 	} else {
-		log.Println("tagger disabled: set TAGGER_LLM_API_KEY to enable")
+		log.Println("tagger disabled: set the TAGGER_LLM_API_KEY config item to enable")
 	}
 
 	sqlDB, err := db.DB()
