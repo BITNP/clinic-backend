@@ -472,7 +472,7 @@ pnpm dev                       # runs on :5173
 
 Sessions whose staff `version` differs from the database-managed
 `STAFF_VERSION` are rejected until the staff log in again. Raising the config
-item and restarting the backend forces all staff through the login page once.
+item forces existing staff sessions through the login page again.
 
 ## Storage integration tests
 

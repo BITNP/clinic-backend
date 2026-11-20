@@ -180,11 +180,12 @@ func parseGroupYear(group string) (int, bool) {
 
 // AdminAuthConfig configures the combined session + JWT authentication middleware.
 type AdminAuthConfig struct {
-	SessionService *authservice.SessionService
-	StaffService   *staffservice.StaffService
-	KeycloakAuth   *KeycloakAuthenticator
-	CookieName     string
-	StaffVersion   int
+	SessionService     *authservice.SessionService
+	StaffService       *staffservice.StaffService
+	KeycloakAuth       *KeycloakAuthenticator
+	CookieName         string
+	StaffVersion       int
+	StaffVersionGetter func() int
 }
 
 // NewAdminAuthMiddleware returns a Gin middleware that accepts either a CAS session
@@ -192,21 +193,30 @@ type AdminAuthConfig struct {
 // keys so that RequireStaff and RequireAdmin continue to work unchanged.
 func NewAdminAuthMiddleware(cfg AdminAuthConfig) gin.HandlerFunc {
 	m := &adminAuthMiddleware{
-		sessionSvc:   cfg.SessionService,
-		staffSvc:     cfg.StaffService,
-		kcAuth:       cfg.KeycloakAuth,
-		cookieName:   cfg.CookieName,
-		staffVersion: cfg.StaffVersion,
+		sessionSvc:         cfg.SessionService,
+		staffSvc:           cfg.StaffService,
+		kcAuth:             cfg.KeycloakAuth,
+		cookieName:         cfg.CookieName,
+		staffVersion:       cfg.StaffVersion,
+		staffVersionGetter: cfg.StaffVersionGetter,
 	}
 	return m.handle
 }
 
 type adminAuthMiddleware struct {
-	sessionSvc   *authservice.SessionService
-	staffSvc     *staffservice.StaffService
-	kcAuth       *KeycloakAuthenticator
-	cookieName   string
-	staffVersion int
+	sessionSvc         *authservice.SessionService
+	staffSvc           *staffservice.StaffService
+	kcAuth             *KeycloakAuthenticator
+	cookieName         string
+	staffVersion       int
+	staffVersionGetter func() int
+}
+
+func (m *adminAuthMiddleware) currentStaffVersion() int {
+	if m.staffVersionGetter != nil {
+		return m.staffVersionGetter()
+	}
+	return m.staffVersion
 }
 
 func (m *adminAuthMiddleware) handle(c *gin.Context) {
@@ -266,7 +276,7 @@ func (m *adminAuthMiddleware) handleSession(c *gin.Context) {
 		return
 	}
 
-	if staff.Version != m.staffVersion {
+	if staff.Version != m.currentStaffVersion() {
 		_ = m.sessionSvc.Delete(token)
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
@@ -291,11 +301,12 @@ func (m *adminAuthMiddleware) handleSession(c *gin.Context) {
 // anonymous (no staff/role in context).
 func NewOptionalAdminAuthMiddleware(cfg AdminAuthConfig) gin.HandlerFunc {
 	m := &adminAuthMiddleware{
-		sessionSvc:   cfg.SessionService,
-		staffSvc:     cfg.StaffService,
-		kcAuth:       cfg.KeycloakAuth,
-		cookieName:   cfg.CookieName,
-		staffVersion: cfg.StaffVersion,
+		sessionSvc:         cfg.SessionService,
+		staffSvc:           cfg.StaffService,
+		kcAuth:             cfg.KeycloakAuth,
+		cookieName:         cfg.CookieName,
+		staffVersion:       cfg.StaffVersion,
+		staffVersionGetter: cfg.StaffVersionGetter,
 	}
 	return m.optionalHandle
 }
@@ -342,7 +353,7 @@ func (m *adminAuthMiddleware) optionalTrySession(c *gin.Context) {
 		return
 	}
 
-	if staff.Version != m.staffVersion {
+	if staff.Version != m.currentStaffVersion() {
 		_ = m.sessionSvc.Delete(token)
 		return
 	}

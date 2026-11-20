@@ -59,7 +59,7 @@ Authorization levels are hierarchical:
 
 A session whose staff `version` differs from the database-managed
 `STAFF_VERSION` config item is rejected with `401` and must log in again.
-Changes to that item apply after the backend restarts.
+Changes to that item apply after a successful save.
 
 Sessions are created by `GET /login`, which redirects through CAS and sets both
 cookies. `GET /logout` destroys the local session and redirects through CAS

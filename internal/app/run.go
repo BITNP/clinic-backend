@@ -271,8 +271,8 @@ func Run() {
 	keycloakAuth.SetSyncService(syncSvc)
 
 	// Current required login version, loaded from the database config item.
-	staffVersion := runtimeSettings.StaffVersion
-	keycloakAuth.SetStaffVersion(staffVersion)
+	staffVersion := func() int { return configSvc.Current().StaffVersion }
+	keycloakAuth.SetStaffVersionGetter(staffVersion)
 
 	casServerURL := os.Getenv("CAS_SERVER_URL")
 	casTimeout := envDuration("CAS_HTTP_TIMEOUT", 10*time.Second)
@@ -288,26 +288,26 @@ func Run() {
 	}
 
 	casHandler := authhandler.NewCASAuthHandler(authhandler.CASAuthConfig{
-		Client:         casClient,
-		SessionService: sessionSvc,
-		StaffService:   staffSvc,
-		SyncService:    syncSvc,
-		BaseURL:        appBaseURL,
-		DefaultNext:    envString("CAS_DEFAULT_REDIRECT", "/manage/"),
-		CookieName:     envString("SESSION_COOKIE_NAME", "sessionid"),
-		CSRFCookieName: envString("CSRF_COOKIE_NAME", "csrf_token"),
-		CookieSecure:   envBool("SESSION_COOKIE_SECURE", false),
-		CookieSameSite: envSameSite("SESSION_COOKIE_SAMESITE", http.SameSiteLaxMode),
-		SessionTTL:     sessionTTL,
-		StaffVersion:   staffVersion,
+		Client:             casClient,
+		SessionService:     sessionSvc,
+		StaffService:       staffSvc,
+		SyncService:        syncSvc,
+		BaseURL:            appBaseURL,
+		DefaultNext:        envString("CAS_DEFAULT_REDIRECT", "/manage/"),
+		CookieName:         envString("SESSION_COOKIE_NAME", "sessionid"),
+		CSRFCookieName:     envString("CSRF_COOKIE_NAME", "csrf_token"),
+		CookieSecure:       envBool("SESSION_COOKIE_SECURE", false),
+		CookieSameSite:     envSameSite("SESSION_COOKIE_SAMESITE", http.SameSiteLaxMode),
+		SessionTTL:         sessionTTL,
+		StaffVersionGetter: staffVersion,
 	})
 
 	authCfg := authhandler.AdminAuthConfig{
-		SessionService: sessionSvc,
-		StaffService:   staffSvc,
-		KeycloakAuth:   keycloakAuth,
-		CookieName:     envString("SESSION_COOKIE_NAME", "sessionid"),
-		StaffVersion:   staffVersion,
+		SessionService:     sessionSvc,
+		StaffService:       staffSvc,
+		KeycloakAuth:       keycloakAuth,
+		CookieName:         envString("SESSION_COOKIE_NAME", "sessionid"),
+		StaffVersionGetter: staffVersion,
 	}
 	adminAuth := authhandler.NewAdminAuthMiddleware(authCfg)
 	optionalAuth := authhandler.NewOptionalAdminAuthMiddleware(authCfg)

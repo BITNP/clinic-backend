@@ -19,18 +19,19 @@ import (
 
 // CASAuthConfig configures the CAS login/logout handlers.
 type CASAuthConfig struct {
-	Client         authclient.CASClient
-	SessionService *authservice.SessionService
-	StaffService   *staffservice.StaffService
-	SyncService    *changes.SyncService
-	BaseURL        string
-	DefaultNext    string
-	CookieName     string
-	CSRFCookieName string
-	CookieSecure   bool
-	CookieSameSite http.SameSite
-	SessionTTL     time.Duration
-	StaffVersion   int
+	Client             authclient.CASClient
+	SessionService     *authservice.SessionService
+	StaffService       *staffservice.StaffService
+	SyncService        *changes.SyncService
+	BaseURL            string
+	DefaultNext        string
+	CookieName         string
+	CSRFCookieName     string
+	CookieSecure       bool
+	CookieSameSite     http.SameSite
+	SessionTTL         time.Duration
+	StaffVersion       int
+	StaffVersionGetter func() int
 }
 
 // CASAuthHandler implements GET /login and GET /logout.
@@ -104,7 +105,11 @@ func (h *CASAuthHandler) Login(c *gin.Context) {
 		log.Printf("warning: failed to record work years for staff %d: %v", staff.ID, err)
 	}
 
-	if err := h.cfg.StaffService.UpdateVersion(staff.ID, h.cfg.StaffVersion); err != nil {
+	version := h.cfg.StaffVersion
+	if h.cfg.StaffVersionGetter != nil {
+		version = h.cfg.StaffVersionGetter()
+	}
+	if err := h.cfg.StaffService.UpdateVersion(staff.ID, version); err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to finalize login"})
 		return
 	}
