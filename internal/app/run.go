@@ -145,6 +145,7 @@ func Run() {
 	// poll Snapshot and refresh when a value differs from their last-seen one.
 	syncSvc := changes.NewSyncService(changes.NewRedisStore(redisClient))
 	syncH := changes.NewSyncHandler(syncSvc, runtimeSettings.SyncPollInterval)
+	syncH.SetIntervalGetter(func() time.Duration { return configSvc.Current().SyncPollInterval })
 
 	recordTagSvc := taggingservice.NewRecordTagService(rawDB)
 	if _, err := recordTagSvc.SeedDefault(); err != nil {

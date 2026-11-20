@@ -2046,7 +2046,7 @@ curl "$BASE/api/admin/sync" -b cookies.txt
 ### `GET /api/admin/sync/config`
 
 **Description:** Reports the recommended polling interval. `interval_ms` is `0`
-when periodic polling is disabled.
+when periodic polling is disabled. The value reflects the current runtime setting.
 
 **Response `200 OK`**
 
