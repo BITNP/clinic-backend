@@ -8,6 +8,7 @@ import (
 
 	"clinic-backend/internal/announcement"
 	authmodel "clinic-backend/internal/auth/model"
+	configmodel "clinic-backend/internal/config/model"
 	databasepkg "clinic-backend/internal/database"
 	recordmodel "clinic-backend/internal/record/model"
 	roommodel "clinic-backend/internal/room/model"
@@ -60,6 +61,8 @@ func openDatabase() (*gorm.DB, *databasepkg.DB) {
 	}
 	if err := db.AutoMigrate(
 		&announcement.ClinicAnnouncement{},
+		&configmodel.ClinicConfigGroup{},
+		&configmodel.ClinicConfigItem{},
 		&schedulingmodel.ClinicServiceDate{},
 		&schedulingmodel.ServiceDateReminder{},
 		&roommodel.ClinicCampus{},
