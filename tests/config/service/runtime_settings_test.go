@@ -12,10 +12,10 @@ import (
 func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	svc, db := setupConfigServiceDB(t)
 
-	if err := svc.EnsureRuntimeSettings(envGetter(nil)); err != nil {
+	if err := svc.EnsureRuntimeSettings(); err != nil {
 		t.Fatalf("ensure runtime settings: %v", err)
 	}
-	if err := svc.EnsureRuntimeSettings(envGetter(nil)); err != nil {
+	if err := svc.EnsureRuntimeSettings(); err != nil {
 		t.Fatalf("ensure runtime settings second time: %v", err)
 	}
 
@@ -66,18 +66,17 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	}
 }
 
-func TestConfigService_EnsureRuntimeSettingsImportsEnvOnce(t *testing.T) {
+func TestConfigService_EnsureRuntimeSettingsUsesJSONAndIgnoresEnvironment(t *testing.T) {
 	svc, _ := setupConfigServiceDB(t)
 
-	initialEnv := map[string]string{
-		"SYNC_POLL_INTERVAL":               "20s",
-		"STAFF_VERSION":                    "4",
-		"RECORD_ACTION_WINDOW":             "2m",
-		"RECORD_PHOTO_MAX_COUNT":           "5",
-		"SERVICE_DATE_REMINDER_ENABLED":    "true",
-		"SERVICE_DATE_REMINDER_LEAD_TIMES": "3h,7h",
-	}
-	if err := svc.EnsureRuntimeSettings(envGetter(initialEnv)); err != nil {
+	t.Setenv("SYNC_POLL_INTERVAL", "20s")
+	t.Setenv("STAFF_VERSION", "4")
+	t.Setenv("RECORD_ACTION_WINDOW", "2m")
+	t.Setenv("RECORD_PHOTO_MAX_COUNT", "5")
+	t.Setenv("SERVICE_DATE_REMINDER_ENABLED", "true")
+	t.Setenv("SERVICE_DATE_REMINDER_LEAD_TIMES", "3h,7h")
+
+	if err := svc.EnsureRuntimeSettings(); err != nil {
 		t.Fatalf("ensure runtime settings: %v", err)
 	}
 
@@ -85,42 +84,23 @@ func TestConfigService_EnsureRuntimeSettingsImportsEnvOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load runtime settings: %v", err)
 	}
-	if settings.SyncPollInterval != 20*time.Second ||
-		settings.StaffVersion != 4 ||
-		settings.RecordActionWindow != 2*time.Minute ||
-		settings.RecordPhotoMaxCount != 5 ||
-		!settings.ServiceDateReminderEnabled {
-		t.Errorf("imported settings = %+v", settings)
+	if settings.SyncPollInterval != 10*time.Second ||
+		settings.StaffVersion != 0 ||
+		settings.RecordActionWindow != 5*time.Minute ||
+		settings.RecordPhotoMaxCount != 9 ||
+		settings.ServiceDateReminderEnabled {
+		t.Errorf("JSON defaults = %+v", settings)
 	}
 	if len(settings.ServiceDateReminderLeadTimes) != 2 ||
-		settings.ServiceDateReminderLeadTimes[0] != 7*time.Hour ||
+		settings.ServiceDateReminderLeadTimes[0] != 5*time.Hour ||
 		settings.ServiceDateReminderLeadTimes[1] != 3*time.Hour {
-		t.Errorf("imported lead times = %v, want [7h 3h]", settings.ServiceDateReminderLeadTimes)
-	}
-
-	replacementEnv := map[string]string{
-		"SYNC_POLL_INTERVAL":               "1s",
-		"STAFF_VERSION":                    "99",
-		"RECORD_ACTION_WINDOW":             "1m",
-		"RECORD_PHOTO_MAX_COUNT":           "1",
-		"SERVICE_DATE_REMINDER_ENABLED":    "false",
-		"SERVICE_DATE_REMINDER_LEAD_TIMES": "1h",
-	}
-	if err := svc.EnsureRuntimeSettings(envGetter(replacementEnv)); err != nil {
-		t.Fatalf("ensure runtime settings again: %v", err)
-	}
-	settings, err = svc.LoadRuntimeSettings()
-	if err != nil {
-		t.Fatalf("load runtime settings again: %v", err)
-	}
-	if settings.SyncPollInterval != 20*time.Second || settings.StaffVersion != 4 {
-		t.Errorf("environment overwrote database settings: %+v", settings)
+		t.Errorf("JSON lead times = %v, want [5h 3h]", settings.ServiceDateReminderLeadTimes)
 	}
 }
 
 func TestConfigService_EnsureRuntimeSettingsPreservesConfiguredRows(t *testing.T) {
 	svc, db := setupConfigServiceDB(t)
-	if err := svc.EnsureRuntimeSettings(envGetter(nil)); err != nil {
+	if err := svc.EnsureRuntimeSettings(); err != nil {
 		t.Fatalf("ensure runtime settings: %v", err)
 	}
 
@@ -133,9 +113,7 @@ func TestConfigService_EnsureRuntimeSettingsPreservesConfiguredRows(t *testing.T
 		t.Fatalf("update sync setting: %v", err)
 	}
 
-	if err := svc.EnsureRuntimeSettings(envGetter(map[string]string{
-		"SYNC_POLL_INTERVAL": "1s",
-	})); err != nil {
+	if err := svc.EnsureRuntimeSettings(); err != nil {
 		t.Fatalf("ensure runtime settings again: %v", err)
 	}
 	settings, err := svc.LoadRuntimeSettings()
@@ -149,7 +127,7 @@ func TestConfigService_EnsureRuntimeSettingsPreservesConfiguredRows(t *testing.T
 
 func TestConfigService_LoadRuntimeSettingsRejectsInvalidStoredValue(t *testing.T) {
 	svc, db := setupConfigServiceDB(t)
-	if err := svc.EnsureRuntimeSettings(envGetter(nil)); err != nil {
+	if err := svc.EnsureRuntimeSettings(); err != nil {
 		t.Fatalf("ensure runtime settings: %v", err)
 	}
 
@@ -202,11 +180,5 @@ func TestConfigService_ValidatesKnownRuntimeSettings(t *testing.T) {
 	valueType := configmodel.ConfigValueTypeInt
 	if _, err := svc.UpdateItem(item.ID, configservice.UpdateItemInput{ValueType: &valueType}); !errors.Is(err, configservice.ErrConfigValueTypeInvalid) {
 		t.Fatalf("expected fixed value-type error, got %v", err)
-	}
-}
-
-func envGetter(values map[string]string) func(string) string {
-	return func(key string) string {
-		return values[key]
 	}
 }

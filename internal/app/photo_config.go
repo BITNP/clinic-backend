@@ -8,7 +8,6 @@ import (
 )
 
 const (
-	defaultRecordPhotoMaxCount     = 9
 	defaultRecordPhotoMaxSizeBytes = int64(10 * 1024 * 1024)
 )
 
@@ -19,19 +18,9 @@ type PhotoConfig struct {
 	MaxSizeBytes int64
 }
 
-// LoadPhotoConfig reads and validates the record photo limits. Empty values
-// use the documented defaults.
-func LoadPhotoConfig(getenv func(string) string) (PhotoConfig, error) {
-	maxCount, err := parsePositiveIntSetting(getenv("RECORD_PHOTO_MAX_COUNT"), defaultRecordPhotoMaxCount)
-	if err != nil {
-		return PhotoConfig{}, fmt.Errorf("invalid RECORD_PHOTO_MAX_COUNT: %w", err)
-	}
-	return LoadPhotoConfigWithMaxCount(getenv, maxCount)
-}
-
-// LoadPhotoConfigWithMaxCount combines the database-managed photo count with
+// LoadPhotoConfig combines the database-managed photo count with
 // environment-managed upload settings.
-func LoadPhotoConfigWithMaxCount(getenv func(string) string, maxCount int) (PhotoConfig, error) {
+func LoadPhotoConfig(getenv func(string) string, maxCount int) (PhotoConfig, error) {
 	if maxCount <= 0 {
 		return PhotoConfig{}, errors.New("invalid RECORD_PHOTO_MAX_COUNT: must be positive")
 	}

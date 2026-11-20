@@ -394,16 +394,15 @@ logged and never fails the underlying write.
 The backend can remind admins assigned to a service window when tickets remain
 pending. It scans every minute and on startup, finds pending tickets by date and
 room, and sends a QQ private message through the account-scoped message gateway.
-The reminder switch and lead times are stored in the database and managed from
-the admin configuration API:
+The reminder switch and lead times are stored in the database, initialized from
+the embedded seed catalog, and managed from the admin configuration API:
 
 - `SERVICE_DATE_REMINDER_ENABLED` is a boolean, default `false`.
 - `SERVICE_DATE_REMINDER_LEAD_TIMES` defaults to `5h,3h`: unique, positive
   Go durations in whole seconds. Each is relative to the service start time.
 
-Their same-named environment variables are imported only when the database rows
-do not yet exist. Changing them in `.env` after the first startup has no effect.
-The remaining reminder settings are still environment-backed:
+Their same-named environment variables are not read. The remaining reminder
+settings are environment-backed:
 
 - `MESSAGE_GATEWAY_URL`: gateway base URL.
 - `MESSAGE_GATEWAY_ACCOUNT=qq`: gateway account name (default `qq`).

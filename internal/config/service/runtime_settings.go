@@ -3,11 +3,14 @@ package service
 import (
 	"context"
 	"database/sql"
+	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	configmodel "clinic-backend/internal/config/model"
@@ -23,85 +26,128 @@ const (
 	runtimeSettingServiceReminderLeadTimes = "SERVICE_DATE_REMINDER_LEAD_TIMES"
 )
 
+//go:embed data/runtime_settings.json
+var runtimeSettingsJSON []byte
+
 type runtimeGroupDefinition struct {
-	Name        string
-	DisplayName string
-	SortOrder   int
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	SortOrder   int    `json:"sort_order"`
 }
 
 type runtimeSettingDefinition struct {
-	Name         string
-	DisplayName  string
-	ValueType    configmodel.ConfigValueType
-	GroupName    string
-	SortOrder    int
-	DefaultValue string
+	Name         string                      `json:"name"`
+	DisplayName  string                      `json:"display_name"`
+	ValueType    configmodel.ConfigValueType `json:"value_type"`
+	GroupName    string                      `json:"group"`
+	SortOrder    int                         `json:"sort_order"`
+	IsRequired   bool                        `json:"is_required"`
+	DefaultValue string                      `json:"default_value"`
 }
 
-var runtimeGroupDefinitions = []runtimeGroupDefinition{
-	{Name: "system", DisplayName: "系统配置", SortOrder: 0},
-	{Name: "record", DisplayName: "工单配置", SortOrder: 1},
-	{Name: "reminder", DisplayName: "提醒与通知", SortOrder: 2},
+type runtimeSettingsSeed struct {
+	Groups []runtimeGroupDefinition   `json:"groups"`
+	Items  []runtimeSettingDefinition `json:"items"`
 }
 
-var runtimeSettingDefinitions = []runtimeSettingDefinition{
-	{
-		Name:         runtimeSettingSyncPollInterval,
-		DisplayName:  "客户端同步轮询间隔",
-		ValueType:    configmodel.ConfigValueTypeString,
-		GroupName:    "system",
-		SortOrder:    0,
-		DefaultValue: "10s",
-	},
-	{
-		Name:         runtimeSettingStaffVersion,
-		DisplayName:  "员工登录会话版本",
-		ValueType:    configmodel.ConfigValueTypeInt,
-		GroupName:    "system",
-		SortOrder:    1,
-		DefaultValue: "0",
-	},
-	{
-		Name:         runtimeSettingRecordActionWindow,
-		DisplayName:  "操作撤销时限",
-		ValueType:    configmodel.ConfigValueTypeString,
-		GroupName:    "record",
-		SortOrder:    0,
-		DefaultValue: "5m",
-	},
-	{
-		Name:         runtimeSettingRecordPhotoMaxCount,
-		DisplayName:  "单条工单照片上限",
-		ValueType:    configmodel.ConfigValueTypeInt,
-		GroupName:    "record",
-		SortOrder:    1,
-		DefaultValue: "9",
-	},
-	{
-		Name:         runtimeSettingServiceReminderEnabled,
-		DisplayName:  "启用服务日期提醒",
-		ValueType:    configmodel.ConfigValueTypeBoolean,
-		GroupName:    "reminder",
-		SortOrder:    0,
-		DefaultValue: "false",
-	},
-	{
-		Name:         runtimeSettingServiceReminderLeadTimes,
-		DisplayName:  "提前提醒时间列表",
-		ValueType:    configmodel.ConfigValueTypeString,
-		GroupName:    "reminder",
-		SortOrder:    1,
-		DefaultValue: "5h,3h",
-	},
+var runtimeSettingExpectedTypes = map[string]configmodel.ConfigValueType{
+	runtimeSettingSyncPollInterval:         configmodel.ConfigValueTypeString,
+	runtimeSettingStaffVersion:             configmodel.ConfigValueTypeInt,
+	runtimeSettingRecordActionWindow:       configmodel.ConfigValueTypeString,
+	runtimeSettingRecordPhotoMaxCount:      configmodel.ConfigValueTypeInt,
+	runtimeSettingServiceReminderEnabled:   configmodel.ConfigValueTypeBoolean,
+	runtimeSettingServiceReminderLeadTimes: configmodel.ConfigValueTypeString,
 }
 
-var runtimeSettingDefinitionByName = func() map[string]runtimeSettingDefinition {
-	settings := make(map[string]runtimeSettingDefinition, len(runtimeSettingDefinitions))
-	for _, definition := range runtimeSettingDefinitions {
-		settings[definition.Name] = definition
+var (
+	runtimeSeedOnce sync.Once
+	runtimeSeed     runtimeSettingsSeed
+	runtimeSeedErr  error
+)
+
+func loadRuntimeSeed() (runtimeSettingsSeed, error) {
+	runtimeSeedOnce.Do(func() {
+		if err := json.Unmarshal(runtimeSettingsJSON, &runtimeSeed); err != nil {
+			runtimeSeedErr = fmt.Errorf("decode runtime settings seed: %w", err)
+			return
+		}
+		if err := validateRuntimeSeed(runtimeSeed); err != nil {
+			runtimeSeedErr = err
+		}
+	})
+	return runtimeSeed, runtimeSeedErr
+}
+
+func validateRuntimeSeed(seed runtimeSettingsSeed) error {
+	if len(seed.Groups) == 0 {
+		return errors.New("runtime settings seed has no groups")
 	}
-	return settings
-}()
+
+	groupNames := make(map[string]struct{}, len(seed.Groups))
+	for _, group := range seed.Groups {
+		if strings.TrimSpace(group.Name) == "" || strings.TrimSpace(group.DisplayName) == "" {
+			return errors.New("runtime settings seed contains an incomplete group")
+		}
+		if group.SortOrder < 0 {
+			return fmt.Errorf("runtime settings seed group %s has a negative sort_order", group.Name)
+		}
+		if _, exists := groupNames[group.Name]; exists {
+			return fmt.Errorf("runtime settings seed contains duplicate group %s", group.Name)
+		}
+		groupNames[group.Name] = struct{}{}
+	}
+
+	if len(seed.Items) != len(runtimeSettingExpectedTypes) {
+		return fmt.Errorf(
+			"runtime settings seed contains %d items; want %d",
+			len(seed.Items),
+			len(runtimeSettingExpectedTypes),
+		)
+	}
+
+	itemNames := make(map[string]struct{}, len(seed.Items))
+	for _, item := range seed.Items {
+		expectedType, known := runtimeSettingExpectedTypes[item.Name]
+		if !known {
+			return fmt.Errorf("runtime settings seed contains unknown item %s", item.Name)
+		}
+		if _, exists := itemNames[item.Name]; exists {
+			return fmt.Errorf("runtime settings seed contains duplicate item %s", item.Name)
+		}
+		itemNames[item.Name] = struct{}{}
+
+		if strings.TrimSpace(item.DisplayName) == "" {
+			return fmt.Errorf("runtime settings seed item %s has no display_name", item.Name)
+		}
+		if item.ValueType != expectedType {
+			return fmt.Errorf(
+				"runtime settings seed item %s has value_type %s; want %s",
+				item.Name,
+				item.ValueType,
+				expectedType,
+			)
+		}
+		if !item.IsRequired {
+			return fmt.Errorf("runtime settings seed item %s must be required", item.Name)
+		}
+		if item.SortOrder < 0 {
+			return fmt.Errorf("runtime settings seed item %s has a negative sort_order", item.Name)
+		}
+		if _, exists := groupNames[item.GroupName]; !exists {
+			return fmt.Errorf("runtime settings seed item %s references unknown group %s", item.Name, item.GroupName)
+		}
+		if _, err := validateRuntimeSettingValue(item.Name, item.DefaultValue); err != nil {
+			return fmt.Errorf("runtime settings seed item %s has an invalid default: %w", item.Name, err)
+		}
+	}
+
+	for name := range runtimeSettingExpectedTypes {
+		if _, exists := itemNames[name]; !exists {
+			return fmt.Errorf("runtime settings seed is missing item %s", name)
+		}
+	}
+	return nil
+}
 
 // RuntimeSettings contains validated settings loaded from the database.
 type RuntimeSettings struct {
@@ -113,16 +159,17 @@ type RuntimeSettings struct {
 	ServiceDateReminderLeadTimes []time.Duration
 }
 
-// EnsureRuntimeSettings inserts missing groups and settings. Existing rows are
-// never overwritten; environment values are only used to initialize a new row.
-func (s *ConfigService) EnsureRuntimeSettings(getenv func(string) string) error {
-	if getenv == nil {
-		getenv = func(string) string { return "" }
+// EnsureRuntimeSettings inserts missing groups and settings from the embedded
+// seed catalog. Existing rows are never overwritten.
+func (s *ConfigService) EnsureRuntimeSettings() error {
+	seed, err := loadRuntimeSeed()
+	if err != nil {
+		return err
 	}
 
 	return database.WithTx(context.Background(), s.db.DB, func(tx *sql.Tx) error {
-		groupIDs := make(map[string]uint, len(runtimeGroupDefinitions))
-		for _, group := range runtimeGroupDefinitions {
+		groupIDs := make(map[string]uint, len(seed.Groups))
+		for _, group := range seed.Groups {
 			if _, err := tx.Exec(
 				`INSERT INTO clinic_config_group (name, display_name, sort_order)
 				 VALUES ($1, $2, $3)
@@ -139,7 +186,7 @@ func (s *ConfigService) EnsureRuntimeSettings(getenv func(string) string) error 
 			groupIDs[group.Name] = groupID
 		}
 
-		for _, setting := range runtimeSettingDefinitions {
+		for _, setting := range seed.Items {
 			exists, err := configItemExists(tx, setting.Name)
 			if err != nil {
 				return err
@@ -148,11 +195,7 @@ func (s *ConfigService) EnsureRuntimeSettings(getenv func(string) string) error 
 				continue
 			}
 
-			rawValue := strings.TrimSpace(getenv(setting.Name))
-			if rawValue == "" {
-				rawValue = setting.DefaultValue
-			}
-			value, err := validateRuntimeSettingValue(setting.Name, rawValue)
+			value, err := validateRuntimeSettingValue(setting.Name, setting.DefaultValue)
 			if err != nil {
 				return fmt.Errorf("initialize %s: %w", setting.Name, err)
 			}
@@ -161,9 +204,10 @@ func (s *ConfigService) EnsureRuntimeSettings(getenv func(string) string) error 
 			if _, err := tx.Exec(
 				`INSERT INTO clinic_config_item
 				 (name, value, value_type, display_name, is_required, group_id, sort_order)
-				 VALUES ($1, $2, $3, $4, true, $5, $6)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7)
 				 ON CONFLICT (name) DO NOTHING`,
-				setting.Name, value, setting.ValueType, setting.DisplayName, groupID, setting.SortOrder,
+				setting.Name, value, setting.ValueType, setting.DisplayName,
+				setting.IsRequired, groupID, setting.SortOrder,
 			); err != nil {
 				return fmt.Errorf("seed config item %s: %w", setting.Name, err)
 			}
@@ -186,12 +230,17 @@ func configItemExists(tx *sql.Tx, name string) (bool, error) {
 
 // LoadRuntimeSettings reads and validates the database-managed runtime settings.
 func (s *ConfigService) LoadRuntimeSettings() (RuntimeSettings, error) {
+	seed, err := loadRuntimeSeed()
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
+
 	settings := RuntimeSettings{}
-	for _, setting := range runtimeSettingDefinitions {
+	for _, setting := range seed.Items {
 		var value string
 		var valueType configmodel.ConfigValueType
 		var required bool
-		err := s.db.QueryRow(
+		err = s.db.QueryRow(
 			"SELECT value, value_type, is_required FROM clinic_config_item WHERE name = $1",
 			setting.Name,
 		).Scan(&value, &valueType, &required)
@@ -234,8 +283,21 @@ func validateKnownRuntimeSetting(
 	required bool,
 	value string,
 ) (string, error) {
-	setting, ok := runtimeSettingDefinitionByName[name]
-	if !ok {
+	seed, err := loadRuntimeSeed()
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrConfigInvalidInput, err)
+	}
+
+	var setting runtimeSettingDefinition
+	found := false
+	for _, candidate := range seed.Items {
+		if candidate.Name == name {
+			setting = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
 		return value, nil
 	}
 	if valueType != setting.ValueType {

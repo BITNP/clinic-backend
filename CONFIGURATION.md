@@ -4,7 +4,8 @@ All runtime and deployment settings for `clinic-backend` in one place. Most
 runtime settings are environment variables; Docker Compose reads them from
 `.env` (template: `.env.example`). Six application settings are stored in the
 database and can be edited through the admin configuration API. Defaults below
-come from the Go code unless a compose file overrides them.
+come from Go code, the embedded database seed catalog, or a compose file as
+noted.
 
 - API behavior that depends on these settings is documented in [API.md](API.md).
 - Deployment procedures are in [README.md](README.md).
@@ -12,11 +13,12 @@ come from the Go code unless a compose file overrides them.
 
 ## Database-managed runtime settings
 
-The backend seeds these configuration groups and items at startup. When an item
-does not exist, its environment variable (if set) is imported once; otherwise
-the default below is used. After the row exists, the database is authoritative
-and changing the environment variable has no runtime effect. Changes made
-through `/api/admin/config` are loaded on the next backend restart.
+The backend embeds
+`internal/config/service/data/runtime_settings.json` and uses it only to create
+missing groups and items at startup. Existing rows are never overwritten, so the
+database becomes authoritative after first initialization. These settings are
+not read from environment variables. Changes made through `/api/admin/config`
+are loaded on the next backend restart.
 
 | Config item | Default | Description |
 | --- | --- | --- |
@@ -352,8 +354,9 @@ Do not use `--pull always` or `docker compose pull` for this stack: those bypass
 reach. Every bundled service in the production compose file uses
 `pull_policy: never` and is served from the loaded tarball.
 
-Override any setting via `.env` or environment variables, for example
-`CLINIC_API_KEY=secret docker compose up --build`.
+Override any environment-backed setting via `.env` or environment variables,
+for example `CLINIC_API_KEY=secret docker compose up --build`. Database-managed
+settings are changed through the admin configuration API.
 
 ## Admin frontend
 

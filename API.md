@@ -855,7 +855,9 @@ The backend seeds and reserves `SYNC_POLL_INTERVAL`, `STAFF_VERSION`,
 `RECORD_ACTION_WINDOW`, `RECORD_PHOTO_MAX_COUNT`,
 `SERVICE_DATE_REMINDER_ENABLED`, and `SERVICE_DATE_REMINDER_LEAD_TIMES`. Their
 types and required flags are fixed and their values receive key-specific
-validation. Runtime changes are loaded when the backend restarts.
+validation. Initial values come from the embedded runtime settings seed catalog;
+environment variables with these names are ignored. Runtime changes are loaded
+when the backend restarts.
 
 ### `GET /api/admin/config`
 

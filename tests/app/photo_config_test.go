@@ -8,7 +8,7 @@ import (
 )
 
 func TestLoadPhotoConfig_Defaults(t *testing.T) {
-	cfg, err := app.LoadPhotoConfig(envMap(nil))
+	cfg, err := app.LoadPhotoConfig(envMap(nil), 9)
 	if err != nil {
 		t.Fatalf("LoadPhotoConfig() error = %v", err)
 	}
@@ -22,9 +22,8 @@ func TestLoadPhotoConfig_Defaults(t *testing.T) {
 
 func TestLoadPhotoConfig_CustomValues(t *testing.T) {
 	cfg, err := app.LoadPhotoConfig(envMap(map[string]string{
-		"RECORD_PHOTO_MAX_COUNT":      "4",
 		"RECORD_PHOTO_MAX_SIZE_BYTES": "2048000",
-	}))
+	}), 4)
 	if err != nil {
 		t.Fatalf("LoadPhotoConfig() error = %v", err)
 	}
@@ -38,9 +37,8 @@ func TestLoadPhotoConfig_CustomValues(t *testing.T) {
 
 func TestLoadPhotoConfig_TrimsWhitespace(t *testing.T) {
 	cfg, err := app.LoadPhotoConfig(envMap(map[string]string{
-		"RECORD_PHOTO_MAX_COUNT":      " 2 ",
 		"RECORD_PHOTO_MAX_SIZE_BYTES": " 1024 ",
-	}))
+	}), 2)
 	if err != nil {
 		t.Fatalf("LoadPhotoConfig() error = %v", err)
 	}
@@ -49,13 +47,12 @@ func TestLoadPhotoConfig_TrimsWhitespace(t *testing.T) {
 	}
 }
 
-func TestLoadPhotoConfigWithMaxCount_UsesDatabaseCount(t *testing.T) {
-	cfg, err := app.LoadPhotoConfigWithMaxCount(envMap(map[string]string{
-		"RECORD_PHOTO_MAX_COUNT":      "99",
+func TestLoadPhotoConfig_UsesDatabaseCount(t *testing.T) {
+	cfg, err := app.LoadPhotoConfig(envMap(map[string]string{
 		"RECORD_PHOTO_MAX_SIZE_BYTES": "2048000",
 	}), 4)
 	if err != nil {
-		t.Fatalf("LoadPhotoConfigWithMaxCount() error = %v", err)
+		t.Fatalf("LoadPhotoConfig() error = %v", err)
 	}
 	if cfg.MaxCount != 4 {
 		t.Errorf("MaxCount = %d, want database value 4", cfg.MaxCount)
@@ -65,8 +62,8 @@ func TestLoadPhotoConfigWithMaxCount_UsesDatabaseCount(t *testing.T) {
 	}
 }
 
-func TestLoadPhotoConfigWithMaxCount_RejectsNonPositiveCount(t *testing.T) {
-	_, err := app.LoadPhotoConfigWithMaxCount(envMap(nil), 0)
+func TestLoadPhotoConfig_RejectsNonPositiveCount(t *testing.T) {
+	_, err := app.LoadPhotoConfig(envMap(nil), 0)
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -79,24 +76,6 @@ func TestLoadPhotoConfig_InvalidValues(t *testing.T) {
 		raw  string
 		want string
 	}{
-		{
-			name: "count not a number",
-			key:  "RECORD_PHOTO_MAX_COUNT",
-			raw:  "many",
-			want: "invalid RECORD_PHOTO_MAX_COUNT",
-		},
-		{
-			name: "count zero",
-			key:  "RECORD_PHOTO_MAX_COUNT",
-			raw:  "0",
-			want: "invalid RECORD_PHOTO_MAX_COUNT: must be positive",
-		},
-		{
-			name: "count negative",
-			key:  "RECORD_PHOTO_MAX_COUNT",
-			raw:  "-1",
-			want: "invalid RECORD_PHOTO_MAX_COUNT: must be positive",
-		},
 		{
 			name: "size not a number",
 			key:  "RECORD_PHOTO_MAX_SIZE_BYTES",
@@ -119,7 +98,7 @@ func TestLoadPhotoConfig_InvalidValues(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := app.LoadPhotoConfig(envMap(map[string]string{tt.key: tt.raw}))
+			_, err := app.LoadPhotoConfig(envMap(map[string]string{tt.key: tt.raw}), 9)
 			if err == nil {
 				t.Fatal("expected an error")
 			}

@@ -217,7 +217,7 @@ func TestConfigHandler_ValidationAndConflicts(t *testing.T) {
 
 func TestConfigHandler_UpdateKnownRuntimeSetting(t *testing.T) {
 	r, svc, db := setupConfigHandlerRouter(t, authhandler.RoleAdmin)
-	if err := svc.EnsureRuntimeSettings(func(string) string { return "" }); err != nil {
+	if err := svc.EnsureRuntimeSettings(); err != nil {
 		t.Fatalf("seed runtime settings: %v", err)
 	}
 

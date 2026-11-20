@@ -1,0 +1,75 @@
+{
+  "groups": [
+    {
+      "name": "system",
+      "display_name": "系统配置",
+      "sort_order": 0
+    },
+    {
+      "name": "record",
+      "display_name": "工单配置",
+      "sort_order": 1
+    },
+    {
+      "name": "reminder",
+      "display_name": "提醒与通知",
+      "sort_order": 2
+    }
+  ],
+  "items": [
+    {
+      "name": "SYNC_POLL_INTERVAL",
+      "display_name": "客户端同步轮询间隔",
+      "value_type": "string",
+      "group": "system",
+      "sort_order": 0,
+      "is_required": true,
+      "default_value": "10s"
+    },
+    {
+      "name": "STAFF_VERSION",
+      "display_name": "员工登录会话版本",
+      "value_type": "int",
+      "group": "system",
+      "sort_order": 1,
+      "is_required": true,
+      "default_value": "0"
+    },
+    {
+      "name": "RECORD_ACTION_WINDOW",
+      "display_name": "操作撤销时限",
+      "value_type": "string",
+      "group": "record",
+      "sort_order": 0,
+      "is_required": true,
+      "default_value": "5m"
+    },
+    {
+      "name": "RECORD_PHOTO_MAX_COUNT",
+      "display_name": "单条工单照片上限",
+      "value_type": "int",
+      "group": "record",
+      "sort_order": 1,
+      "is_required": true,
+      "default_value": "9"
+    },
+    {
+      "name": "SERVICE_DATE_REMINDER_ENABLED",
+      "display_name": "启用服务日期提醒",
+      "value_type": "boolean",
+      "group": "reminder",
+      "sort_order": 0,
+      "is_required": true,
+      "default_value": "false"
+    },
+    {
+      "name": "SERVICE_DATE_REMINDER_LEAD_TIMES",
+      "display_name": "提前提醒时间列表",
+      "value_type": "string",
+      "group": "reminder",
+      "sort_order": 1,
+      "is_required": true,
+      "default_value": "5h,3h"
+    }
+  ]
+}

@@ -10,10 +10,9 @@ import (
 )
 
 const (
-	defaultServiceDateReminderLeadTimes = "5h,3h"
-	defaultServiceDateReminderAccount   = "qq"
-	defaultServiceDateReminderTimeout   = 5 * time.Second
-	defaultServiceDateReminderTemplate  = `[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待审核工单，请及时处理。`
+	defaultServiceDateReminderAccount  = "qq"
+	defaultServiceDateReminderTimeout  = 5 * time.Second
+	defaultServiceDateReminderTemplate = `[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待审核工单，请及时处理。`
 )
 
 // ServiceDateReminderConfig controls the pending-ticket reminder worker.
@@ -33,25 +32,9 @@ type ServiceDateReminderGatewayConfig struct {
 	Timeout      time.Duration
 }
 
-// LoadServiceDateReminderConfig reads and validates service-date reminder
-// settings. The message template and lead times are validated even while the
-// worker is disabled; gateway credentials are required only when enabled.
-func LoadServiceDateReminderConfig(getenv func(string) string) (ServiceDateReminderConfig, error) {
-	enabled, err := parseBoolSetting(getenv("SERVICE_DATE_REMINDER_ENABLED"), false)
-	if err != nil {
-		return ServiceDateReminderConfig{}, fmt.Errorf("invalid SERVICE_DATE_REMINDER_ENABLED: %w", err)
-	}
-
-	leadTimes, err := parseServiceDateReminderLeadTimes(getenv("SERVICE_DATE_REMINDER_LEAD_TIMES"))
-	if err != nil {
-		return ServiceDateReminderConfig{}, fmt.Errorf("invalid SERVICE_DATE_REMINDER_LEAD_TIMES: %w", err)
-	}
-	return LoadServiceDateReminderConfigWithValues(getenv, enabled, leadTimes)
-}
-
-// LoadServiceDateReminderConfigWithValues combines database-managed reminder
-// switches and lead times with environment-managed template and gateway data.
-func LoadServiceDateReminderConfigWithValues(
+// LoadServiceDateReminderConfig combines database-managed reminder switches
+// and lead times with environment-managed template and gateway data.
+func LoadServiceDateReminderConfig(
 	getenv func(string) string,
 	enabled bool,
 	leadTimes []time.Duration,
@@ -108,31 +91,6 @@ func LoadServiceDateReminderConfigWithValues(
 			Timeout:      timeout,
 		},
 	}, nil
-}
-
-func parseServiceDateReminderLeadTimes(raw string) ([]time.Duration, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		raw = defaultServiceDateReminderLeadTimes
-	}
-
-	parts := strings.Split(raw, ",")
-	leadTimes := make([]time.Duration, 0, len(parts))
-	for _, part := range parts {
-		leadTime, err := time.ParseDuration(strings.TrimSpace(part))
-		if err != nil {
-			return nil, err
-		}
-		leadTimes = append(leadTimes, leadTime)
-	}
-	if err := validateServiceDateReminderLeadTimes(leadTimes); err != nil {
-		return nil, err
-	}
-
-	sort.Slice(leadTimes, func(i, j int) bool {
-		return leadTimes[i] > leadTimes[j]
-	})
-	return leadTimes, nil
 }
 
 func validateServiceDateReminderLeadTimes(leadTimes []time.Duration) error {

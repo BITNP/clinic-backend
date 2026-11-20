@@ -493,7 +493,7 @@ func normalizeConfigItemValue(
 	valueType configmodel.ConfigValueType,
 	required bool,
 ) (string, error) {
-	if _, ok := runtimeSettingDefinitionByName[name]; ok {
+	if _, ok := runtimeSettingExpectedTypes[name]; ok {
 		return validateKnownRuntimeSetting(name, valueType, required, value)
 	}
 	return normalizeValue(value, valueType, required)

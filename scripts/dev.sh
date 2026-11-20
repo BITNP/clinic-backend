@@ -420,7 +420,6 @@ start_backend() {
 	export APP_BASE_URL=${APP_BASE_URL:-http://127.0.0.1:5173}
 	export CAS_DEFAULT_REDIRECT=${CAS_DEFAULT_REDIRECT:-/}
 	export SESSION_COOKIE_SAMESITE=${SESSION_COOKIE_SAMESITE:-lax}
-	export STAFF_VERSION=${STAFF_VERSION:-0}
 
 	log "starting backend on :$BACKEND_PORT (Ctrl-C to stop)"
 

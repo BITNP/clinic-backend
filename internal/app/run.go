@@ -71,7 +71,7 @@ func Run() {
 
 	db, rawDB := openDatabase()
 	configSvc := configservice.NewConfigService(rawDB)
-	if err := configSvc.EnsureRuntimeSettings(os.Getenv); err != nil {
+	if err := configSvc.EnsureRuntimeSettings(); err != nil {
 		closeDatabase(db)
 		log.Fatalf("seed runtime configuration: %v", err)
 	}
@@ -81,13 +81,13 @@ func Run() {
 		log.Fatalf("load runtime configuration: %v", err)
 	}
 
-	photoCfg, err := LoadPhotoConfigWithMaxCount(os.Getenv, runtimeSettings.RecordPhotoMaxCount)
+	photoCfg, err := LoadPhotoConfig(os.Getenv, runtimeSettings.RecordPhotoMaxCount)
 	if err != nil {
 		closeDatabase(db)
 		log.Fatalf("photo configuration: %v", err)
 	}
 
-	reminderCfg, err := LoadServiceDateReminderConfigWithValues(
+	reminderCfg, err := LoadServiceDateReminderConfig(
 		os.Getenv,
 		runtimeSettings.ServiceDateReminderEnabled,
 		runtimeSettings.ServiceDateReminderLeadTimes,
