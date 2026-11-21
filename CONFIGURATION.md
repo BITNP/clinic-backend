@@ -469,6 +469,10 @@ To test without a real QQ account, use `scripts/dev.sh --fake-napcat`. It starts
 the dev fake OneBot server with `go run ./cmd/fake-napcat` from
 `../message-gateway` and stops it on exit.
 
+Use `scripts/dev.sh --role staff`, `--role admin`, or `--role superadmin` to
+select the role returned by the fake CAS server. The default is `admin`; the
+selected role applies the next time a user logs in through CAS.
+
 For a local `S3_ENDPOINT`, it starts RustFS and runs `rustfs-init` before
 starting the backend. Use `--no-storage` when storage is already managed
 elsewhere or points at an external S3 endpoint. On the first sample-NapCat
@@ -487,6 +491,7 @@ Defaults applied by `scripts/dev.sh` when the variables are unset:
 | Variable | Default |
 | --- | --- |
 | `CAS_PORT` | `9999` |
+| `CAS_ROLE` | `admin` |
 | `POSTGRES_PORT` | `5432` |
 | `POSTGRES_USER` | `clinic` |
 | `POSTGRES_PASSWORD` | `clinic` |
@@ -510,8 +515,8 @@ Defaults applied by `scripts/dev.sh` when the variables are unset:
 Manual setup:
 
 ```bash
-# 1. Start the fake CAS server (gives admin role)
-go run fake/fake_cas.go        # runs on :9999
+# 1. Start the fake CAS server (defaults to admin)
+go run fake/fake_cas.go --role staff        # use admin or superadmin as needed
 
 # 2. Start PostgreSQL and Redis (required; see docker-compose.yml)
 docker compose up -d db

@@ -18,7 +18,7 @@
 # PostgreSQL, RustFS, and message-gateway are left running if they were already
 # running before this script started.
 #
-# Usage: scripts/dev.sh [--no-postgres] [--no-cas] [--no-redis] [--no-storage] [--no-message-gateway] [--no-fake-napcat]
+# Usage: scripts/dev.sh [--role staff|admin|superadmin] [--no-postgres] [--no-cas] [--no-redis] [--no-storage] [--no-message-gateway] [--no-fake-napcat]
 
 set -Eeuo pipefail
 
@@ -40,6 +40,7 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
 fi
 
 CAS_PORT=${CAS_PORT:-9999}
+CAS_ROLE=${CAS_ROLE:-admin}
 POSTGRES_PORT=${POSTGRES_PORT:-5432}
 POSTGRES_USER=${POSTGRES_USER:-clinic}
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-clinic}
@@ -74,6 +75,8 @@ Loads and exports the backend's .env before starting services, if present.
 Values in .env override existing environment variables.
 
 Options:
+  --role ROLE      Role served by the fake CAS server: staff, admin, or
+                  superadmin (default: admin)
   --no-postgres   Do not start the bundled PostgreSQL service (assume an
                   external database or SQLite is configured)
   --no-cas        Do not start the fake CAS server (assume one is running)
@@ -91,6 +94,16 @@ EOF
 
 while (($# > 0)); do
 	case "$1" in
+	--role)
+		if (($# < 2)); then
+			printf 'Missing value for %s\n\n' "$1" >&2
+			usage >&2
+			exit 1
+		fi
+		CAS_ROLE=$2
+		shift
+		;;
+	--role=*) CAS_ROLE=${1#*=} ;;
 	--no-postgres) START_POSTGRES=0 ;;
 	--no-cas) START_CAS=0 ;;
 	--no-redis) START_REDIS=0 ;;
@@ -110,6 +123,15 @@ while (($# > 0)); do
 	esac
 	shift
 done
+
+case "$CAS_ROLE" in
+staff | admin | superadmin) ;;
+*)
+	printf 'Invalid fake CAS role: %s (choose staff, admin, or superadmin)\n\n' "$CAS_ROLE" >&2
+	usage >&2
+	exit 1
+	;;
+esac
 
 log() { printf '\033[1;34m[dev]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[dev]\033[0m %s\n' "$*" >&2; }
@@ -270,15 +292,15 @@ start_cas() {
 	command -v go >/dev/null 2>&1 || die "go is not installed"
 	[[ -f "$ROOT_DIR/fake/fake_cas.go" ]] || die "fake/fake_cas.go not found"
 
-	log "starting fake CAS server on :$CAS_PORT (log: $CAS_LOG)"
-	spawn go run fake/fake_cas.go >>"$CAS_LOG" 2>&1
+	log "starting fake CAS server on :$CAS_PORT with $CAS_ROLE role (log: $CAS_LOG)"
+	spawn go run fake/fake_cas.go --role "$CAS_ROLE" --addr "127.0.0.1:$CAS_PORT" >>"$CAS_LOG" 2>&1
 	CAS_PGID=$SPAWNED_PGID
 
 	if ! wait_for_port 127.0.0.1 "$CAS_PORT" "fake CAS" 60; then
 		tail -n 20 "$CAS_LOG" >&2 || true
 		die "fake CAS server did not come up; see $CAS_LOG"
 	fi
-	log "fake CAS ready (admin role)"
+	log "fake CAS ready ($CAS_ROLE role)"
 }
 
 # --- 3. Redis ----------------------------------------------------------------

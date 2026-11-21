@@ -3,11 +3,28 @@
 package main
 
 import (
+	"flag"
 	"fmt"
+	"log"
 	"net/http"
+	"strings"
 )
 
+type fakeIdentity struct {
+	Realms []string
+	Groups []string
+}
+
 func main() {
+	role := flag.String("role", "admin", "role to serve: staff, admin, or superadmin")
+	addr := flag.String("addr", "127.0.0.1:9999", "listen address")
+	flag.Parse()
+
+	identity, ok := identityForRole(strings.ToLower(strings.TrimSpace(*role)))
+	if !ok {
+		log.Fatalf("invalid role %q: choose staff, admin, or superadmin", *role)
+	}
+
 	http.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
 		service := r.URL.Query().Get("service")
 		// Simulate the user already authenticated at CAS.
@@ -15,23 +32,49 @@ func main() {
 	})
 	http.HandleFunc("/serviceValidate", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/xml")
-		fmt.Fprint(w, `<?xml version="1.0"?>
+		fmt.Fprintf(w, `<?xml version="1.0"?>
 <cas:serviceResponse xmlns:cas="http://www.yale.edu/tp/cas">
   <cas:authenticationSuccess>
     <cas:user>manualuser</cas:user>
     <cas:attributes>
       <cas:name>Manual Tester</cas:name>
       <cas:qq-number>123456789</cas:qq-number>
-      <cas:groups>/clinic</cas:groups>
-      <cas:groups>/management</cas:groups>
+%s
     </cas:attributes>
   </cas:authenticationSuccess>
-</cas:serviceResponse>`)
+</cas:serviceResponse>`, identity.attributesXML())
 	})
 	http.HandleFunc("/logout", func(w http.ResponseWriter, r *http.Request) {
 		returnURL := r.URL.Query().Get("url")
 		http.Redirect(w, r, returnURL, http.StatusFound)
 	})
-	fmt.Println("Fake CAS listening on http://127.0.0.1:9999")
-	http.ListenAndServe("127.0.0.1:9999", nil)
+	fmt.Printf("Fake CAS listening on http://%s (role: %s)\n", *addr, *role)
+	log.Fatal(http.ListenAndServe(*addr, nil))
+}
+
+func identityForRole(role string) (fakeIdentity, bool) {
+	switch role {
+	case "staff":
+		return fakeIdentity{Groups: []string{"/clinic"}}, true
+	case "admin":
+		return fakeIdentity{Groups: []string{"/clinic", "/management"}}, true
+	case "superadmin":
+		return fakeIdentity{
+			Realms: []string{"clinic-maintainer"},
+			Groups: []string{"/clinic"},
+		}, true
+	default:
+		return fakeIdentity{}, false
+	}
+}
+
+func (identity fakeIdentity) attributesXML() string {
+	attributes := make([]string, 0, len(identity.Realms)+len(identity.Groups))
+	for _, realm := range identity.Realms {
+		attributes = append(attributes, "      <cas:realm>"+realm+"</cas:realm>")
+	}
+	for _, group := range identity.Groups {
+		attributes = append(attributes, "      <cas:groups>"+group+"</cas:groups>")
+	}
+	return strings.Join(attributes, "\n")
 }
