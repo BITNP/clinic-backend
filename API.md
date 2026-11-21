@@ -23,8 +23,8 @@ KEY=$(printf '%s' "${CLINIC_API_KEY}${USERNAME}${DATE}" | md5sum | cut -d' ' -f1
 ## Authentication
 
 There are two independent authentication schemes. Every endpoint below states
-which one it uses; `/healthz`, `/login`, `/logout`, and
-`GET /api/announcement/toc` are public.
+which one it uses; `/healthz`, `/login`, `/logout`,
+`GET /api/announcement/toc`, and the sync endpoints described below are public.
 
 ### Staff, admin, and superadmin (session or Keycloak)
 
@@ -68,7 +68,8 @@ logout.
 ### API-key clients
 
 Customer-facing endpoints under `/api/` and `/api/wechat/` (except the public
-`/api/announcement/toc`) use a signature shared with the DingTalk proxy:
+`/api/announcement/toc` and sync endpoints) use a signature shared with the
+DingTalk proxy:
 
 ```http
 Date:      <RFC1123 timestamp, e.g. Mon, 02 Nov 2026 10:00:00 GMT>
@@ -2050,7 +2051,7 @@ curl -X PUT "$BASE/api/admin/work-schedules/1/weekdays" \
   -d '{"room_id":1,"weekday":1,"start_time":"19:00","end_time":"21:30"}'
 ```
 
-## Admin: sync
+## Sync
 
 The backend keeps one monotonically increasing counter per data group in Redis.
 Clients store the values they last saw and refetch a group when its value
@@ -2063,7 +2064,8 @@ Groups: `record`, `room`, `work_schedule`, `service_date`, `staff`,
 
 ### `GET /api/admin/sync`
 
-**Description:** Returns the current counter for every group. Staff and admin.
+**Description:** Returns the current counter for every group. Public endpoint;
+the admin-prefixed path is retained for compatibility.
 
 **Response `200 OK`**
 
@@ -2079,18 +2081,19 @@ Groups: `record`, `room`, `work_schedule`, `service_date`, `staff`,
 }
 ```
 
-**Error responses:** `401`, `403`, `500` (Redis read failure).
+**Error responses:** `500` (Redis read failure).
 
 **curl**
 
 ```bash
-curl "$BASE/api/admin/sync" -b cookies.txt
+curl "$BASE/api/admin/sync"
 ```
 
 ### `GET /api/admin/sync/config`
 
 **Description:** Reports the recommended polling interval. `interval_ms` is `0`
-when periodic polling is disabled. The value reflects the current runtime setting.
+when periodic polling is disabled. The value reflects the current runtime
+setting. Public endpoint; the admin-prefixed path is retained for compatibility.
 
 **Response `200 OK`**
 
@@ -2098,12 +2101,12 @@ when periodic polling is disabled. The value reflects the current runtime settin
 { "interval_ms": 10000 }
 ```
 
-**Error responses:** `401`, `403`.
+**Error responses:** None.
 
 **curl**
 
 ```bash
-curl "$BASE/api/admin/sync/config" -b cookies.txt
+curl "$BASE/api/admin/sync/config"
 ```
 
 ## Client: announcements
@@ -2493,26 +2496,27 @@ curl -X DELETE "$BASE/api/tickets/1?username=$USERNAME" \
   -H "Date: $DATE" -H "X-API-KEY: $KEY"
 ```
 
-## Client: sync
+## Sync aliases
 
 ### `GET /api/sync`
 
-**Description:** Same counters as `/api/admin/sync`, for API-key clients.
+**Description:** Public alias for `/api/admin/sync`. Returns the current counter
+for every group.
 
 **Response `200 OK`** — object mapping each group to its counter.
 
-**Error responses:** `401`, `500`.
+**Error responses:** `500` (Redis read failure).
 
 **curl**
 
 ```bash
-curl "$BASE/api/sync?username=$USERNAME" \
-  -H "Date: $DATE" -H "X-API-KEY: $KEY"
+curl "$BASE/api/sync"
 ```
 
 ### `GET /api/sync/config`
 
-**Description:** Same polling configuration as `/api/admin/sync/config`.
+**Description:** Public alias for `/api/admin/sync/config`. Reports the
+recommended polling interval.
 
 **Response `200 OK`**
 
@@ -2520,13 +2524,12 @@ curl "$BASE/api/sync?username=$USERNAME" \
 { "interval_ms": 10000 }
 ```
 
-**Error responses:** `401`.
+**Error responses:** None.
 
 **curl**
 
 ```bash
-curl "$BASE/api/sync/config?username=$USERNAME" \
-  -H "Date: $DATE" -H "X-API-KEY: $KEY"
+curl "$BASE/api/sync/config"
 ```
 
 ## Legacy customer endpoints

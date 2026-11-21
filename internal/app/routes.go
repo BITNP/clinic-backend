@@ -337,20 +337,12 @@ func (h routeHandlers) router() *gin.Engine {
 
 	// ── Sync counters ─────────────────────────────────────────────────────
 	// Clients poll these and refresh when a group's counter differs from the
-	// value they last saw. Staff/admin sessions and API-key clients each get a
-	// route for the same handler.
-	syncAdmin := r.Group("/api/admin/sync")
-	syncAdmin.Use(h.adminAuth, authhandler.RequireStaff)
-	{
-		syncAdmin.GET("", h.syncH.Get)
-		syncAdmin.GET("/config", h.syncH.GetConfig)
-	}
-	syncClient := r.Group("/api/sync")
-	syncClient.Use(h.clientAuth)
-	{
-		syncClient.GET("", h.syncH.Get)
-		syncClient.GET("/config", h.syncH.GetConfig)
-	}
+	// value they last saw. Both URLs are public; the admin-prefixed path is
+	// retained for compatibility with existing clients.
+	r.GET("/api/admin/sync", h.syncH.Get)
+	r.GET("/api/admin/sync/config", h.syncH.GetConfig)
+	r.GET("/api/sync", h.syncH.Get)
+	r.GET("/api/sync/config", h.syncH.GetConfig)
 
 	// ── User endpoints ────────────────────────────────────────────────────
 	r.GET("/api/user", h.adminAuth, h.userH.Current)

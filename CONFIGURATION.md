@@ -56,7 +56,7 @@ tabs refresh their sync interval periodically.
 
 | Config item | Default | Description |
 | --- | --- | --- |
-| `SYNC_POLL_INTERVAL` | `10s` | Recommended client polling interval reported by `/sync/config`; `0s` disables periodic polling. |
+| `SYNC_POLL_INTERVAL` | `10s` | Recommended client polling interval reported by the public `/api/sync/config` and `/api/admin/sync/config` endpoints; `0s` disables periodic polling. |
 | `STAFF_VERSION` | `0` | Raise to force all staff to log in again. Non-negative integer. |
 | `RECORD_ACTION_WINDOW` | `5m` | Positive Go duration for how long a staff action stays revertible. |
 | `RECORD_PHOTO_MAX_COUNT` | `9` | Positive maximum number of ordered photos attached to one record. |

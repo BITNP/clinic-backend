@@ -389,10 +389,11 @@ The backend keeps one change counter per data group in Redis
 | staff | `clinic:sync:staff` | staff create/update/delete, CAS/Keycloak login upserts |
 | announcement | `clinic:sync:announcement` | announcement create/update/delete |
 
-Clients read the current values from `GET /api/admin/sync` (admin/staff session)
-or `GET /api/sync` (API-key client), keep the values they last saw, and refetch
-their data when a value differs. Counters are best-effort: a Redis failure is
-logged and never fails the underlying write.
+Clients read the current values from the public `GET /api/sync` endpoint, keep
+the values they last saw, and refetch their data when a value differs. The
+historical `GET /api/admin/sync` URL remains available as an unauthenticated
+alias. Counters are best-effort: a Redis failure is logged and never fails the
+underlying write.
 
 
 ### Pending ticket reminders

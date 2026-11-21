@@ -10,6 +10,7 @@ import (
 
 	"clinic-backend/internal/app"
 	authhandler "clinic-backend/internal/auth/handler"
+	"clinic-backend/internal/changes"
 	recordmodel "clinic-backend/internal/record/model"
 	roomhandler "clinic-backend/internal/room/handler"
 	roommodel "clinic-backend/internal/room/model"
@@ -23,6 +24,33 @@ import (
 )
 
 const routeTestAPIKey = "fake-shared-secret"
+
+func TestSyncRoutesArePublic(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	denyRequest := func(c *gin.Context) {
+		c.AbortWithStatus(http.StatusUnauthorized)
+	}
+	router := app.NewRouter(app.RouterConfig{
+		SyncH:      changes.NewSyncHandler(changes.NewSyncService(nil), 10*time.Second),
+		AdminAuth:  denyRequest,
+		ClientAuth: denyRequest,
+	})
+
+	for _, path := range []string{
+		"/api/admin/sync",
+		"/api/admin/sync/config",
+		"/api/sync",
+		"/api/sync/config",
+	} {
+		t.Run(path, func(t *testing.T) {
+			got := testutil.DoRequest(t, router, http.MethodGet, path, nil)
+			if got.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", got.Code, got.Body.String())
+			}
+		})
+	}
+}
 
 func TestClientCampusRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
