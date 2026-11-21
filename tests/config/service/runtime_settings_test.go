@@ -177,8 +177,12 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	}
 	if err := db.Model(&configmodel.ClinicConfigItem{}).
 		Where("name = ?", "TAGGER_AGENT_POOL_SIZE").
-		Updates(map[string]any{"unit": "stale", "hint": "stale"}).Error; err != nil {
-		t.Fatalf("corrupt presentation metadata: %v", err)
+		Updates(map[string]any{
+			"unit":       "stale",
+			"hint":       "stale",
+			"role_level": configmodel.ConfigRoleLevelAdmin,
+		}).Error; err != nil {
+		t.Fatalf("corrupt reserved metadata: %v", err)
 	}
 	if err := svc.EnsureRuntimeSettings(); err != nil {
 		t.Fatalf("ensure runtime settings second time: %v", err)
@@ -290,6 +294,35 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	}
 	if contextTokens.Unit != "tokens" || contextTokens.Hint == "" {
 		t.Errorf("tagger context presentation metadata = %q, %q", contextTokens.Unit, contextTokens.Hint)
+	}
+	for _, name := range []string{
+		"TAGGER_LLM_API_KEY",
+		"TAGGER_LLM_BASE_URL",
+		"TAGGER_LLM_MODEL",
+		"TAGGER_AGENT_POOL_SIZE",
+		"TAGGER_CONTEXT_TOKENS",
+		"TAGGER_TIMEOUT",
+		"MESSAGE_GATEWAY_URL",
+		"MESSAGE_GATEWAY_ACCOUNT",
+		"MESSAGE_GATEWAY_ACCOUNT_TOKEN",
+		"MESSAGE_GATEWAY_TIMEOUT",
+	} {
+		t.Run(name, func(t *testing.T) {
+			var item configmodel.ClinicConfigItem
+			if err := db.Where("name = ?", name).First(&item).Error; err != nil {
+				t.Fatalf("get superadmin-only item: %v", err)
+			}
+			if item.RoleLevel != configmodel.ConfigRoleLevelSuperAdmin {
+				t.Errorf("role_level = %q, want superadmin", item.RoleLevel)
+			}
+		})
+	}
+	var syncPollInterval configmodel.ClinicConfigItem
+	if err := db.Where("name = ?", "SYNC_POLL_INTERVAL").First(&syncPollInterval).Error; err != nil {
+		t.Fatalf("get admin runtime setting: %v", err)
+	}
+	if syncPollInterval.RoleLevel != configmodel.ConfigRoleLevelAdmin {
+		t.Errorf("SYNC_POLL_INTERVAL role_level = %q, want admin", syncPollInterval.RoleLevel)
 	}
 }
 
@@ -676,6 +709,7 @@ func TestConfigService_ValidatesKnownRuntimeSettings(t *testing.T) {
 		Value:       "provider-key",
 		ValueType:   configmodel.ConfigValueTypeString,
 		DisplayName: "Tagger API Key",
+		RoleLevel:   configmodel.ConfigRoleLevelSuperAdmin,
 		WriteOnly:   true,
 		GroupID:     group.ID,
 	})
@@ -689,5 +723,9 @@ func TestConfigService_ValidatesKnownRuntimeSettings(t *testing.T) {
 	writeOnly := false
 	if _, err := svc.UpdateItem(taggerKey.ID, configservice.UpdateItemInput{WriteOnly: &writeOnly}); !errors.Is(err, configservice.ErrConfigInvalidInput) {
 		t.Fatalf("expected write-only tagger key error, got %v", err)
+	}
+	adminRole := configmodel.ConfigRoleLevelAdmin
+	if _, err := svc.UpdateItem(taggerKey.ID, configservice.UpdateItemInput{RoleLevel: &adminRole}); !errors.Is(err, configservice.ErrConfigInvalidInput) {
+		t.Fatalf("expected protected tagger role error, got %v", err)
 	}
 }

@@ -19,9 +19,9 @@ built-in fallback values. At every startup the backend reads
 `runtime_settings.json` from its working directory, beside `.env`, validates
 the reserved items, and uses those values only when creating missing database
 rows. Existing values are preserved, while reserved display names, types,
-groups, ordering, required flags, and write-only flags are synchronized from
-the template. The database becomes authoritative for values immediately after
-initialization.
+groups, ordering, required flags, write-only flags, and role levels are
+synchronized from the template. The database becomes authoritative for values
+immediately after initialization.
 
 `runtime_settings.json` is an external deployment file and is gitignored. Start
 from [`runtime_settings.example.json`](runtime_settings.example.json), keep the
@@ -82,10 +82,15 @@ tabs refresh their sync interval periodically.
 | `TAGGER_TIMEOUT` | `30s` | Positive per-call and pool-wait timeout. |
 
 These names are reserved: their `value_type`, required flag, write-only flag,
-and value validation are enforced by the config service. They are seeded into
-the `system`, `record`, and `reminder` groups. `MAINTAINER_QQ_IDS` is not part
-of this backend catalog; it remains a `clinic-health-monitor` environment
-setting.
+role level, and value validation are enforced by the config service. The tagger
+settings `TAGGER_LLM_API_KEY`, `TAGGER_LLM_BASE_URL`, `TAGGER_LLM_MODEL`,
+`TAGGER_AGENT_POOL_SIZE`, `TAGGER_CONTEXT_TOKENS`, and `TAGGER_TIMEOUT`, plus
+the gateway settings `MESSAGE_GATEWAY_URL`, `MESSAGE_GATEWAY_ACCOUNT`,
+`MESSAGE_GATEWAY_ACCOUNT_TOKEN`, and `MESSAGE_GATEWAY_TIMEOUT`, are accessible
+only to `superadmin`. The remaining reserved settings are accessible to
+`admin`. They are seeded into the `system`, `record`, and `reminder` groups.
+`MAINTAINER_QQ_IDS` is not part of this backend catalog; it remains a
+`clinic-health-monitor` environment setting.
 
 ## Backend environment variables
 

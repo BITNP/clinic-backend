@@ -870,8 +870,13 @@ The backend seeds and reserves `SYNC_POLL_INTERVAL`, `STAFF_VERSION`,
 `MESSAGE_GATEWAY_ACCOUNT_TOKEN`, `MESSAGE_GATEWAY_TIMEOUT`,
 `TAGGER_LLM_API_KEY`, `TAGGER_LLM_BASE_URL`, `TAGGER_LLM_MODEL`,
 `TAGGER_AGENT_POOL_SIZE`, `TAGGER_CONTEXT_TOKENS`, and `TAGGER_TIMEOUT`. Their
-types, required flags, and write-only flags are fixed and their values receive
-key-specific validation. Initial values come from the external
+types, required flags, write-only flags, and role levels are fixed and their
+values receive key-specific validation. `TAGGER_LLM_API_KEY`,
+`TAGGER_LLM_BASE_URL`, `TAGGER_LLM_MODEL`, `TAGGER_AGENT_POOL_SIZE`,
+`TAGGER_CONTEXT_TOKENS`, `TAGGER_TIMEOUT`, `MESSAGE_GATEWAY_URL`,
+`MESSAGE_GATEWAY_ACCOUNT`, `MESSAGE_GATEWAY_ACCOUNT_TOKEN`, and
+`MESSAGE_GATEWAY_TIMEOUT` are `superadmin` items; the remaining built-ins are
+`admin` items. Initial values come from the external
 `runtime_settings.json` file beside `.env`; environment variables with these
 names may only initialize a missing item during migration and are ignored once
 the row exists. `TAGGER_LLM_API_KEY` and `MESSAGE_GATEWAY_ACCOUNT_TOKEN` are

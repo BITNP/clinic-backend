@@ -315,7 +315,7 @@ func TestConfigHandler_WriteOnlyValueIsOmitted(t *testing.T) {
 }
 
 func TestConfigHandler_TaggerAPIKeyStaysWriteOnly(t *testing.T) {
-	r, svc, db := setupConfigHandlerRouter(t, authhandler.RoleAdmin)
+	r, svc, db := setupConfigHandlerRouter(t, authhandler.RoleSuperAdmin)
 	if err := svc.EnsureRuntimeSettings(); err != nil {
 		t.Fatalf("seed runtime settings: %v", err)
 	}
@@ -361,7 +361,7 @@ func TestConfigHandler_TaggerAPIKeyStaysWriteOnly(t *testing.T) {
 }
 
 func TestConfigHandler_MessageGatewayTokenStaysWriteOnly(t *testing.T) {
-	r, svc, db := setupConfigHandlerRouter(t, authhandler.RoleAdmin)
+	r, svc, db := setupConfigHandlerRouter(t, authhandler.RoleSuperAdmin)
 	if err := svc.EnsureRuntimeSettings(); err != nil {
 		t.Fatalf("seed runtime settings: %v", err)
 	}
@@ -474,6 +474,70 @@ func TestConfigHandler_AdminItemRoleScope(t *testing.T) {
 	}
 	if w := testutil.DoRequest(t, r, http.MethodDelete, adminPath, nil); w.Code != http.StatusNoContent {
 		t.Fatalf("admin delete admin item: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestConfigHandler_SuperAdminOnlyRuntimeSettings(t *testing.T) {
+	superAdminOnly := map[string]struct{}{
+		"TAGGER_LLM_API_KEY":            {},
+		"TAGGER_LLM_BASE_URL":           {},
+		"TAGGER_LLM_MODEL":              {},
+		"TAGGER_AGENT_POOL_SIZE":        {},
+		"TAGGER_CONTEXT_TOKENS":         {},
+		"TAGGER_TIMEOUT":                {},
+		"MESSAGE_GATEWAY_URL":           {},
+		"MESSAGE_GATEWAY_ACCOUNT":       {},
+		"MESSAGE_GATEWAY_ACCOUNT_TOKEN": {},
+		"MESSAGE_GATEWAY_TIMEOUT":       {},
+	}
+
+	r, svc, db := setupConfigHandlerRouter(t, authhandler.RoleAdmin)
+	if err := svc.EnsureRuntimeSettings(); err != nil {
+		t.Fatalf("ensure runtime settings: %v", err)
+	}
+	w := testutil.DoRequest(t, r, http.MethodGet, "/api/admin/config", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list admin catalog: %d %s", w.Code, w.Body)
+	}
+	var catalog configservice.Catalog
+	if err := json.Unmarshal(w.Body.Bytes(), &catalog); err != nil {
+		t.Fatalf("decode admin catalog: %v", err)
+	}
+	if len(catalog.Items) != 8 {
+		t.Errorf("admin catalog item count = %d, want 8", len(catalog.Items))
+	}
+	for _, item := range catalog.Items {
+		if _, restricted := superAdminOnly[item.Name]; restricted {
+			t.Errorf("admin catalog contains superadmin-only item %s", item.Name)
+		}
+	}
+
+	var taggerKey configmodel.ClinicConfigItem
+	if err := db.Where("name = ?", "TAGGER_LLM_API_KEY").First(&taggerKey).Error; err != nil {
+		t.Fatalf("get tagger API key item: %v", err)
+	}
+	path := "/api/admin/config/items/" + testutil.Itoa(taggerKey.ID)
+	if w := testutil.DoRequest(t, r, http.MethodGet, path, nil); w.Code != http.StatusNotFound {
+		t.Fatalf("admin get superadmin-only item: %d %s", w.Code, w.Body)
+	}
+	if w := testutil.DoRequest(t, r, http.MethodPut, path, map[string]any{"value": "replacement-key"}); w.Code != http.StatusNotFound {
+		t.Fatalf("admin update superadmin-only item: %d %s", w.Code, w.Body)
+	}
+
+	superRouter, superSvc, _ := setupConfigHandlerRouter(t, authhandler.RoleSuperAdmin)
+	if err := superSvc.EnsureRuntimeSettings(); err != nil {
+		t.Fatalf("ensure superadmin runtime settings: %v", err)
+	}
+	w = testutil.DoRequest(t, superRouter, http.MethodGet, "/api/admin/config", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list superadmin catalog: %d %s", w.Code, w.Body)
+	}
+	catalog = configservice.Catalog{}
+	if err := json.Unmarshal(w.Body.Bytes(), &catalog); err != nil {
+		t.Fatalf("decode superadmin catalog: %v", err)
+	}
+	if len(catalog.Items) != 18 {
+		t.Errorf("superadmin catalog item count = %d, want 18", len(catalog.Items))
 	}
 }
 

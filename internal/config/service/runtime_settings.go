@@ -64,6 +64,7 @@ type runtimeSettingDefinition struct {
 	GroupName   string                      `json:"group"`
 	SortOrder   int                         `json:"sort_order"`
 	IsRequired  bool                        `json:"is_required"`
+	RoleLevel   configmodel.ConfigRoleLevel `json:"role_level"`
 	WriteOnly   bool                        `json:"writeonly"`
 	Default     *string                     `json:"default,omitempty"`
 }
@@ -92,6 +93,19 @@ var runtimeSettingExpectedTypes = map[string]configmodel.ConfigValueType{
 	runtimeSettingTaggerContextTokens:      configmodel.ConfigValueTypeInt,
 	runtimeSettingTaggerTimeout:            configmodel.ConfigValueTypeString,
 	runtimeSettingRecordPhotoMaxSizeBytes:  configmodel.ConfigValueTypeInt,
+}
+
+var superAdminOnlyRuntimeSettings = map[string]struct{}{
+	runtimeSettingTaggerLLMAPIKey:       {},
+	runtimeSettingTaggerLLMBaseURL:      {},
+	runtimeSettingTaggerLLMModel:        {},
+	runtimeSettingTaggerPoolSize:        {},
+	runtimeSettingTaggerContextTokens:   {},
+	runtimeSettingTaggerTimeout:         {},
+	runtimeSettingMessageGatewayURL:     {},
+	runtimeSettingMessageGatewayAccount: {},
+	runtimeSettingMessageGatewayToken:   {},
+	runtimeSettingMessageGatewayTimeout: {},
 }
 
 var (
@@ -176,6 +190,14 @@ func validateRuntimeTemplate(template runtimeSettingsTemplate) error {
 				item.Name,
 				item.WriteOnly,
 				runtimeSettingIsWriteOnly(item.Name),
+			)
+		}
+		if item.RoleLevel != runtimeSettingRoleLevel(item.Name) {
+			return fmt.Errorf(
+				"runtime settings template item %s has role_level=%s; want %s",
+				item.Name,
+				item.RoleLevel,
+				runtimeSettingRoleLevel(item.Name),
 			)
 		}
 		if item.SortOrder < 0 {
@@ -281,21 +303,22 @@ func (s *ConfigService) ensureRuntimeSettings(initialValues map[string]string) e
 			groupID := groupIDs[setting.GroupName]
 			if _, err := tx.Exec(
 				`INSERT INTO clinic_config_item
-					 (name, value, value_type, display_name, unit, hint,
-					  is_required, writeonly, group_id, sort_order)
-					 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+					 (name, value, value_type, display_name, unit, hint, is_required,
+					  role_level, writeonly, group_id, sort_order)
+					 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 					 ON CONFLICT (name) DO UPDATE SET
 					     display_name = EXCLUDED.display_name,
 					     unit = EXCLUDED.unit,
 					     hint = EXCLUDED.hint,
 					     value_type = EXCLUDED.value_type,
 					     is_required = EXCLUDED.is_required,
+					     role_level = EXCLUDED.role_level,
 					     writeonly = EXCLUDED.writeonly,
 					     group_id = EXCLUDED.group_id,
 					     sort_order = EXCLUDED.sort_order`,
 				setting.Name, value, setting.ValueType, setting.DisplayName,
-				setting.Unit, setting.Hint, setting.IsRequired, setting.WriteOnly,
-				groupID, setting.SortOrder,
+				setting.Unit, setting.Hint, setting.IsRequired, setting.RoleLevel,
+				setting.WriteOnly, groupID, setting.SortOrder,
 			); err != nil {
 				return fmt.Errorf("seed config item %s: %w", setting.Name, err)
 			}
@@ -370,11 +393,12 @@ func loadRuntimeSettings(q interface{ QueryRow(string, ...any) *sql.Row }) (Runt
 		var value string
 		var valueType configmodel.ConfigValueType
 		var required bool
+		var roleLevel configmodel.ConfigRoleLevel
 		var writeOnly bool
 		err = q.QueryRow(
-			"SELECT value, value_type, is_required, writeonly FROM clinic_config_item WHERE name = $1",
+			"SELECT value, value_type, is_required, role_level, writeonly FROM clinic_config_item WHERE name = $1",
 			setting.Name,
-		).Scan(&value, &valueType, &required, &writeOnly)
+		).Scan(&value, &valueType, &required, &roleLevel, &writeOnly)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return RuntimeSettings{}, fmt.Errorf("runtime config %s is missing", setting.Name)
@@ -382,7 +406,14 @@ func loadRuntimeSettings(q interface{ QueryRow(string, ...any) *sql.Row }) (Runt
 			return RuntimeSettings{}, fmt.Errorf("load runtime config %s: %w", setting.Name, err)
 		}
 
-		normalized, err := validateKnownRuntimeSetting(setting.Name, valueType, required, writeOnly, value)
+		normalized, err := validateKnownRuntimeSetting(
+			setting.Name,
+			valueType,
+			required,
+			roleLevel,
+			writeOnly,
+			value,
+		)
 		if err != nil {
 			return RuntimeSettings{}, err
 		}
@@ -436,6 +467,7 @@ func validateKnownRuntimeSetting(
 	name string,
 	valueType configmodel.ConfigValueType,
 	required bool,
+	roleLevel configmodel.ConfigRoleLevel,
 	writeOnly bool,
 	value string,
 ) (string, error) {
@@ -472,6 +504,14 @@ func validateKnownRuntimeSetting(
 			!runtimeSettingIsOptional(name),
 		)
 	}
+	if roleLevel != runtimeSettingRoleLevel(name) {
+		return "", fmt.Errorf(
+			"%w: %s must have role_level=%s",
+			ErrConfigInvalidInput,
+			name,
+			runtimeSettingRoleLevel(name),
+		)
+	}
 	if writeOnly != runtimeSettingIsWriteOnly(name) {
 		return "", fmt.Errorf(
 			"%w: %s must have writeonly=%t",
@@ -481,6 +521,13 @@ func validateKnownRuntimeSetting(
 		)
 	}
 	return validateRuntimeSettingValue(name, value)
+}
+
+func runtimeSettingRoleLevel(name string) configmodel.ConfigRoleLevel {
+	if _, ok := superAdminOnlyRuntimeSettings[name]; ok {
+		return configmodel.ConfigRoleLevelSuperAdmin
+	}
+	return configmodel.ConfigRoleLevelAdmin
 }
 
 func validateRuntimeSettingValue(name, raw string) (string, error) {

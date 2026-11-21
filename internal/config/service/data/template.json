@@ -23,7 +23,8 @@
       "value_type": "string",
       "group": "system",
       "sort_order": 0,
-      "is_required": true
+      "is_required": true,
+      "role_level": "admin"
     },
     {
       "name": "STAFF_VERSION",
@@ -31,7 +32,8 @@
       "value_type": "int",
       "group": "system",
       "sort_order": 1,
-      "is_required": true
+      "is_required": true,
+      "role_level": "admin"
     },
     {
       "name": "TAGGER_LLM_API_KEY",
@@ -41,6 +43,7 @@
       "group": "system",
       "sort_order": 2,
       "is_required": false,
+      "role_level": "superadmin",
       "writeonly": true
     },
     {
@@ -50,7 +53,8 @@
       "value_type": "string",
       "group": "system",
       "sort_order": 3,
-      "is_required": false
+      "is_required": false,
+      "role_level": "superadmin"
     },
     {
       "name": "TAGGER_LLM_MODEL",
@@ -59,7 +63,8 @@
       "value_type": "string",
       "group": "system",
       "sort_order": 4,
-      "is_required": false
+      "is_required": false,
+      "role_level": "superadmin"
     },
     {
       "name": "TAGGER_AGENT_POOL_SIZE",
@@ -69,7 +74,8 @@
       "value_type": "int",
       "group": "system",
       "sort_order": 5,
-      "is_required": true
+      "is_required": true,
+      "role_level": "superadmin"
     },
     {
       "name": "TAGGER_CONTEXT_TOKENS",
@@ -79,7 +85,8 @@
       "value_type": "int",
       "group": "system",
       "sort_order": 6,
-      "is_required": true
+      "is_required": true,
+      "role_level": "superadmin"
     },
     {
       "name": "TAGGER_TIMEOUT",
@@ -88,7 +95,8 @@
       "value_type": "string",
       "group": "system",
       "sort_order": 7,
-      "is_required": true
+      "is_required": true,
+      "role_level": "superadmin"
     },
     {
       "name": "RECORD_ACTION_WINDOW",
@@ -96,7 +104,8 @@
       "value_type": "string",
       "group": "record",
       "sort_order": 0,
-      "is_required": true
+      "is_required": true,
+      "role_level": "admin"
     },
     {
       "name": "RECORD_PHOTO_MAX_COUNT",
@@ -104,7 +113,8 @@
       "value_type": "int",
       "group": "record",
       "sort_order": 1,
-      "is_required": true
+      "is_required": true,
+      "role_level": "admin"
     },
     {
       "name": "RECORD_PHOTO_MAX_SIZE_BYTES",
@@ -114,7 +124,8 @@
       "value_type": "int",
       "group": "record",
       "sort_order": 2,
-      "is_required": true
+      "is_required": true,
+      "role_level": "admin"
     },
     {
       "name": "SERVICE_DATE_REMINDER_ENABLED",
@@ -123,7 +134,8 @@
       "value_type": "boolean",
       "group": "reminder",
       "sort_order": 0,
-      "is_required": true
+      "is_required": true,
+      "role_level": "admin"
     },
     {
       "name": "SERVICE_DATE_REMINDER_LEAD_TIMES",
@@ -132,7 +144,8 @@
       "value_type": "string",
       "group": "reminder",
       "sort_order": 1,
-      "is_required": true
+      "is_required": true,
+      "role_level": "admin"
     },
     {
       "name": "SERVICE_DATE_REMINDER_TEMPLATE",
@@ -142,6 +155,7 @@
       "group": "reminder",
       "sort_order": 2,
       "is_required": true,
+      "role_level": "admin",
       "default": "[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待审核工单，请及时处理。"
     },
     {
@@ -152,6 +166,7 @@
       "group": "reminder",
       "sort_order": 3,
       "is_required": false,
+      "role_level": "superadmin",
       "default": ""
     },
     {
@@ -162,6 +177,7 @@
       "group": "reminder",
       "sort_order": 4,
       "is_required": true,
+      "role_level": "superadmin",
       "default": "qq"
     },
     {
@@ -172,6 +188,7 @@
       "group": "reminder",
       "sort_order": 5,
       "is_required": false,
+      "role_level": "superadmin",
       "writeonly": true,
       "default": ""
     },
@@ -183,6 +200,7 @@
       "group": "reminder",
       "sort_order": 6,
       "is_required": true,
+      "role_level": "superadmin",
       "default": "5s"
     }
   ]
