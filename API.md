@@ -848,6 +848,8 @@ Configuration item object:
 | `value` | string | Canonical text representation of the value. Omitted when `writeonly` is `true`. |
 | `value_type` | string | `int`, `double`, `boolean`, or `string`. |
 | `display_name` | string | Human-readable name, max 128 characters. |
+| `unit` | string | Optional display unit, max 32 characters. Omitted when empty. |
+| `hint` | string | Optional display hint, max 512 characters. Omitted when empty. |
 | `is_required` | boolean | When true, an empty value is rejected. |
 | `role_level` | string | Role-level metadata: `staff`, `admin`, or `superadmin`. Defaults to `admin`. |
 | `writeonly` | boolean | When true, the stored value is available only to internal backend code and is never returned through this API. Defaults to `false`. |
@@ -857,7 +859,8 @@ Configuration item object:
 Integer and double values are normalized to canonical decimal representations.
 Booleans must be `true` or `false`. Optional items may have an empty value.
 Write-only items can still be created, updated, and deleted through the normal
-item endpoints.
+item endpoints. `unit` and `hint` are presentation metadata; they do not change
+how the value is parsed or validated.
 
 The backend seeds and reserves `SYNC_POLL_INTERVAL`, `STAFF_VERSION`,
 `RECORD_ACTION_WINDOW`, `RECORD_PHOTO_MAX_COUNT`,
@@ -905,6 +908,8 @@ flat arrays. An `admin` receives only items whose `role_level` is `admin`; a
       "value": "7",
       "value_type": "int",
       "display_name": "最多提前预约天数",
+      "unit": "天",
+      "hint": "最多可以提前预约的天数。",
       "is_required": true,
       "role_level": "admin",
       "writeonly": false,
@@ -1040,6 +1045,8 @@ only `admin` items; a `superadmin` may create any level.
 | `value` | string | no | Defaults to an empty string. Must match `value_type`. |
 | `value_type` | string | yes | `int`, `double`, `boolean`, or `string`. |
 | `display_name` | string | yes | Human-readable name, max 128 characters. |
+| `unit` | string | no | Optional display unit, max 32 characters. Defaults to empty. |
+| `hint` | string | no | Optional display hint, max 512 characters. Defaults to empty. |
 | `is_required` | boolean | no | Rejects an empty value when true. Defaults to `false`. |
 | `role_level` | string | no | `staff`, `admin`, or `superadmin`. Defaults to `admin`. |
 | `writeonly` | boolean | no | Hide the stored value from API responses. Defaults to `false`. |
@@ -1059,7 +1066,7 @@ taken).
 curl -X POST "$BASE/api/admin/config/items" \
   -b cookies.txt -H "X-CSRF-Token: $CSRF" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"max_booking_days","value":"7","value_type":"int","display_name":"最多提前预约天数","is_required":true,"role_level":"admin","writeonly":true,"group_id":1,"sort_order":0}'
+  -d '{"name":"max_booking_days","value":"7","value_type":"int","display_name":"最多提前预约天数","unit":"天","hint":"最多可以提前预约的天数。","is_required":true,"role_level":"admin","writeonly":true,"group_id":1,"sort_order":0}'
 ```
 
 ### `PUT /api/admin/config/items/{id}`
@@ -1088,6 +1095,8 @@ window.
 | `value` | string | no | New value. |
 | `value_type` | string | no | `int`, `double`, `boolean`, or `string`. |
 | `display_name` | string | no | Human-readable name, max 128 characters. |
+| `unit` | string | no | New display unit, max 32 characters. Use `""` to clear it. |
+| `hint` | string | no | New display hint, max 512 characters. Use `""` to clear it. |
 | `is_required` | boolean | no | Whether an empty value is allowed. |
 | `role_level` | string | no | `staff`, `admin`, or `superadmin`. |
 | `writeonly` | boolean | no | Hide the stored value from API responses. |
@@ -1107,7 +1116,7 @@ not found).
 curl -X PUT "$BASE/api/admin/config/items/10" \
   -b cookies.txt -H "X-CSRF-Token: $CSRF" \
   -H 'Content-Type: application/json' \
-  -d '{"value":"14","display_name":"最多提前预约天数","writeonly":true,"group_id":2,"sort_order":1}'
+  -d '{"value":"14","display_name":"最多提前预约天数","unit":"天","hint":"最多可以提前预约的天数。","writeonly":true,"group_id":2,"sort_order":1}'
 ```
 
 ### `DELETE /api/admin/config/items/{id}`

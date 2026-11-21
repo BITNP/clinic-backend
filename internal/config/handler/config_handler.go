@@ -35,6 +35,8 @@ type createItemRequest struct {
 	Value       string                      `json:"value"`
 	ValueType   configmodel.ConfigValueType `json:"value_type" binding:"required,oneof=int double boolean string"`
 	DisplayName string                      `json:"display_name" binding:"required,max=128"`
+	Unit        string                      `json:"unit" binding:"omitempty,max=32"`
+	Hint        string                      `json:"hint" binding:"omitempty,max=512"`
 	IsRequired  bool                        `json:"is_required"`
 	RoleLevel   configmodel.ConfigRoleLevel `json:"role_level" binding:"omitempty,oneof=staff admin superadmin"`
 	WriteOnly   bool                        `json:"writeonly"`
@@ -46,6 +48,8 @@ type updateItemRequest struct {
 	Value       *string                      `json:"value"`
 	ValueType   *configmodel.ConfigValueType `json:"value_type" binding:"omitempty,oneof=int double boolean string"`
 	DisplayName *string                      `json:"display_name" binding:"omitempty,max=128"`
+	Unit        *string                      `json:"unit" binding:"omitempty,max=32"`
+	Hint        *string                      `json:"hint" binding:"omitempty,max=512"`
 	IsRequired  *bool                        `json:"is_required"`
 	RoleLevel   *configmodel.ConfigRoleLevel `json:"role_level" binding:"omitempty,oneof=staff admin superadmin"`
 	WriteOnly   *bool                        `json:"writeonly"`
@@ -59,6 +63,8 @@ type configItemResponse struct {
 	Value       *string                     `json:"value,omitempty"`
 	ValueType   configmodel.ConfigValueType `json:"value_type"`
 	DisplayName string                      `json:"display_name"`
+	Unit        string                      `json:"unit,omitempty"`
+	Hint        string                      `json:"hint,omitempty"`
 	IsRequired  bool                        `json:"is_required"`
 	RoleLevel   configmodel.ConfigRoleLevel `json:"role_level"`
 	WriteOnly   bool                        `json:"writeonly"`
@@ -77,6 +83,8 @@ func newConfigItemResponse(item configmodel.ClinicConfigItem) configItemResponse
 		Name:        item.Name,
 		ValueType:   item.ValueType,
 		DisplayName: item.DisplayName,
+		Unit:        item.Unit,
+		Hint:        item.Hint,
 		IsRequired:  item.IsRequired,
 		RoleLevel:   item.RoleLevel,
 		WriteOnly:   item.WriteOnly,
@@ -203,6 +211,8 @@ func (h *ConfigHandler) CreateItem(c *gin.Context) {
 		Value:       req.Value,
 		ValueType:   req.ValueType,
 		DisplayName: req.DisplayName,
+		Unit:        req.Unit,
+		Hint:        req.Hint,
 		IsRequired:  req.IsRequired,
 		RoleLevel:   req.RoleLevel,
 		WriteOnly:   req.WriteOnly,
@@ -232,6 +242,8 @@ func (h *ConfigHandler) UpdateItem(c *gin.Context) {
 		Value:       req.Value,
 		ValueType:   req.ValueType,
 		DisplayName: req.DisplayName,
+		Unit:        req.Unit,
+		Hint:        req.Hint,
 		IsRequired:  req.IsRequired,
 		RoleLevel:   req.RoleLevel,
 		WriteOnly:   req.WriteOnly,

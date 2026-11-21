@@ -141,6 +141,8 @@ func TestConfigHandler_CRUDAndFlatCatalog(t *testing.T) {
 		"value":        "007",
 		"value_type":   "int",
 		"display_name": "Maximum Booking Days",
+		"unit":         " days ",
+		"hint":         " Maximum advance booking window. ",
 		"is_required":  true,
 		"group_id":     group.ID,
 		"sort_order":   2,
@@ -157,6 +159,9 @@ func TestConfigHandler_CRUDAndFlatCatalog(t *testing.T) {
 	}
 	if item.RoleLevel != configmodel.ConfigRoleLevelAdmin || item.WriteOnly {
 		t.Errorf("created item access = %q, %t; want admin, false", item.RoleLevel, item.WriteOnly)
+	}
+	if item.Unit != "days" || item.Hint != "Maximum advance booking window." {
+		t.Errorf("created item presentation = %q, %q", item.Unit, item.Hint)
 	}
 
 	w = testutil.DoRequest(t, r, http.MethodGet, "/api/admin/config", nil)
@@ -175,6 +180,9 @@ func TestConfigHandler_CRUDAndFlatCatalog(t *testing.T) {
 	}
 	if catalog.Items[0].GroupID != group.ID {
 		t.Errorf("catalog item group_id = %d, want %d", catalog.Items[0].GroupID, group.ID)
+	}
+	if catalog.Items[0].Unit != "days" || catalog.Items[0].Hint != "Maximum advance booking window." {
+		t.Errorf("catalog item presentation = %q, %q", catalog.Items[0].Unit, catalog.Items[0].Hint)
 	}
 
 	w = testutil.DoRequest(t, r, http.MethodGet, "/api/admin/config/groups/"+testutil.Itoa(group.ID), nil)
@@ -198,6 +206,8 @@ func TestConfigHandler_CRUDAndFlatCatalog(t *testing.T) {
 		"value":        "false",
 		"value_type":   "boolean",
 		"display_name": "Enabled",
+		"unit":         "",
+		"hint":         "",
 		"is_required":  false,
 		"writeonly":    false,
 		"sort_order":   4,
@@ -205,6 +215,7 @@ func TestConfigHandler_CRUDAndFlatCatalog(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("update item: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
+	item = configmodel.ClinicConfigItem{}
 	if err := json.Unmarshal(w.Body.Bytes(), &item); err != nil {
 		t.Fatalf("decode updated item: %v", err)
 	}
@@ -213,6 +224,12 @@ func TestConfigHandler_CRUDAndFlatCatalog(t *testing.T) {
 	}
 	if item.RoleLevel != configmodel.ConfigRoleLevelAdmin || item.WriteOnly {
 		t.Errorf("updated item access = %q, %t; want admin, false", item.RoleLevel, item.WriteOnly)
+	}
+	if item.Unit != "" || item.Hint != "" {
+		t.Errorf("cleared item presentation = %q, %q", item.Unit, item.Hint)
+	}
+	if strings.Contains(w.Body.String(), `"unit"`) || strings.Contains(w.Body.String(), `"hint"`) {
+		t.Errorf("empty presentation metadata was not omitted: %s", w.Body.String())
 	}
 
 	w = testutil.DoRequest(t, r, http.MethodDelete, "/api/admin/config/items/"+testutil.Itoa(item.ID), nil)
