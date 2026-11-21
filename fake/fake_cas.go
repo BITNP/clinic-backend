@@ -11,8 +11,11 @@ import (
 )
 
 type fakeIdentity struct {
-	Realms []string
-	Groups []string
+	User     string
+	Realname string
+	QQNumber string
+	Realms   []string
+	Groups   []string
 }
 
 func main() {
@@ -35,33 +38,46 @@ func main() {
 		fmt.Fprintf(w, `<?xml version="1.0"?>
 <cas:serviceResponse xmlns:cas="http://www.yale.edu/tp/cas">
   <cas:authenticationSuccess>
-    <cas:user>manualuser</cas:user>
+    <cas:user>%s</cas:user>
     <cas:attributes>
-      <cas:name>Manual Tester</cas:name>
-      <cas:qq-number>123456789</cas:qq-number>
+      <cas:name>%s</cas:name>
+      <cas:qq-number>%s</cas:qq-number>
 %s
     </cas:attributes>
   </cas:authenticationSuccess>
-</cas:serviceResponse>`, identity.attributesXML())
+</cas:serviceResponse>`, identity.User, identity.Realname, identity.QQNumber, identity.attributesXML())
 	})
 	http.HandleFunc("/logout", func(w http.ResponseWriter, r *http.Request) {
 		returnURL := r.URL.Query().Get("url")
 		http.Redirect(w, r, returnURL, http.StatusFound)
 	})
-	fmt.Printf("Fake CAS listening on http://%s (role: %s)\n", *addr, *role)
+	fmt.Printf("Fake CAS listening on http://%s (role: %s, account: %s)\n", *addr, *role, identity.User)
 	log.Fatal(http.ListenAndServe(*addr, nil))
 }
 
 func identityForRole(role string) (fakeIdentity, bool) {
 	switch role {
 	case "staff":
-		return fakeIdentity{Groups: []string{"/clinic"}}, true
+		return fakeIdentity{
+			User:     "manual-staff",
+			Realname: "Manual Staff",
+			QQNumber: "123456781",
+			Groups:   []string{"/clinic"},
+		}, true
 	case "admin":
-		return fakeIdentity{Groups: []string{"/clinic", "/management"}}, true
+		return fakeIdentity{
+			User:     "manual-admin",
+			Realname: "Manual Admin",
+			QQNumber: "123456782",
+			Groups:   []string{"/clinic", "/management"},
+		}, true
 	case "superadmin":
 		return fakeIdentity{
-			Realms: []string{"clinic-maintainer"},
-			Groups: []string{"/clinic"},
+			User:     "manual-superadmin",
+			Realname: "Manual Superadmin",
+			QQNumber: "123456783",
+			Realms:   []string{"clinic-maintainer"},
+			Groups:   []string{"/clinic"},
 		}, true
 	default:
 		return fakeIdentity{}, false

@@ -470,8 +470,16 @@ the dev fake OneBot server with `go run ./cmd/fake-napcat` from
 `../message-gateway` and stops it on exit.
 
 Use `scripts/dev.sh --role staff`, `--role admin`, or `--role superadmin` to
-select the role returned by the fake CAS server. The default is `admin`; the
-selected role applies the next time a user logs in through CAS.
+select the fake CAS account presented on login:
+
+| Role | Account | Claims |
+| --- | --- | --- |
+| `staff` | `manual-staff` | `/clinic` |
+| `admin` | `manual-admin` | `/clinic`, `/management` |
+| `superadmin` | `manual-superadmin` | `clinic-maintainer` realm, `/clinic` |
+
+The default is `admin`. Restart `scripts/dev.sh` with another role, then log out
+and log in again through CAS to use the corresponding account and role.
 
 For a local `S3_ENDPOINT`, it starts RustFS and runs `rustfs-init` before
 starting the backend. Use `--no-storage` when storage is already managed
@@ -515,7 +523,7 @@ Defaults applied by `scripts/dev.sh` when the variables are unset:
 Manual setup:
 
 ```bash
-# 1. Start the fake CAS server (defaults to admin)
+# 1. Start the fake CAS server (defaults to the manual-admin account)
 go run fake/fake_cas.go --role staff        # use admin or superadmin as needed
 
 # 2. Start PostgreSQL and Redis (required; see docker-compose.yml)

@@ -371,8 +371,8 @@ it starts the dev fake OneBot server directly from `../message-gateway`. The com
 local-development settings, defaults, and manual steps are in
 [CONFIGURATION.md](CONFIGURATION.md#local-development).
 
-Use `--role staff`, `--role admin`, or `--role superadmin` to select the role
-served by the fake CAS server. The default is `admin`.
+Use `--role staff`, `--role admin`, or `--role superadmin` to select the fake
+CAS account presented on login. The default is `admin` (`manual-admin`).
 
 Start the frontend separately:
 

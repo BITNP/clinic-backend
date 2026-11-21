@@ -75,8 +75,8 @@ Loads and exports the backend's .env before starting services, if present.
 Values in .env override existing environment variables.
 
 Options:
-  --role ROLE      Role served by the fake CAS server: staff, admin, or
-                  superadmin (default: admin)
+  --role ROLE      Fake CAS role and account: staff, admin, or superadmin
+                  (default: admin)
   --no-postgres   Do not start the bundled PostgreSQL service (assume an
                   external database or SQLite is configured)
   --no-cas        Do not start the fake CAS server (assume one is running)

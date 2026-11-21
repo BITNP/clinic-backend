@@ -130,7 +130,9 @@ func main() {
 		Role      string
 		WorkYears []int
 	}{
-		{AccountID: "manualuser", Realname: "Manual Tester", Email: "manual@example.com", Role: "", WorkYears: []int{2025, 2026}},
+		{AccountID: "manual-staff", Realname: "Manual Staff", Email: "manual-staff@example.com", Role: "staff", WorkYears: []int{2025, 2026}},
+		{AccountID: "manual-admin", Realname: "Manual Admin", Email: "manual-admin@example.com", Role: "admin", WorkYears: []int{2025, 2026}},
+		{AccountID: "manual-superadmin", Realname: "Manual Superadmin", Email: "manual-superadmin@example.com", Role: "superadmin", WorkYears: []int{2025, 2026}},
 		{AccountID: "zhangsan", Realname: "张三", Email: "zhangsan@example.com", Role: "", WorkYears: []int{2024, 2025, 2026}},
 		{AccountID: "lisi", Realname: "李四", Email: "lisi@example.com", Role: "", WorkYears: []int{2025, 2026}},
 		{AccountID: "wangwu", Realname: "王五", Email: "wangwu@example.com", Role: ""},
