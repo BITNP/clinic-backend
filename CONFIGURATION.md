@@ -343,6 +343,10 @@ external to that stack, with an optional sample in
 `../message-gateway/docker-compose.napcat.yml`. For local development without
 Compose, see [Local development](#local-development).
 
+The bundled database uses PostgreSQL 18 and the `pgdata18` volume so its dump
+format matches production. A PostgreSQL 16 `pgdata` volume from an older local
+stack is not mounted automatically.
+
 ### Production stack (`docker-compose.prod.yml`)
 
 `docker-compose.prod.yml` is a standalone deploy config: only this file,
@@ -425,12 +429,13 @@ same-origin from the browser's perspective.
 from the example when missing, loads `.env` (values there override existing
 environment variables), and then starts:
 
-1. the fake CAS server on `:9999`;
-2. Redis on `:6379` (container, falling back to `redis-server`);
-3. RustFS and `rustfs-init` on `:9000` / `:9001` when `S3_ENDPOINT` points at
+1. bundled PostgreSQL on `:5432` and configures the host-run backend to use it;
+2. the fake CAS server on `:9999`;
+3. Redis on `:6379` (container, falling back to `redis-server`);
+4. RustFS and `rustfs-init` on `:9000` / `:9001` when `S3_ENDPOINT` points at
    local storage;
-4. message-gateway, gateway API on `:8081`;
-5. the backend on `:8080`.
+5. message-gateway, gateway API on `:8081`;
+6. the backend on `:8080`.
 
 NapCat is external to the gateway stack. To use the optional sample, start it
 after the gateway network exists:
@@ -452,19 +457,26 @@ saved session. `scripts/dev.sh` starts the gateway but does not export a
 gateway key; account tokens live in `../message-gateway/accounts.json`. Use
 `--no-message-gateway` when a gateway is already running; `--no-napcat` is a
 deprecated alias. Use `--fake-napcat` to start the dev fake OneBot server instead
-of a real NapCat. Other flags: `--no-cas` and `--no-redis` when those services
-are already running.
+of a real NapCat. Use `--no-postgres` when using an external PostgreSQL database
+or SQLite, and `--no-cas` / `--no-redis` when those services are already
+running.
 
 Defaults applied by `scripts/dev.sh` when the variables are unset:
 
 | Variable | Default |
 | --- | --- |
 | `CAS_PORT` | `9999` |
+| `POSTGRES_PORT` | `5432` |
+| `POSTGRES_USER` | `clinic` |
+| `POSTGRES_PASSWORD` | `clinic` |
+| `POSTGRES_DB` | `clinic` |
 | `REDIS_PORT` | `6379` |
 | `BACKEND_PORT` | `8080` |
 | `REDIS_CONTAINER` | `clinic-dev-redis` |
 | `MESSAGE_GATEWAY_DIR` | `../message-gateway` |
 | `MESSAGE_GATEWAY_URL` | `http://127.0.0.1:8081` |
+| `CLINIC_DB_DRIVER` | `postgres` |
+| `CLINIC_DB_DSN` | `postgres://clinic:clinic@127.0.0.1:5432/clinic?sslmode=disable` |
 | `CLINIC_API_KEY` | `local-dev-key` |
 | `REDIS_ADDR` | `127.0.0.1:6379` |
 | `REDIS_PASSWORD` | empty |
@@ -480,7 +492,8 @@ Manual setup:
 # 1. Start the fake CAS server (gives admin role)
 go run fake/fake_cas.go        # runs on :9999
 
-# 2. Start Redis (required; see docker-compose.yml for the dev service)
+# 2. Start PostgreSQL and Redis (required; see docker-compose.yml)
+docker compose up -d db
 docker run --rm -p 6379:6379 redis:7-alpine
 
 # 2b. Start RustFS and provision the photo bucket, or point S3_* at an existing
@@ -500,6 +513,8 @@ export MESSAGE_GATEWAY_URL=http://127.0.0.1:8081
 
 # 3. Start the backend. scripts/dev.sh loads .env, including S3_*.
 export CLINIC_API_KEY=local-dev-key
+export CLINIC_DB_DRIVER=postgres
+export CLINIC_DB_DSN='postgres://clinic:clinic@127.0.0.1:5432/clinic?sslmode=disable'
 export REDIS_ADDR=127.0.0.1:6379
 export REDIS_PASSWORD=
 export REDIS_DB=0

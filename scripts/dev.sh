@@ -3,21 +3,22 @@
 # Start the local development stack from the README's
 # "Run locally (development)" section:
 #
-#   1. fake CAS server        -> http://127.0.0.1:9999
-#   2. Redis                  -> 127.0.0.1:6379 (docker, falls back to redis-server)
-#   3. RustFS + provisioning  -> http://127.0.0.1:9000, when S3 storage is local
-#   4. message-gateway        -> http://127.0.0.1:8081 (with fake NapCat)
-#   5. backend (this repo)    -> http://127.0.0.1:8080
+#   1. PostgreSQL             -> 127.0.0.1:5432 (docker compose)
+#   2. fake CAS server        -> http://127.0.0.1:9999
+#   3. Redis                  -> 127.0.0.1:6379 (docker, falls back to redis-server)
+#   4. RustFS + provisioning  -> http://127.0.0.1:9000, when S3 storage is local
+#   5. message-gateway        -> http://127.0.0.1:8081 (with fake NapCat)
+#   6. backend (this repo)    -> http://127.0.0.1:8080
 #
 # The backend runs in the foreground with its stdout/stderr untouched, so
 # everything main.go logs (Gin routes, request logs, startup messages) stays
-# in your terminal. Only the helpers (fake CAS, Redis, RustFS, message-gateway,
-# and fake NapCat) are backgrounded. Ctrl-C stops the backend and
-# the helpers this script started.
-# RustFS and message-gateway are left running if they were already running before
-# this script started.
+# in your terminal. Only the helpers (PostgreSQL, fake CAS, Redis, RustFS,
+# message-gateway, and fake NapCat) are backgrounded. Ctrl-C stops the backend
+# and the helpers this script started.
+# PostgreSQL, RustFS, and message-gateway are left running if they were already
+# running before this script started.
 #
-# Usage: scripts/dev.sh [--no-cas] [--no-redis] [--no-storage] [--no-message-gateway] [--no-fake-napcat]
+# Usage: scripts/dev.sh [--no-postgres] [--no-cas] [--no-redis] [--no-storage] [--no-message-gateway] [--no-fake-napcat]
 
 set -Eeuo pipefail
 
@@ -39,6 +40,10 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
 fi
 
 CAS_PORT=${CAS_PORT:-9999}
+POSTGRES_PORT=${POSTGRES_PORT:-5432}
+POSTGRES_USER=${POSTGRES_USER:-clinic}
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-clinic}
+POSTGRES_DB=${POSTGRES_DB:-clinic}
 REDIS_PORT=${REDIS_PORT:-6379}
 BACKEND_PORT=${BACKEND_PORT:-8080}
 REDIS_CONTAINER=${REDIS_CONTAINER:-clinic-dev-redis}
@@ -46,12 +51,14 @@ REDIS_CONTAINER=${REDIS_CONTAINER:-clinic-dev-redis}
 # Helper output goes to files so the terminal stays clean for backend logs.
 LOG_DIR=${LOG_DIR:-${TMPDIR:-/tmp}/clinic-dev}
 CAS_LOG=$LOG_DIR/fake_cas.log
+POSTGRES_LOG=$LOG_DIR/postgres.log
 REDIS_LOG=$LOG_DIR/redis.log
 STORAGE_LOG=$LOG_DIR/rustfs.log
 MESSAGE_GATEWAY_LOG=$LOG_DIR/message-gateway.log
 FAKE_NAPCAT_LOG=$LOG_DIR/fake-napcat.log
 mkdir -p "$LOG_DIR"
 
+START_POSTGRES=1
 START_CAS=1
 START_REDIS=1
 START_STORAGE=1
@@ -67,6 +74,8 @@ Loads and exports the backend's .env before starting services, if present.
 Values in .env override existing environment variables.
 
 Options:
+  --no-postgres   Do not start the bundled PostgreSQL service (assume an
+                  external database or SQLite is configured)
   --no-cas        Do not start the fake CAS server (assume one is running)
   --no-redis      Do not start Redis (assume one is running)
   --no-storage    Do not start or provision local RustFS (assume configured
@@ -82,6 +91,7 @@ EOF
 
 while (($# > 0)); do
 	case "$1" in
+	--no-postgres) START_POSTGRES=0 ;;
 	--no-cas) START_CAS=0 ;;
 	--no-redis) START_REDIS=0 ;;
 	--no-storage | --no-rustfs) START_STORAGE=0 ;;
@@ -126,6 +136,7 @@ wait_for_port() {
 # --- background process bookkeeping ----------------------------------------
 
 CAS_PGID=""
+POSTGRES_STARTED=0
 REDIS_CONTAINER_STARTED=0
 REDIS_PGID=""
 MESSAGE_GATEWAY_PGID=""
@@ -141,6 +152,11 @@ kill_group() {
 cleanup() {
 	local status=$?
 	trap - EXIT INT TERM
+
+	if ((POSTGRES_STARTED)); then
+		log "stopping PostgreSQL container"
+		docker compose stop db >/dev/null 2>&1 || true
+	fi
 
 	if [[ -n "$REDIS_PGID" ]]; then
 		log "stopping local redis-server"
@@ -190,7 +206,59 @@ spawn() {
 	SPAWNED_PGID=$!
 }
 
-# --- 1. fake CAS server ------------------------------------------------------
+# --- 1. PostgreSQL -----------------------------------------------------------
+
+start_postgres() {
+	if ((!START_POSTGRES)); then
+		log "skipping bundled PostgreSQL; using configured database"
+		return
+	fi
+
+	if [[ ${CLINIC_DB_DRIVER:-postgres} != postgres ]]; then
+		log "CLINIC_DB_DRIVER=${CLINIC_DB_DRIVER}; skipping bundled PostgreSQL"
+		return
+	fi
+
+	command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 ||
+		die "PostgreSQL is required but Docker is unavailable; start it first or use --no-postgres"
+	docker compose version >/dev/null 2>&1 ||
+		die "docker compose is unavailable; start PostgreSQL first or use --no-postgres"
+
+	local was_running=0
+	if docker compose ps -q db 2>/dev/null | grep -q .; then
+		was_running=1
+	fi
+	if ((!was_running)) && port_open 127.0.0.1 "$POSTGRES_PORT"; then
+		die "port $POSTGRES_PORT is already in use and is not the bundled PostgreSQL service"
+	fi
+
+	: >"$POSTGRES_LOG"
+	log "starting PostgreSQL on :$POSTGRES_PORT (log: $POSTGRES_LOG)"
+	if ! docker compose up -d db >>"$POSTGRES_LOG" 2>&1; then
+		tail -n 30 "$POSTGRES_LOG" >&2 || true
+		die "PostgreSQL failed to start; see $POSTGRES_LOG"
+	fi
+	if ((!was_running)); then
+		POSTGRES_STARTED=1
+	fi
+
+	local attempts=0
+	until docker compose exec -T db pg_isready \
+		-U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; do
+		attempts=$((attempts + 1))
+		if ((attempts >= 60)); then
+			docker compose logs --tail=40 db >&2 || true
+			die "PostgreSQL did not become ready; see $POSTGRES_LOG"
+		fi
+		sleep 0.5
+	done
+
+	export CLINIC_DB_DRIVER=postgres
+	export CLINIC_DB_DSN=${CLINIC_DB_DSN:-postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/${POSTGRES_DB}?sslmode=disable}
+	log "PostgreSQL ready: $POSTGRES_DB on 127.0.0.1:$POSTGRES_PORT"
+}
+
+# --- 2. fake CAS server ------------------------------------------------------
 
 start_cas() {
 	if port_open 127.0.0.1 "$CAS_PORT"; then
@@ -213,7 +281,7 @@ start_cas() {
 	log "fake CAS ready (admin role)"
 }
 
-# --- 2. Redis ----------------------------------------------------------------
+# --- 3. Redis ----------------------------------------------------------------
 
 start_redis_container() {
 	docker run --rm --name "$REDIS_CONTAINER" \
@@ -261,7 +329,7 @@ start_redis() {
 	log "Redis ready"
 }
 
-# --- 3. RustFS ---------------------------------------------------------------
+# --- 4. RustFS ---------------------------------------------------------------
 
 storage_host() {
 	local url=$1
@@ -322,7 +390,7 @@ start_storage() {
 	log "storage ready"
 }
 
-# --- 4. message-gateway ------------------------------------------------------
+# --- 5. message-gateway ------------------------------------------------------
 
 start_message_gateway() {
 	if ((!START_MESSAGE_GATEWAY)); then
@@ -408,7 +476,7 @@ start_fake_napcat() {
 	log "fake NapCat messages: curl http://127.0.0.1:$fake_napcat_port/_messages"
 }
 
-# --- 5. backend --------------------------------------------------------------
+# --- 6. backend --------------------------------------------------------------
 
 start_backend() {
 	if port_open 127.0.0.1 "$BACKEND_PORT"; then
@@ -437,6 +505,7 @@ if port_open 127.0.0.1 "$BACKEND_PORT"; then
 	die "port $BACKEND_PORT is already in use; stop the other backend first"
 fi
 
+start_postgres
 ((START_CAS)) && start_cas
 ((START_REDIS)) && start_redis
 start_storage
