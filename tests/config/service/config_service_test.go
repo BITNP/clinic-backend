@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	configmodel "clinic-backend/internal/config/model"
@@ -19,6 +20,11 @@ func setupConfigServiceDB(t *testing.T) (*configservice.ConfigService, *gorm.DB)
 	if err != nil {
 		t.Fatalf("open fake database: %v", err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get SQL database: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
 	if err := db.AutoMigrate(&configmodel.ClinicConfigGroup{}, &configmodel.ClinicConfigItem{}); err != nil {
 		t.Fatalf("migrate config models: %v", err)
 	}
@@ -169,6 +175,8 @@ func TestConfigService_ItemCRUDNormalizesValue(t *testing.T) {
 		Value:       " 007 ",
 		ValueType:   configmodel.ConfigValueTypeInt,
 		DisplayName: "Maximum Booking Days",
+		Unit:        " 天 ",
+		Hint:        " Maximum advance booking window. ",
 		IsRequired:  true,
 		GroupID:     firstGroup.ID,
 		SortOrder:   1,
@@ -182,6 +190,9 @@ func TestConfigService_ItemCRUDNormalizesValue(t *testing.T) {
 	if item.RoleLevel != configmodel.ConfigRoleLevelAdmin || item.WriteOnly {
 		t.Errorf("access defaults = %q, %t; want admin, false", item.RoleLevel, item.WriteOnly)
 	}
+	if item.Unit != "天" || item.Hint != "Maximum advance booking window." {
+		t.Errorf("presentation metadata = %q, %q", item.Unit, item.Hint)
+	}
 
 	value := "false"
 	valueType := configmodel.ConfigValueTypeBoolean
@@ -191,10 +202,14 @@ func TestConfigService_ItemCRUDNormalizesValue(t *testing.T) {
 	writeOnly := true
 	groupID := secondGroup.ID
 	sortOrder := 3
+	unit := " 次 "
+	hint := " Updated hint. "
 	updated, err := svc.UpdateItem(item.ID, configservice.UpdateItemInput{
 		Value:       &value,
 		ValueType:   &valueType,
 		DisplayName: &displayName,
+		Unit:        &unit,
+		Hint:        &hint,
 		IsRequired:  &required,
 		RoleLevel:   &roleLevel,
 		WriteOnly:   &writeOnly,
@@ -213,14 +228,26 @@ func TestConfigService_ItemCRUDNormalizesValue(t *testing.T) {
 	if updated.RoleLevel != roleLevel || !updated.WriteOnly {
 		t.Errorf("updated access = %q, %t; want %q, true", updated.RoleLevel, updated.WriteOnly, roleLevel)
 	}
+	if updated.Unit != "次" || updated.Hint != "Updated hint." {
+		t.Errorf("updated presentation metadata = %q, %q", updated.Unit, updated.Hint)
+	}
 
 	writeOnly = false
-	updated, err = svc.UpdateItem(item.ID, configservice.UpdateItemInput{WriteOnly: &writeOnly})
+	emptyUnit := " "
+	emptyHint := ""
+	updated, err = svc.UpdateItem(item.ID, configservice.UpdateItemInput{
+		Unit:      &emptyUnit,
+		Hint:      &emptyHint,
+		WriteOnly: &writeOnly,
+	})
 	if err != nil {
 		t.Fatalf("disable write-only: %v", err)
 	}
 	if updated.WriteOnly {
 		t.Error("writeonly = true after explicit false update")
+	}
+	if updated.Unit != "" || updated.Hint != "" {
+		t.Errorf("cleared presentation metadata = %q, %q; want empty", updated.Unit, updated.Hint)
 	}
 
 	if err := svc.DeleteItem(item.ID); err != nil {
@@ -317,6 +344,22 @@ func TestConfigService_ItemValidation(t *testing.T) {
 			input: configservice.CreateItemInput{
 				Name: "negative_order", ValueType: configmodel.ConfigValueTypeString,
 				DisplayName: "Negative Order", GroupID: group.ID, SortOrder: -1,
+			},
+			want: configservice.ErrConfigInvalidInput,
+		},
+		{
+			name: "unit too long",
+			input: configservice.CreateItemInput{
+				Name: "long_unit", ValueType: configmodel.ConfigValueTypeString,
+				DisplayName: "Long Unit", Unit: strings.Repeat("u", 33), GroupID: group.ID,
+			},
+			want: configservice.ErrConfigInvalidInput,
+		},
+		{
+			name: "hint too long",
+			input: configservice.CreateItemInput{
+				Name: "long_hint", ValueType: configmodel.ConfigValueTypeString,
+				DisplayName: "Long Hint", Hint: strings.Repeat("h", 513), GroupID: group.ID,
 			},
 			want: configservice.ErrConfigInvalidInput,
 		},

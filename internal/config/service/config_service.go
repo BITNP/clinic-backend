@@ -30,8 +30,10 @@ var (
 )
 
 const (
-	groupColumns = "id, name, display_name, sort_order"
-	itemColumns  = "id, name, value, value_type, display_name, is_required, role_level, writeonly, group_id, sort_order"
+	groupColumns           = "id, name, display_name, sort_order"
+	itemColumns            = "id, name, value, value_type, display_name, unit, hint, is_required, role_level, writeonly, group_id, sort_order"
+	configItemUnitMaxChars = 32
+	configItemHintMaxChars = 512
 )
 
 // ConfigService contains the business logic for configuration groups and items.
@@ -133,6 +135,8 @@ type CreateItemInput struct {
 	Value       string
 	ValueType   configmodel.ConfigValueType
 	DisplayName string
+	Unit        string
+	Hint        string
 	IsRequired  bool
 	RoleLevel   configmodel.ConfigRoleLevel
 	WriteOnly   bool
@@ -144,6 +148,8 @@ type UpdateItemInput struct {
 	Value       *string
 	ValueType   *configmodel.ConfigValueType
 	DisplayName *string
+	Unit        *string
+	Hint        *string
 	IsRequired  *bool
 	RoleLevel   *configmodel.ConfigRoleLevel
 	WriteOnly   *bool
@@ -211,7 +217,7 @@ func listGroups(tx *sql.Tx) ([]configmodel.ClinicConfigGroup, error) {
 
 func listItems(tx *sql.Tx, role *configmodel.ConfigRoleLevel) ([]configmodel.ClinicConfigItem, error) {
 	query := `
-		SELECT i.id, i.name, i.value, i.value_type, i.display_name,
+		SELECT i.id, i.name, i.value, i.value_type, i.display_name, i.unit, i.hint,
 		       i.is_required, i.role_level, i.writeonly, i.group_id, i.sort_order
 		FROM clinic_config_item AS i
 		JOIN clinic_config_group AS g ON g.id = i.group_id`
@@ -382,6 +388,14 @@ func (s *ConfigService) CreateItem(in CreateItemInput) (configmodel.ClinicConfig
 	if err != nil {
 		return configmodel.ClinicConfigItem{}, err
 	}
+	unit, err := normalizeOptionalString("unit", in.Unit, configItemUnitMaxChars)
+	if err != nil {
+		return configmodel.ClinicConfigItem{}, err
+	}
+	hint, err := normalizeOptionalString("hint", in.Hint, configItemHintMaxChars)
+	if err != nil {
+		return configmodel.ClinicConfigItem{}, err
+	}
 	if in.GroupID == 0 {
 		return configmodel.ClinicConfigItem{}, fmt.Errorf("%w: group_id is required", ErrConfigInvalidInput)
 	}
@@ -405,11 +419,12 @@ func (s *ConfigService) CreateItem(in CreateItemInput) (configmodel.ClinicConfig
 		var err error
 		item, err = scanItem(tx.QueryRow(
 			`INSERT INTO clinic_config_item
-			 (name, value, value_type, display_name, is_required, role_level, writeonly, group_id, sort_order)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+				 (name, value, value_type, display_name, unit, hint,
+				  is_required, role_level, writeonly, group_id, sort_order)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 			 RETURNING `+itemColumns,
-			name, value, in.ValueType, displayName, in.IsRequired, roleLevel, in.WriteOnly,
-			in.GroupID, in.SortOrder,
+			name, value, in.ValueType, displayName, unit, hint, in.IsRequired,
+			roleLevel, in.WriteOnly, in.GroupID, in.SortOrder,
 		))
 		if err != nil {
 			if database.IsUniqueViolation(err) {
@@ -492,6 +507,18 @@ func (s *ConfigService) updateItem(id uint, in UpdateItemInput, actorRole *confi
 				return err
 			}
 		}
+		if in.Unit != nil {
+			item.Unit, err = normalizeOptionalString("unit", *in.Unit, configItemUnitMaxChars)
+			if err != nil {
+				return err
+			}
+		}
+		if in.Hint != nil {
+			item.Hint, err = normalizeOptionalString("hint", *in.Hint, configItemHintMaxChars)
+			if err != nil {
+				return err
+			}
+		}
 		if in.IsRequired != nil {
 			item.IsRequired = *in.IsRequired
 		}
@@ -544,10 +571,10 @@ func (s *ConfigService) updateItem(id uint, in UpdateItemInput, actorRole *confi
 		}
 
 		query := `UPDATE clinic_config_item
-			SET value = $1, value_type = $2, display_name = $3,
-			    is_required = $4, role_level = $5, writeonly = $6,
-			    group_id = $7, sort_order = $8
-			WHERE id = $9`
+			SET value = $1, value_type = $2, display_name = $3, unit = $4,
+			    hint = $5, is_required = $6, role_level = $7, writeonly = $8,
+			    group_id = $9, sort_order = $10
+			WHERE id = $11`
 		if actorRole != nil && *actorRole != configmodel.ConfigRoleLevelSuperAdmin {
 			query += " AND role_level = 'admin'"
 		}
@@ -555,8 +582,9 @@ func (s *ConfigService) updateItem(id uint, in UpdateItemInput, actorRole *confi
 
 		item, err = scanItem(tx.QueryRow(
 			query,
-			item.Value, item.ValueType, item.DisplayName, item.IsRequired,
-			item.RoleLevel, item.WriteOnly, item.GroupID, item.SortOrder, id,
+			item.Value, item.ValueType, item.DisplayName, item.Unit, item.Hint,
+			item.IsRequired, item.RoleLevel, item.WriteOnly, item.GroupID,
+			item.SortOrder, id,
 		))
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -679,6 +707,8 @@ func scanItem(row interface{ Scan(...any) error }) (configmodel.ClinicConfigItem
 		&item.Value,
 		&item.ValueType,
 		&item.DisplayName,
+		&item.Unit,
+		&item.Hint,
 		&item.IsRequired,
 		&item.RoleLevel,
 		&item.WriteOnly,
@@ -734,6 +764,14 @@ func normalizeRequiredString(field, value string, maxLength int) (string, error)
 	if normalized == "" {
 		return "", fmt.Errorf("%w: %s is required", ErrConfigInvalidInput, field)
 	}
+	if utf8.RuneCountInString(normalized) > maxLength {
+		return "", fmt.Errorf("%w: %s exceeds %d characters", ErrConfigInvalidInput, field, maxLength)
+	}
+	return normalized, nil
+}
+
+func normalizeOptionalString(field, value string, maxLength int) (string, error) {
+	normalized := strings.TrimSpace(value)
 	if utf8.RuneCountInString(normalized) > maxLength {
 		return "", fmt.Errorf("%w: %s exceeds %d characters", ErrConfigInvalidInput, field, maxLength)
 	}

@@ -175,6 +175,11 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	if err := svc.EnsureRuntimeSettings(); err != nil {
 		t.Fatalf("ensure runtime settings: %v", err)
 	}
+	if err := db.Model(&configmodel.ClinicConfigItem{}).
+		Where("name = ?", "TAGGER_AGENT_POOL_SIZE").
+		Updates(map[string]any{"unit": "stale", "hint": "stale"}).Error; err != nil {
+		t.Fatalf("corrupt presentation metadata: %v", err)
+	}
 	if err := svc.EnsureRuntimeSettings(); err != nil {
 		t.Fatalf("ensure runtime settings second time: %v", err)
 	}
@@ -270,6 +275,21 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	}
 	if maintainerCount != 0 {
 		t.Errorf("MAINTAINER_QQ_IDS should not be seeded")
+	}
+
+	var poolSize configmodel.ClinicConfigItem
+	if err := db.Where("name = ?", "TAGGER_AGENT_POOL_SIZE").First(&poolSize).Error; err != nil {
+		t.Fatalf("get tagger pool size item: %v", err)
+	}
+	if poolSize.Unit != "并发" || poolSize.Hint == "" {
+		t.Errorf("tagger pool presentation metadata = %q, %q", poolSize.Unit, poolSize.Hint)
+	}
+	var contextTokens configmodel.ClinicConfigItem
+	if err := db.Where("name = ?", "TAGGER_CONTEXT_TOKENS").First(&contextTokens).Error; err != nil {
+		t.Fatalf("get tagger context tokens item: %v", err)
+	}
+	if contextTokens.Unit != "tokens" || contextTokens.Hint == "" {
+		t.Errorf("tagger context presentation metadata = %q, %q", contextTokens.Unit, contextTokens.Hint)
 	}
 }
 

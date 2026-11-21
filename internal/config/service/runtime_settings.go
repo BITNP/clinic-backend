@@ -58,6 +58,8 @@ type runtimeGroupDefinition struct {
 type runtimeSettingDefinition struct {
 	Name        string                      `json:"name"`
 	DisplayName string                      `json:"display_name"`
+	Unit        string                      `json:"unit,omitempty"`
+	Hint        string                      `json:"hint,omitempty"`
 	ValueType   configmodel.ConfigValueType `json:"value_type"`
 	GroupName   string                      `json:"group"`
 	SortOrder   int                         `json:"sort_order"`
@@ -267,44 +269,35 @@ func (s *ConfigService) ensureRuntimeSettings(initialValues map[string]string) e
 			if err != nil {
 				return err
 			}
-			if exists {
-				continue
-			}
-
 			value := values[setting.Name]
-			if raw, ok := initialValues[setting.Name]; ok && strings.TrimSpace(raw) != "" {
-				value, err = validateRuntimeSettingValue(setting.Name, raw)
-				if err != nil {
-					return fmt.Errorf("initialize %s from legacy environment: %w", setting.Name, err)
+			if !exists {
+				if raw, ok := initialValues[setting.Name]; ok && strings.TrimSpace(raw) != "" {
+					value, err = validateRuntimeSettingValue(setting.Name, raw)
+					if err != nil {
+						return fmt.Errorf("initialize %s from legacy environment: %w", setting.Name, err)
+					}
 				}
 			}
 			groupID := groupIDs[setting.GroupName]
 			if _, err := tx.Exec(
 				`INSERT INTO clinic_config_item
-				 (name, value, value_type, display_name, is_required, writeonly, group_id, sort_order)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-				 ON CONFLICT (name) DO NOTHING`,
+					 (name, value, value_type, display_name, unit, hint,
+					  is_required, writeonly, group_id, sort_order)
+					 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+					 ON CONFLICT (name) DO UPDATE SET
+					     display_name = EXCLUDED.display_name,
+					     unit = EXCLUDED.unit,
+					     hint = EXCLUDED.hint,
+					     value_type = EXCLUDED.value_type,
+					     is_required = EXCLUDED.is_required,
+					     writeonly = EXCLUDED.writeonly,
+					     group_id = EXCLUDED.group_id,
+					     sort_order = EXCLUDED.sort_order`,
 				setting.Name, value, setting.ValueType, setting.DisplayName,
-				setting.IsRequired, setting.WriteOnly, groupID, setting.SortOrder,
+				setting.Unit, setting.Hint, setting.IsRequired, setting.WriteOnly,
+				groupID, setting.SortOrder,
 			); err != nil {
 				return fmt.Errorf("seed config item %s: %w", setting.Name, err)
-			}
-		}
-		for _, setting := range template.Items {
-			if _, err := tx.Exec(
-				`UPDATE clinic_config_item
-				 SET display_name = $2, value_type = $3, is_required = $4,
-				     writeonly = $5, group_id = $6, sort_order = $7
-				 WHERE name = $1`,
-				setting.Name,
-				setting.DisplayName,
-				setting.ValueType,
-				setting.IsRequired,
-				setting.WriteOnly,
-				groupIDs[setting.GroupName],
-				setting.SortOrder,
-			); err != nil {
-				return fmt.Errorf("sync config item metadata %s: %w", setting.Name, err)
 			}
 		}
 		return nil

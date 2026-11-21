@@ -46,6 +46,8 @@ type ClinicConfigItem struct {
 	Value       string             `gorm:"type:text;not null;default:'';column:value" json:"value"`
 	ValueType   ConfigValueType    `gorm:"type:varchar(16);not null;column:value_type;check:chk_config_item_value,sort_order >= 0 AND value_type IN ('int', 'double', 'boolean', 'string')" json:"value_type"`
 	DisplayName string             `gorm:"size:128;not null;column:display_name" json:"display_name"`
+	Unit        string             `gorm:"size:32;not null;default:'';column:unit" json:"unit,omitempty"`
+	Hint        string             `gorm:"type:text;not null;default:'';column:hint" json:"hint,omitempty"`
 	IsRequired  bool               `gorm:"not null;default:false;column:is_required" json:"is_required"`
 	RoleLevel   ConfigRoleLevel    `gorm:"size:16;not null;default:admin;column:role_level;check:chk_config_item_role_level,role_level IN ('staff', 'admin', 'superadmin')" json:"role_level"`
 	WriteOnly   bool               `gorm:"not null;default:false;column:writeonly" json:"writeonly"`

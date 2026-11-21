@@ -31,6 +31,8 @@ func TestClinicConfigItem_CreateAndRetrieve(t *testing.T) {
 		Value:       "7",
 		ValueType:   configmodel.ConfigValueTypeInt,
 		DisplayName: "Maximum Booking Days",
+		Unit:        "days",
+		Hint:        "Maximum advance booking window.",
 		IsRequired:  true,
 		RoleLevel:   configmodel.ConfigRoleLevelStaff,
 		WriteOnly:   true,
@@ -56,6 +58,9 @@ func TestClinicConfigItem_CreateAndRetrieve(t *testing.T) {
 	}
 	if retrieved.ValueType != item.ValueType {
 		t.Errorf("value_type = %q, want %q", retrieved.ValueType, item.ValueType)
+	}
+	if retrieved.Unit != item.Unit || retrieved.Hint != item.Hint {
+		t.Errorf("presentation metadata = %q, %q; want %q, %q", retrieved.Unit, retrieved.Hint, item.Unit, item.Hint)
 	}
 	if retrieved.IsRequired != item.IsRequired {
 		t.Errorf("is_required = %t, want %t", retrieved.IsRequired, item.IsRequired)
@@ -95,6 +100,9 @@ func TestClinicConfigItem_AccessDefaults(t *testing.T) {
 	if retrieved.WriteOnly {
 		t.Error("writeonly = true, want false")
 	}
+	if retrieved.Unit != "" || retrieved.Hint != "" {
+		t.Errorf("presentation defaults = %q, %q; want empty", retrieved.Unit, retrieved.Hint)
+	}
 }
 
 func TestClinicConfigItem_AutoMigrateAddsAccessDefaultsToExistingRows(t *testing.T) {
@@ -129,6 +137,9 @@ func TestClinicConfigItem_AutoMigrateAddsAccessDefaultsToExistingRows(t *testing
 	}
 	if retrieved.WriteOnly {
 		t.Error("writeonly = true, want false")
+	}
+	if retrieved.Unit != "" || retrieved.Hint != "" {
+		t.Errorf("presentation defaults = %q, %q; want empty", retrieved.Unit, retrieved.Hint)
 	}
 }
 

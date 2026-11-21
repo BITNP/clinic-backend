@@ -36,6 +36,7 @@
     {
       "name": "TAGGER_LLM_API_KEY",
       "display_name": "标签模型 API 密钥",
+      "hint": "仅写入；保存后不会回显当前密钥。",
       "value_type": "string",
       "group": "system",
       "sort_order": 2,
@@ -45,6 +46,7 @@
     {
       "name": "TAGGER_LLM_BASE_URL",
       "display_name": "标签模型 API 地址",
+      "hint": "OpenAI 兼容接口地址；填写密钥时必填。",
       "value_type": "string",
       "group": "system",
       "sort_order": 3,
@@ -53,6 +55,7 @@
     {
       "name": "TAGGER_LLM_MODEL",
       "display_name": "标签模型名称",
+      "hint": "模型 ID；填写密钥时必填。",
       "value_type": "string",
       "group": "system",
       "sort_order": 4,
@@ -61,6 +64,8 @@
     {
       "name": "TAGGER_AGENT_POOL_SIZE",
       "display_name": "标签模型并发会话数",
+      "unit": "并发",
+      "hint": "扩容立即生效；缩容会等待多余的在途任务结束。",
       "value_type": "int",
       "group": "system",
       "sort_order": 5,
@@ -69,6 +74,8 @@
     {
       "name": "TAGGER_CONTEXT_TOKENS",
       "display_name": "标签模型上下文上限",
+      "unit": "tokens",
+      "hint": "会话达到该 token 数后重置上下文。",
       "value_type": "int",
       "group": "system",
       "sort_order": 6,
@@ -77,6 +84,7 @@
     {
       "name": "TAGGER_TIMEOUT",
       "display_name": "标签模型超时时间",
+      "hint": "Go 时长格式，必须大于 0。",
       "value_type": "string",
       "group": "system",
       "sort_order": 7,
@@ -100,7 +108,9 @@
     },
     {
       "name": "RECORD_PHOTO_MAX_SIZE_BYTES",
-      "display_name": "单张照片大小上限（字节）",
+      "display_name": "单张照片大小上限",
+      "unit": "字节",
+      "hint": "按字节填写；保存后下一次上传立即使用该限制。",
       "value_type": "int",
       "group": "record",
       "sort_order": 2,
@@ -109,6 +119,7 @@
     {
       "name": "SERVICE_DATE_REMINDER_ENABLED",
       "display_name": "启用服务日期提醒",
+      "hint": "关闭后暂停新的提醒发现和发送；已提交的消息可能仍会送达。",
       "value_type": "boolean",
       "group": "reminder",
       "sort_order": 0,
@@ -117,6 +128,7 @@
     {
       "name": "SERVICE_DATE_REMINDER_LEAD_TIMES",
       "display_name": "提前提醒时间列表",
+      "hint": "使用逗号分隔的 Go 时长，例如 5h,3h；每个值必须为正且至少精确到秒。",
       "value_type": "string",
       "group": "reminder",
       "sort_order": 1,
@@ -125,6 +137,7 @@
     {
       "name": "SERVICE_DATE_REMINDER_TEMPLATE",
       "display_name": "提醒消息模板",
+      "hint": "支持 {{.Date}}、{{.StartTime}}、{{.Room}}、{{.PendingCount}} 和 {{.LeadTime}}；保存后下一条提醒生效。",
       "value_type": "string",
       "group": "reminder",
       "sort_order": 2,
@@ -134,6 +147,7 @@
     {
       "name": "MESSAGE_GATEWAY_URL",
       "display_name": "消息网关地址",
+      "hint": "message-gateway 基础地址，必须使用 HTTP(S)，不能包含查询参数或片段。",
       "value_type": "string",
       "group": "reminder",
       "sort_order": 3,
@@ -143,6 +157,7 @@
     {
       "name": "MESSAGE_GATEWAY_ACCOUNT",
       "display_name": "消息网关账号",
+      "hint": "下一条提醒立即使用该账号；网关账号令牌必须与账号匹配。",
       "value_type": "string",
       "group": "reminder",
       "sort_order": 4,
@@ -152,6 +167,7 @@
     {
       "name": "MESSAGE_GATEWAY_ACCOUNT_TOKEN",
       "display_name": "消息网关账号令牌",
+      "hint": "仅写入；必须是当前消息网关账号的 client_token。",
       "value_type": "string",
       "group": "reminder",
       "sort_order": 5,
@@ -162,6 +178,7 @@
     {
       "name": "MESSAGE_GATEWAY_TIMEOUT",
       "display_name": "消息网关请求超时",
+      "hint": "Go 时长格式，必须大于 0；下一条提醒发送时生效。",
       "value_type": "string",
       "group": "reminder",
       "sort_order": 6,
