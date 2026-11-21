@@ -64,7 +64,7 @@ Do not recreate global `handlers/`, `services/`, or `models/` directories.
 
 ## Messaging
 
-Outbound messaging is owned by the separate `message-gateway` project. Do not add platform adapters, queues, or rate-limiting logic to `internal/message`; it is frozen legacy code. Backend callers use the gateway HTTP API with `MESSAGE_GATEWAY_URL` and the account's `client_token` as the bearer token. Keep `NAPCAT_BASE_URL` unset so the legacy in-process manager stays disabled.
+Outbound messaging is owned by the separate `message-gateway` project. Do not add platform adapters, queues, or rate-limiting logic to `internal/message`; it is frozen legacy code. Backend callers use the gateway HTTP API. The runtime-settings snapshot supplies `MESSAGE_GATEWAY_URL`, `MESSAGE_GATEWAY_ACCOUNT`, and the account's write-only `client_token`; the account URL uses that token as its bearer credential. Keep `NAPCAT_BASE_URL` unset so the legacy in-process manager stays disabled.
 
 ## Go Style
 

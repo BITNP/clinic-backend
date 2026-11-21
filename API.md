@@ -862,16 +862,21 @@ item endpoints.
 The backend seeds and reserves `SYNC_POLL_INTERVAL`, `STAFF_VERSION`,
 `RECORD_ACTION_WINDOW`, `RECORD_PHOTO_MAX_COUNT`,
 `RECORD_PHOTO_MAX_SIZE_BYTES`, `SERVICE_DATE_REMINDER_ENABLED`,
-`SERVICE_DATE_REMINDER_LEAD_TIMES`, `MESSAGE_GATEWAY_ACCOUNT`,
+`SERVICE_DATE_REMINDER_LEAD_TIMES`, `SERVICE_DATE_REMINDER_TEMPLATE`,
+`MESSAGE_GATEWAY_URL`, `MESSAGE_GATEWAY_ACCOUNT`,
+`MESSAGE_GATEWAY_ACCOUNT_TOKEN`, `MESSAGE_GATEWAY_TIMEOUT`,
 `TAGGER_LLM_API_KEY`, `TAGGER_LLM_BASE_URL`, `TAGGER_LLM_MODEL`,
 `TAGGER_AGENT_POOL_SIZE`, `TAGGER_CONTEXT_TOKENS`, and `TAGGER_TIMEOUT`. Their
 types, required flags, and write-only flags are fixed and their values receive
 key-specific validation. Initial values come from the external
 `runtime_settings.json` file beside `.env`; environment variables with these
 names may only initialize a missing item during migration and are ignored once
-the row exists. `TAGGER_LLM_API_KEY` is optional and write-only: its value is
-never returned by the API. All successful saves apply without restarting the
-backend; tagger changes atomically replace the active pool generation.
+the row exists. `TAGGER_LLM_API_KEY` and `MESSAGE_GATEWAY_ACCOUNT_TOKEN` are
+optional and write-only: their values are never returned by the API. All
+successful saves apply without restarting the backend; tagger changes
+atomically replace the active pool generation, and reminder delivery reads the
+new gateway settings on its next send. The reminder template supports
+`Date`, `StartTime`, `Room`, `PendingCount`, and `LeadTime`.
 
 ### `GET /api/admin/config`
 
@@ -1066,12 +1071,15 @@ An `admin` may update only items that are currently `admin` level and cannot
 change them to another level. A `superadmin` may update items at every level.
 Known runtime settings take effect after a successful save for subsequent
 operations. Existing operations may finish with the previous value. Enabling
-reminders requires configured gateway credentials; invalid settings are rejected
-without changing the saved or active values. Disabling reminders pauses new
-discovery and delivery; a message already submitted may still be delivered.
-Pending reminders for removed lead times are cancelled with the save; claimed
-jobs are checked before delivery. Increasing the action window cannot restore
-actions already expired or pruned from the journal under the previous window.
+service-date reminders requires a gateway URL and account token; invalid URLs,
+durations, accounts, or templates are rejected without changing the saved or
+active values. Disabling reminders pauses new discovery and delivery; a message
+already submitted may still be delivered. The next reminder uses the committed
+URL, account, write-only token, timeout, and template without a backend
+restart. Pending reminders for removed lead times are cancelled with the save;
+claimed jobs are checked before delivery. Increasing the action window cannot
+restore actions already expired or pruned from the journal under the previous
+window.
 
 **Request body**
 
@@ -2833,5 +2841,5 @@ deployment setting. Settings that affect API behavior are noted inline above:
 `CLINIC_API_KEY`, `CLINIC_TIMEZONE`, `STAFF_VERSION`, `SYNC_POLL_INTERVAL`,
 `RECORD_ACTION_WINDOW`, `RECORD_PHOTO_MAX_COUNT`,
 `RECORD_PHOTO_MAX_SIZE_BYTES`, the service-date reminder settings,
-`MESSAGE_GATEWAY_ACCOUNT`, the `TAGGER_*` settings, `SESSION_*`, `CAS_*`, and
+`MESSAGE_GATEWAY_*`, the `TAGGER_*` settings, `SESSION_*`, `CAS_*`, and
 `KEYCLOAK_*`.

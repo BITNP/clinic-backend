@@ -14,19 +14,21 @@ noted.
 ## Database-managed runtime settings
 
 The backend embeds `internal/config/service/data/template.json`, which defines
-the reserved groups and item metadata but contains no values. At every startup
-the backend reads `runtime_settings.json` from its working directory, beside
-`.env`, validates that every reserved item is present, and uses those values
-only when creating missing database rows. Existing values are preserved, while
-reserved display names, types, groups, ordering, required flags, and write-only
-flags are synchronized from the template. The database becomes authoritative
-for values immediately after initialization.
+the reserved groups and item metadata. Message-gateway items also carry
+built-in fallback values. At every startup the backend reads
+`runtime_settings.json` from its working directory, beside `.env`, validates
+the reserved items, and uses those values only when creating missing database
+rows. Existing values are preserved, while reserved display names, types,
+groups, ordering, required flags, and write-only flags are synchronized from
+the template. The database becomes authoritative for values immediately after
+initialization.
 
 `runtime_settings.json` is an external deployment file and is gitignored. Start
 from [`runtime_settings.example.json`](runtime_settings.example.json), keep the
 real file at the same filesystem level as `.env`, and mount it read-only at
-`/app/runtime_settings.json` in containers. Missing files, extra or missing
-items, and invalid values stop startup with an error.
+`/app/runtime_settings.json` in containers. Missing files, unknown items,
+missing items without a built-in default, and invalid values stop startup with
+an error.
 
 ```json
 {
@@ -43,7 +45,11 @@ items, and invalid values stop startup with an error.
   "RECORD_PHOTO_MAX_SIZE_BYTES": "10485760",
   "SERVICE_DATE_REMINDER_ENABLED": "false",
   "SERVICE_DATE_REMINDER_LEAD_TIMES": "5h,3h",
-  "MESSAGE_GATEWAY_ACCOUNT": "qq"
+  "SERVICE_DATE_REMINDER_TEMPLATE": "[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待审核工单，请及时处理。",
+  "MESSAGE_GATEWAY_URL": "http://127.0.0.1:8081",
+  "MESSAGE_GATEWAY_ACCOUNT": "qq",
+  "MESSAGE_GATEWAY_ACCOUNT_TOKEN": "",
+  "MESSAGE_GATEWAY_TIMEOUT": "5s"
 }
 ```
 
@@ -63,7 +69,11 @@ tabs refresh their sync interval periodically.
 | `RECORD_PHOTO_MAX_SIZE_BYTES` | `10485760` | Positive maximum size of one uploaded photo in bytes. |
 | `SERVICE_DATE_REMINDER_ENABLED` | `false` | Strict boolean controlling the pending-ticket reminder worker. |
 | `SERVICE_DATE_REMINDER_LEAD_TIMES` | `5h,3h` | Comma-separated unique positive Go durations using whole seconds, relative to service start. |
+| `SERVICE_DATE_REMINDER_TEMPLATE` | built-in Chinese reminder | Non-empty Go text template supporting `Date`, `StartTime`, `Room`, `PendingCount`, and `LeadTime`. |
+| `MESSAGE_GATEWAY_URL` | empty for legacy files; local example uses `http://127.0.0.1:8081` | HTTP(S) message-gateway base URL without query or fragment. Required while reminders are enabled. |
 | `MESSAGE_GATEWAY_ACCOUNT` | `qq` | Account segment used for pending-ticket reminder delivery. |
+| `MESSAGE_GATEWAY_ACCOUNT_TOKEN` | empty | Optional write-only gateway `client_token`; never returned by the API. Required while reminders are enabled and must match the selected account. |
+| `MESSAGE_GATEWAY_TIMEOUT` | `5s` | Positive Go duration used as one reminder gateway request timeout. |
 | `TAGGER_LLM_API_KEY` | empty | Optional write-only key for the in-process tagger. Its value is never returned by the API. |
 | `TAGGER_LLM_BASE_URL` | empty | OpenAI-compatible endpoint; required when the API key is non-empty. |
 | `TAGGER_LLM_MODEL` | empty | Model ID; required when the API key is non-empty. |
@@ -71,10 +81,11 @@ tabs refresh their sync interval periodically.
 | `TAGGER_CONTEXT_TOKENS` | `32000` | Session reset threshold. Must be positive. |
 | `TAGGER_TIMEOUT` | `30s` | Positive per-call and pool-wait timeout. |
 
-These names are reserved: their `value_type`, required flag, and value validation
-are enforced by the config service. They are seeded into the `system`, `record`,
-and `reminder` groups. `MAINTAINER_QQ_IDS` is not part of this backend catalog;
-it remains a `clinic-health-monitor` environment setting.
+These names are reserved: their `value_type`, required flag, write-only flag,
+and value validation are enforced by the config service. They are seeded into
+the `system`, `record`, and `reminder` groups. `MAINTAINER_QQ_IDS` is not part
+of this backend catalog; it remains a `clinic-health-monitor` environment
+setting.
 
 ## Backend environment variables
 
@@ -157,15 +168,21 @@ docker compose up -d
 # docker compose -f docker-compose.napcat.yml up -d
 ```
 
-`clinic-backend/scripts/dev.sh` starts the gateway automatically and exports the
-gateway URL to the backend. Account tokens live in
-`../message-gateway/accounts.json`. NapCat is external to the gateway stack;
-start the sample stack separately if you need it.
+`clinic-backend/scripts/dev.sh` starts the gateway automatically. Account tokens
+live in `../message-gateway/accounts.json`. NapCat is external to the gateway
+stack; start the sample stack separately if you need it.
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `MESSAGE_GATEWAY_URL` | `http://127.0.0.1:8081` for host dev | Gateway HTTP endpoint. Compose uses `http://message-gateway:8081`. |
-| `MESSAGE_GATEWAY_TIMEOUT` | `5s` | Per-request client timeout. |
+The reminder connection settings are database config items. The same-named
+environment variables are compatibility inputs only: they can seed a missing
+row on the first upgraded startup, but later environment changes are ignored.
+
+| Seed variable | Description |
+| --- | --- |
+| `MESSAGE_GATEWAY_URL` | Gateway base URL. Compose and production commonly use `http://message-gateway:8081`. |
+| `MESSAGE_GATEWAY_ACCOUNT` | Gateway account segment, normally `qq`. |
+| `MESSAGE_GATEWAY_ACCOUNT_TOKEN` | The selected account's gateway `client_token`. |
+| `MESSAGE_GATEWAY_TIMEOUT` | Positive request timeout such as `5s`. |
+| `SERVICE_DATE_REMINDER_TEMPLATE` | Optional initial message template with the supported text-template fields. |
 
 There is no global gateway access key. Each gateway account has its own
 `client_token` in `message-gateway/accounts.json`; that token is used as the
@@ -178,12 +195,11 @@ The legacy `NAPCAT_*` and `MESSAGE_*` variables belong to the frozen
 `internal/message` copy and must not be set in new deployments. In particular,
 keep `NAPCAT_BASE_URL` empty so the in-process manager stays disabled.
 
-The pending-ticket reminder account is the database-managed
-`MESSAGE_GATEWAY_ACCOUNT` item above. It is resolved before each delivery, so a
-successful save affects the next reminder send. The environment-backed
-`MESSAGE_GATEWAY_ACCOUNT_TOKEN` must correspond to the selected account;
-changing the token still requires a backend restart. `MESSAGE_GATEWAY_URL` and
-`MESSAGE_GATEWAY_TIMEOUT` also remain environment-backed.
+The reminder URL, account, write-only account token, timeout, lead times, and
+message template are all resolved from the current database snapshot before
+each delivery. A successful settings save affects the next send without a
+restart. If reminders are enabled, the settings API rejects an empty URL or
+token and invalid URL, duration, account, or template values.
 
 The gateway queue is in-memory and assumes one gateway instance per sender/QQ
 account. Pending messages are lost on gateway restart. See

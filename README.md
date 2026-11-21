@@ -156,9 +156,10 @@ gateway key. If you use the sample NapCat
 stack, also set `NAPCAT_QUICK_ACCOUNT` and the NapCat data paths (relative
 `./napcat/config` and `./napcat/QQ` under the copied `message-gateway`
 directory work best). Set `MONITOR_MESSAGE_GATEWAY_URL` to the account-scoped
-OneBot base URL and `MESSAGE_GATEWAY_ACCOUNT_TOKEN` in the backend
-`.env` for the health monitor. Also set `MAINTAINER_QQ_IDS` there; the health
-monitor uses those ids for private QQ alerts.
+OneBot base URL and `MESSAGE_GATEWAY_ACCOUNT_TOKEN` in the backend `.env`. The
+token seeds the backend's write-only reminder setting on first upgrade and is
+also used by the health monitor. Set `MAINTAINER_QQ_IDS` there as well; the
+health monitor uses those ids for private QQ alerts.
 
 Do not use `--pull always` or `docker compose pull` for this stack: those bypass
 `pull_policy` and would try to fetch images from registries the server cannot
@@ -191,10 +192,11 @@ gateway `.env` to auto-login without scanning again. If you use an external
 NapCat instead of the sample stack, set `NAPCAT_BASE_URL` to its OneBot
 endpoint.
 
-The backend calls the gateway over HTTP. Set `MESSAGE_GATEWAY_URL` and use the
-account's `client_token` from `accounts.json` as the bearer token (the default
-URL is `http://message-gateway:8081` inside Compose). Do not set
-`NAPCAT_BASE_URL`; the legacy in-process manager must remain disabled.
+The backend calls the gateway over HTTP with the database-managed gateway URL
+and account. The selected account's database token is used as the bearer
+credential (the default URL is `http://message-gateway:8081` inside Compose).
+Do not set `NAPCAT_BASE_URL`; the legacy in-process manager must remain
+disabled.
 
 The image tags in the commands above come from `.env`; see
 [CONFIGURATION.md](CONFIGURATION.md#production-stack-docker-composeprodyml) for
@@ -402,25 +404,28 @@ underlying write.
 The backend can remind admins assigned to a service window when tickets remain
 pending. It scans every minute and on startup, finds pending tickets by date and
 room, and sends a QQ private message through the account-scoped message gateway.
-The reminder switch and lead times are stored in the database, initialized from
-the external `runtime_settings.json`, and managed from the admin configuration
-API:
+The reminder delivery settings are stored in the database, initialized from the
+external `runtime_settings.json` or matching legacy environment values, and
+managed from the admin system settings page:
 
 - `SERVICE_DATE_REMINDER_ENABLED` is a boolean, default `false`.
 - `SERVICE_DATE_REMINDER_LEAD_TIMES` defaults to `5h,3h`: unique, positive
   Go durations in whole seconds. Each is relative to the service start time.
+- `SERVICE_DATE_REMINDER_TEMPLATE` supports `Date`, `StartTime`, `Room`,
+  `PendingCount`, and `LeadTime`.
+- `MESSAGE_GATEWAY_URL` is the gateway base URL.
 - `MESSAGE_GATEWAY_ACCOUNT` defaults to `qq` and affects the next delivery.
+- `MESSAGE_GATEWAY_ACCOUNT_TOKEN` is the account's write-only `client_token`.
+- `MESSAGE_GATEWAY_TIMEOUT=5s` defaults to five seconds.
 
 Legacy same-named environment variables can initialize a missing row once, but
-are ignored after it exists. The remaining reminder settings are
-environment-backed:
+are ignored after it exists. A successful save affects the next reminder send
+without restarting the backend. Reminder delivery is disabled when
+`SERVICE_DATE_REMINDER_ENABLED=false`; enabling it requires a URL and account
+token.
 
-- `MESSAGE_GATEWAY_URL`: gateway base URL.
-- `MESSAGE_GATEWAY_ACCOUNT_TOKEN`: the account's gateway `client_token`.
-- `MESSAGE_GATEWAY_TIMEOUT=5s` (default shown): request timeout.
-- `SERVICE_DATE_REMINDER_TEMPLATE`: optional Go text template with `Date`,
-  `StartTime`, `Room`, `PendingCount`, and `LeadTime` fields. The default is
-  `[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待审核工单，请及时处理。`
+The default template is
+`[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待审核工单，请及时处理。`
 
 `LeadTime` is the actual time remaining when the message is sent, rounded down
 to the minute.
