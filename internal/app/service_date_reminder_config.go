@@ -1,18 +1,20 @@
 package app
 
 import (
+	"bytes"
 	"fmt"
 	"net/url"
 	"sort"
 	"strings"
 	"text/template"
 	"time"
+
+	configservice "clinic-backend/internal/config/service"
 )
 
 const (
-	defaultServiceDateReminderAccount  = "qq"
-	defaultServiceDateReminderTimeout  = 5 * time.Second
-	defaultServiceDateReminderTemplate = `[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待审核工单，请及时处理。`
+	defaultServiceDateReminderAccount = "qq"
+	defaultServiceDateReminderTimeout = 5 * time.Second
 )
 
 // ServiceDateReminderConfig controls the pending-ticket reminder worker.
@@ -32,15 +34,10 @@ type ServiceDateReminderGatewayConfig struct {
 	Timeout      time.Duration
 }
 
-// LoadServiceDateReminderConfig combines database-managed reminder settings
-// with environment-managed template and gateway credentials.
-func LoadServiceDateReminderConfig(
-	getenv func(string) string,
-	enabled bool,
-	leadTimes []time.Duration,
-	account string,
-) (ServiceDateReminderConfig, error) {
-	leadTimes = append([]time.Duration(nil), leadTimes...)
+// LoadServiceDateReminderConfig validates one database runtime-settings
+// snapshot and converts it into reminder delivery configuration.
+func LoadServiceDateReminderConfig(settings configservice.RuntimeSettings) (ServiceDateReminderConfig, error) {
+	leadTimes := append([]time.Duration(nil), settings.ServiceDateReminderLeadTimes...)
 	if err := validateServiceDateReminderLeadTimes(leadTimes); err != nil {
 		return ServiceDateReminderConfig{}, fmt.Errorf("invalid SERVICE_DATE_REMINDER_LEAD_TIMES: %w", err)
 	}
@@ -48,19 +45,19 @@ func LoadServiceDateReminderConfig(
 		return leadTimes[i] > leadTimes[j]
 	})
 
-	messageTemplate, err := parseServiceDateReminderTemplate(getenv("SERVICE_DATE_REMINDER_TEMPLATE"))
+	messageTemplate, err := parseServiceDateReminderTemplate(settings.ServiceDateReminderTemplate)
 	if err != nil {
 		return ServiceDateReminderConfig{}, fmt.Errorf("invalid SERVICE_DATE_REMINDER_TEMPLATE: %w", err)
 	}
 
-	baseURL := strings.TrimRight(strings.TrimSpace(getenv("MESSAGE_GATEWAY_URL")), "/")
+	baseURL := strings.TrimRight(strings.TrimSpace(settings.MessageGatewayURL), "/")
 	if baseURL != "" {
 		if err := validateServiceDateReminderGatewayURL(baseURL); err != nil {
 			return ServiceDateReminderConfig{}, fmt.Errorf("invalid MESSAGE_GATEWAY_URL: %w", err)
 		}
 	}
 
-	account = strings.TrimSpace(account)
+	account := strings.TrimSpace(settings.MessageGatewayAccount)
 	if account == "" {
 		account = defaultServiceDateReminderAccount
 	}
@@ -68,21 +65,21 @@ func LoadServiceDateReminderConfig(
 		return ServiceDateReminderConfig{}, fmt.Errorf("invalid MESSAGE_GATEWAY_ACCOUNT: %w", err)
 	}
 
-	accountToken := strings.TrimSpace(getenv("MESSAGE_GATEWAY_ACCOUNT_TOKEN"))
-	if enabled && baseURL == "" {
+	accountToken := strings.TrimSpace(settings.MessageGatewayAccountToken)
+	if settings.ServiceDateReminderEnabled && baseURL == "" {
 		return ServiceDateReminderConfig{}, fmt.Errorf("MESSAGE_GATEWAY_URL is required when SERVICE_DATE_REMINDER_ENABLED is true")
 	}
-	if enabled && accountToken == "" {
+	if settings.ServiceDateReminderEnabled && accountToken == "" {
 		return ServiceDateReminderConfig{}, fmt.Errorf("MESSAGE_GATEWAY_ACCOUNT_TOKEN is required when SERVICE_DATE_REMINDER_ENABLED is true")
 	}
 
-	timeout, err := parsePositiveDurationSetting(getenv("MESSAGE_GATEWAY_TIMEOUT"), defaultServiceDateReminderTimeout)
-	if err != nil {
-		return ServiceDateReminderConfig{}, fmt.Errorf("invalid MESSAGE_GATEWAY_TIMEOUT: %w", err)
+	timeout := settings.MessageGatewayTimeout
+	if timeout <= 0 {
+		timeout = defaultServiceDateReminderTimeout
 	}
 
 	return ServiceDateReminderConfig{
-		Enabled:         enabled,
+		Enabled:         settings.ServiceDateReminderEnabled,
 		LeadTimes:       leadTimes,
 		MessageTemplate: messageTemplate,
 		Gateway: ServiceDateReminderGatewayConfig{
@@ -114,7 +111,7 @@ func validateServiceDateReminderLeadTimes(leadTimes []time.Duration) error {
 func parseServiceDateReminderTemplate(raw string) (*template.Template, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		raw = defaultServiceDateReminderTemplate
+		raw = configservice.DefaultServiceDateReminderTemplate
 	}
 
 	tmpl, err := template.New("service_date_reminder").
@@ -131,9 +128,12 @@ func parseServiceDateReminderTemplate(raw string) (*template.Template, error) {
 		"PendingCount": "3",
 		"LeadTime":     "5h0m",
 	}
-	var rendered strings.Builder
+	var rendered bytes.Buffer
 	if err := tmpl.Execute(&rendered, sample); err != nil {
 		return nil, fmt.Errorf("template references an unsupported value: %w", err)
+	}
+	if strings.TrimSpace(rendered.String()) == "" {
+		return nil, fmt.Errorf("template must render non-empty text")
 	}
 	return tmpl, nil
 }

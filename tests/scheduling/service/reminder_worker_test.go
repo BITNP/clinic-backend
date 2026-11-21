@@ -44,7 +44,16 @@ func TestReminderDeliveryPausesAndCancelsRemovedLead(t *testing.T) {
 		t.Fatal(err)
 	}
 	enabled := false
-	delivery := schedulingservice.ReminderDelivery{DB: testutil.RawDB(t, db), Lease: time.Minute, Settings: func() (bool, []time.Duration) { return enabled, []time.Duration{30 * time.Minute} }}
+	delivery := schedulingservice.ReminderDelivery{
+		DB:    testutil.RawDB(t, db),
+		Lease: time.Minute,
+		Config: func() (schedulingservice.ReminderDeliveryConfig, error) {
+			return schedulingservice.ReminderDeliveryConfig{
+				Enabled:   enabled,
+				LeadTimes: []time.Duration{30 * time.Minute},
+			}, nil
+		},
+	}
 	claimed, err := delivery.Claim(context.Background(), now)
 	if err != nil || claimed == nil {
 		t.Fatalf("claim: %v", err)

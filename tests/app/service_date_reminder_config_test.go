@@ -6,23 +6,30 @@ import (
 	"time"
 
 	"clinic-backend/internal/app"
+	configservice "clinic-backend/internal/config/service"
 )
 
-func validServiceDateReminderEnv() map[string]string {
-	return map[string]string{
-		"MESSAGE_GATEWAY_URL":           "http://message-gateway:8081/",
-		"MESSAGE_GATEWAY_ACCOUNT_TOKEN": "gateway-token",
-		"MESSAGE_GATEWAY_TIMEOUT":       "5s",
+func validReminderSettings() configservice.RuntimeSettings {
+	return configservice.RuntimeSettings{
+		ServiceDateReminderEnabled:   true,
+		ServiceDateReminderLeadTimes: []time.Duration{5 * time.Hour, 3 * time.Hour},
+		ServiceDateReminderTemplate:  configservice.DefaultServiceDateReminderTemplate,
+		MessageGatewayURL:            "http://message-gateway:8081/",
+		MessageGatewayAccount:        "qq",
+		MessageGatewayAccountToken:   "gateway-token",
+		MessageGatewayTimeout:        5 * time.Second,
 	}
 }
 
 func TestLoadServiceDateReminderConfigDefaults(t *testing.T) {
-	cfg, err := app.LoadServiceDateReminderConfig(
-		envMap(nil),
-		false,
-		[]time.Duration{5 * time.Hour, 3 * time.Hour},
-		"qq",
-	)
+	settings := validReminderSettings()
+	settings.ServiceDateReminderEnabled = false
+	settings.ServiceDateReminderTemplate = ""
+	settings.MessageGatewayURL = ""
+	settings.MessageGatewayAccountToken = ""
+	settings.MessageGatewayTimeout = 0
+
+	cfg, err := app.LoadServiceDateReminderConfig(settings)
 	if err != nil {
 		t.Fatalf("LoadServiceDateReminderConfig() error = %v", err)
 	}
@@ -60,19 +67,15 @@ func TestLoadServiceDateReminderConfigDefaults(t *testing.T) {
 }
 
 func TestLoadServiceDateReminderConfigCustom(t *testing.T) {
-	values := validServiceDateReminderEnv()
-	values["SERVICE_DATE_REMINDER_TEMPLATE"] = "{{.Room}} 有 {{.PendingCount}} 个待审核工单，{{.LeadTime}} 后开始"
-	values["MESSAGE_GATEWAY_URL"] = " https://gateway.example/api/ "
-	values["MESSAGE_GATEWAY_ACCOUNT"] = " qq-main "
-	values["MESSAGE_GATEWAY_ACCOUNT_TOKEN"] = " secret "
-	values["MESSAGE_GATEWAY_TIMEOUT"] = "2s"
+	settings := validReminderSettings()
+	settings.ServiceDateReminderLeadTimes = []time.Duration{3 * time.Hour, 7 * time.Hour}
+	settings.ServiceDateReminderTemplate = "{{.Room}} 有 {{.PendingCount}} 个待审核工单，{{.LeadTime}} 后开始"
+	settings.MessageGatewayURL = " https://gateway.example/api/ "
+	settings.MessageGatewayAccount = " qq-main "
+	settings.MessageGatewayAccountToken = " secret "
+	settings.MessageGatewayTimeout = 2 * time.Second
 
-	cfg, err := app.LoadServiceDateReminderConfig(
-		envMap(values),
-		true,
-		[]time.Duration{3 * time.Hour, 7 * time.Hour},
-		" qq-main ",
-	)
+	cfg, err := app.LoadServiceDateReminderConfig(settings)
 	if err != nil {
 		t.Fatalf("LoadServiceDateReminderConfig() error = %v", err)
 	}
@@ -109,13 +112,13 @@ func TestLoadServiceDateReminderConfigCustom(t *testing.T) {
 	}
 }
 
-func TestLoadServiceDateReminderConfigDisabledDoesNotRequireGatewayToken(t *testing.T) {
-	cfg, err := app.LoadServiceDateReminderConfig(
-		envMap(nil),
-		false,
-		[]time.Duration{5 * time.Hour, 3 * time.Hour},
-		"qq",
-	)
+func TestLoadServiceDateReminderConfigDisabledDoesNotRequireGatewayCredentials(t *testing.T) {
+	settings := validReminderSettings()
+	settings.ServiceDateReminderEnabled = false
+	settings.MessageGatewayURL = ""
+	settings.MessageGatewayAccountToken = ""
+
+	cfg, err := app.LoadServiceDateReminderConfig(settings)
 	if err != nil {
 		t.Fatalf("LoadServiceDateReminderConfig() error = %v", err)
 	}
@@ -124,112 +127,62 @@ func TestLoadServiceDateReminderConfigDisabledDoesNotRequireGatewayToken(t *test
 	}
 }
 
-func TestLoadServiceDateReminderConfig_UsesDatabaseSettings(t *testing.T) {
-	values := validServiceDateReminderEnv()
-	values["SERVICE_DATE_REMINDER_ENABLED"] = "false"
-	values["SERVICE_DATE_REMINDER_LEAD_TIMES"] = "1h"
-
-	cfg, err := app.LoadServiceDateReminderConfig(
-		envMap(values),
-		true,
-		[]time.Duration{2 * time.Hour, 30 * time.Minute},
-		"qq",
-	)
-	if err != nil {
-		t.Fatalf("LoadServiceDateReminderConfig() error = %v", err)
-	}
-	if !cfg.Enabled {
-		t.Error("Enabled = false, want database value true")
-	}
-	if len(cfg.LeadTimes) != 2 || cfg.LeadTimes[0] != 2*time.Hour || cfg.LeadTimes[1] != 30*time.Minute {
-		t.Errorf("LeadTimes = %v, want [2h 30m]", cfg.LeadTimes)
-	}
-}
-
-func TestLoadServiceDateReminderConfig_RejectsInvalidLeadTimes(t *testing.T) {
-	_, err := app.LoadServiceDateReminderConfig(
-		envMap(validServiceDateReminderEnv()),
-		true,
-		[]time.Duration{0},
-		"qq",
-	)
-	if err == nil {
-		t.Fatal("expected an error")
-	}
-}
-
-func TestLoadServiceDateReminderConfigInvalidValues(t *testing.T) {
+func TestLoadServiceDateReminderConfigRejectsInvalidValues(t *testing.T) {
 	tests := []struct {
 		name   string
-		key    string
-		value  string
+		update func(*configservice.RuntimeSettings)
 		want   string
-		remove bool
 	}{
 		{
-			name:  "template syntax",
-			key:   "SERVICE_DATE_REMINDER_TEMPLATE",
-			value: "{{.Room",
-			want:  "SERVICE_DATE_REMINDER_TEMPLATE",
+			name: "template syntax",
+			update: func(settings *configservice.RuntimeSettings) {
+				settings.ServiceDateReminderTemplate = "{{.Room"
+			},
+			want: "SERVICE_DATE_REMINDER_TEMPLATE",
 		},
 		{
-			name:  "template unknown field",
-			key:   "SERVICE_DATE_REMINDER_TEMPLATE",
-			value: "{{.Missing}}",
-			want:  "unsupported value",
+			name: "template unknown field",
+			update: func(settings *configservice.RuntimeSettings) {
+				settings.ServiceDateReminderTemplate = "{{.Missing}}"
+			},
+			want: "unsupported value",
 		},
 		{
-			name:   "missing gateway url",
-			key:    "MESSAGE_GATEWAY_URL",
-			remove: true,
-			want:   "MESSAGE_GATEWAY_URL is required",
+			name: "missing gateway url",
+			update: func(settings *configservice.RuntimeSettings) {
+				settings.MessageGatewayURL = ""
+			},
+			want: "MESSAGE_GATEWAY_URL is required",
 		},
 		{
-			name:  "invalid gateway url",
-			key:   "MESSAGE_GATEWAY_URL",
-			value: "message-gateway:8081",
-			want:  "invalid MESSAGE_GATEWAY_URL",
+			name: "invalid gateway url",
+			update: func(settings *configservice.RuntimeSettings) {
+				settings.MessageGatewayURL = "message-gateway:8081"
+			},
+			want: "invalid MESSAGE_GATEWAY_URL",
 		},
 		{
-			name:   "missing gateway token",
-			key:    "MESSAGE_GATEWAY_ACCOUNT_TOKEN",
-			remove: true,
-			want:   "MESSAGE_GATEWAY_ACCOUNT_TOKEN is required",
+			name: "missing gateway token",
+			update: func(settings *configservice.RuntimeSettings) {
+				settings.MessageGatewayAccountToken = ""
+			},
+			want: "MESSAGE_GATEWAY_ACCOUNT_TOKEN is required",
 		},
 		{
-			name:  "invalid gateway account",
-			key:   "MESSAGE_GATEWAY_ACCOUNT",
-			value: "bad/account",
-			want:  "invalid MESSAGE_GATEWAY_ACCOUNT",
-		},
-		{
-			name:  "invalid gateway timeout",
-			key:   "MESSAGE_GATEWAY_TIMEOUT",
-			value: "0s",
-			want:  "invalid MESSAGE_GATEWAY_TIMEOUT",
+			name: "invalid gateway account",
+			update: func(settings *configservice.RuntimeSettings) {
+				settings.MessageGatewayAccount = "bad/account"
+			},
+			want: "invalid MESSAGE_GATEWAY_ACCOUNT",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			values := validServiceDateReminderEnv()
-			account := "qq"
-			if tt.remove {
-				delete(values, tt.key)
-			} else {
-				values[tt.key] = tt.value
-			}
-			if tt.key == "MESSAGE_GATEWAY_ACCOUNT" {
-				account = tt.value
-				delete(values, tt.key)
-			}
+			settings := validReminderSettings()
+			tt.update(&settings)
 
-			_, err := app.LoadServiceDateReminderConfig(
-				envMap(values),
-				true,
-				[]time.Duration{5 * time.Hour, 3 * time.Hour},
-				account,
-			)
+			_, err := app.LoadServiceDateReminderConfig(settings)
 			if err == nil {
 				t.Fatal("expected an error")
 			}
@@ -245,7 +198,10 @@ func TestReminderLeadTimesAllowOneOrMany(t *testing.T) {
 		{time.Hour},
 		{30 * time.Minute, 5 * time.Hour, 3 * time.Hour},
 	} {
-		cfg, err := app.LoadServiceDateReminderConfig(envMap(nil), false, input, "qq")
+		settings := validReminderSettings()
+		settings.ServiceDateReminderEnabled = false
+		settings.ServiceDateReminderLeadTimes = input
+		cfg, err := app.LoadServiceDateReminderConfig(settings)
 		if err != nil {
 			t.Fatalf("%v: %v", input, err)
 		}

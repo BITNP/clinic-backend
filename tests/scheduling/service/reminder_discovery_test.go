@@ -72,34 +72,42 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 		t.Fatal(err)
 	}
 	requests := 0
-	sentMessage := ""
-	account := "dynamic"
+	sentMessages := make([]string, 0, 2)
+	deliveryConfig := schedulingservice.ReminderDeliveryConfig{
+		Enabled:   true,
+		LeadTimes: []time.Duration{time.Hour, 45 * time.Minute, 30 * time.Minute},
+		BaseURL:   "http://gateway",
+		Account:   "dynamic",
+		Token:     "secret",
+		Timeout:   time.Second,
+		Template:  template.Must(template.New("message").Parse("{{.PendingCount}} {{.LeadTime}}")),
+	}
+	expectedPath := "/api/v1/accounts/dynamic/send_private_msg_async"
+	expectedToken := "Bearer secret"
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		requests++
-		if r.URL.Path != "/api/v1/accounts/dynamic/send_private_msg_async" {
-			t.Errorf("gateway path = %q", r.URL.Path)
+		if r.URL.Path != expectedPath {
+			t.Errorf("gateway path = %q, want %q", r.URL.Path, expectedPath)
 		}
-		if r.Header.Get("Authorization") != "Bearer secret" {
-			t.Error("missing gateway token")
+		if r.Header.Get("Authorization") != expectedToken {
+			t.Errorf("gateway token = %q, want %q", r.Header.Get("Authorization"), expectedToken)
 		}
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Error(err)
 		}
-		sentMessage = string(body)
+		sentMessages = append(sentMessages, string(body))
 		return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(`{"status":"async","retcode":1,"data":{"delivery_id":"qq-1"}}`)), Header: make(http.Header)}, nil
 	})}
 	delivery := schedulingservice.ReminderDelivery{
-		DB:            rawDB,
-		Discovery:     &d,
-		Client:        client,
-		BaseURL:       "http://gateway",
-		Account:       "qq",
-		AccountGetter: func() string { return account },
-		Token:         "secret",
-		Template:      template.Must(template.New("message").Parse("{{.PendingCount}} {{.LeadTime}}")),
-		Lease:         time.Minute,
-		Now:           func() time.Time { return now },
+		DB:        rawDB,
+		Discovery: &d,
+		Client:    client,
+		Config: func() (schedulingservice.ReminderDeliveryConfig, error) {
+			return deliveryConfig, nil
+		},
+		Lease: time.Minute,
+		Now:   func() time.Time { return now },
 	}
 	job, err := delivery.Claim(context.Background(), now)
 	if err != nil || job == nil {
@@ -115,8 +123,8 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 	if err = delivery.Deliver(context.Background(), job, now); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(sentMessage, `"message":"1 59m0s"`) {
-		t.Fatalf("message = %s", sentMessage)
+	if len(sentMessages) != 1 || !strings.Contains(sentMessages[0], `"message":"1 59m0s"`) {
+		t.Fatalf("messages = %v", sentMessages)
 	}
 	if requests != 1 {
 		t.Fatalf("requests=%d", requests)
@@ -127,6 +135,29 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 	if next, err := delivery.Claim(context.Background(), now.Add(time.Minute)); err != nil || next != nil {
 		t.Fatalf("second claim=%+v err=%v", next, err)
 	}
+
+	deliveryConfig.LeadTimes = append(deliveryConfig.LeadTimes, 20*time.Minute, 15*time.Minute)
+	deliveryConfig.BaseURL = "http://gateway-updated"
+	deliveryConfig.Account = "updated"
+	deliveryConfig.Token = "new-secret"
+	deliveryConfig.Template = template.Must(template.New("message").Parse("updated {{.PendingCount}}"))
+	expectedPath = "/api/v1/accounts/updated/send_private_msg_async"
+	expectedToken = "Bearer new-secret"
+	dynamicJob := schedulingmodel.ServiceDateReminder{ServiceDateID: date.ID, ServiceStartAt: date.StartTime, LeadTimeSeconds: 1200, StaffID: admin.ID, Status: "pending", NextAttemptAt: now}
+	if err = db.Create(&dynamicJob).Error; err != nil {
+		t.Fatal(err)
+	}
+	dynamicClaim, err := delivery.Claim(context.Background(), now)
+	if err != nil || dynamicClaim == nil {
+		t.Fatalf("dynamic settings claim %v %v", dynamicClaim, err)
+	}
+	if err = delivery.Deliver(context.Background(), dynamicClaim, now); err != nil {
+		t.Fatal(err)
+	}
+	if len(sentMessages) != 2 || !strings.Contains(sentMessages[1], `"message":"updated 1"`) {
+		t.Fatalf("updated messages = %v", sentMessages)
+	}
+
 	rescheduled := schedulingmodel.ServiceDateReminder{ServiceDateID: date.ID, ServiceStartAt: date.StartTime, LeadTimeSeconds: 2700, StaffID: admin.ID, Status: "pending", NextAttemptAt: now}
 	if err = db.Create(&rescheduled).Error; err != nil {
 		t.Fatal(err)
@@ -162,7 +193,7 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 	if err = db.First(&retryJob, retryJob.ID).Error; err != nil || retryJob.Status != "pending" || retryJob.Attempts != 1 || !retryJob.NextAttemptAt.After(now) {
 		t.Fatalf("retry job=%+v err=%v", retryJob, err)
 	}
-	lateJob := schedulingmodel.ServiceDateReminder{ServiceDateID: date.ID, ServiceStartAt: date.StartTime, LeadTimeSeconds: 1200, StaffID: admin.ID, Status: "pending", NextAttemptAt: now}
+	lateJob := schedulingmodel.ServiceDateReminder{ServiceDateID: date.ID, ServiceStartAt: date.StartTime, LeadTimeSeconds: 900, StaffID: admin.ID, Status: "pending", NextAttemptAt: now}
 	if err = db.Create(&lateJob).Error; err != nil {
 		t.Fatal(err)
 	}

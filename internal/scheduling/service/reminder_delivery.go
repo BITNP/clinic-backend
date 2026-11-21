@@ -22,26 +22,23 @@ import (
 
 // ReminderDelivery claims and submits persisted reminder jobs.
 type ReminderDelivery struct {
-	DB                      *database.DB
-	Discovery               *ReminderDiscovery
-	Client                  *http.Client
-	BaseURL, Account, Token string
-	AccountGetter           func() string
-	Template                *template.Template
-	Lease                   time.Duration
-	Now                     func() time.Time
-	Settings                func() (bool, []time.Duration)
+	DB        *database.DB
+	Discovery *ReminderDiscovery
+	Client    *http.Client
+	Config    func() (ReminderDeliveryConfig, error)
+	Lease     time.Duration
+	Now       func() time.Time
 }
 
 func (d *ReminderDelivery) checkSettings(ctx context.Context, job *schedulingmodel.ServiceDateReminder, now time.Time) (bool, error) {
-	if d.Settings == nil {
-		return true, nil
+	settings, err := d.settings()
+	if err != nil {
+		return false, err
 	}
-	enabled, leadTimes := d.Settings()
-	if !enabled {
+	if !settings.Enabled {
 		return false, d.finish(ctx, job, map[string]any{"status": "pending", "next_attempt_at": now})
 	}
-	for _, lead := range leadTimes {
+	for _, lead := range settings.LeadTimes {
 		if int64(lead/time.Second) == job.LeadTimeSeconds {
 			return true, nil
 		}
@@ -50,13 +47,17 @@ func (d *ReminderDelivery) checkSettings(ctx context.Context, job *schedulingmod
 }
 
 func (d *ReminderDelivery) Claim(ctx context.Context, now time.Time) (*schedulingmodel.ServiceDateReminder, error) {
+	settings, err := d.settings()
+	if err != nil {
+		return nil, err
+	}
 	var randomBytes [16]byte
 	if _, err := rand.Read(randomBytes[:]); err != nil {
 		return nil, fmt.Errorf("create claim token: %w", err)
 	}
 	token := hex.EncodeToString(randomBytes[:])
 	var job schedulingmodel.ServiceDateReminder
-	err := database.WithTx(ctx, d.DB.DB, func(tx *sql.Tx) error {
+	err = database.WithTx(ctx, d.DB.DB, func(tx *sql.Tx) error {
 		query := "SELECT " + reminderColumns +
 			" FROM clinic_service_date_reminder" +
 			" WHERE (status = $1 AND next_attempt_at <= $2) OR (status = $3 AND lease_until <= $4)" +
@@ -81,7 +82,14 @@ func (d *ReminderDelivery) Claim(ctx context.Context, now time.Time) (*schedulin
 			job.ID = 0
 			return nil
 		}
-		lease := now.Add(d.Lease)
+		leaseDuration := d.Lease
+		if leaseDuration <= 0 {
+			leaseDuration = settings.Timeout + 45*time.Second
+			if leaseDuration <= 0 {
+				leaseDuration = time.Minute
+			}
+		}
+		lease := now.Add(leaseDuration)
 		if _, err := tx.Exec(
 			`UPDATE clinic_service_date_reminder
 			 SET status = 'sending', lease_until = $1, claim_token = $2, attempts = attempts + 1, updated_at = $3
@@ -154,6 +162,10 @@ func (d *ReminderDelivery) finish(ctx context.Context, job *schedulingmodel.Serv
 // Deliver rechecks eligibility and sends one claimed job.
 func (d *ReminderDelivery) Deliver(ctx context.Context, job *schedulingmodel.ServiceDateReminder, now time.Time) error {
 	cancelJob := func() error { return d.finish(ctx, job, map[string]any{"status": "cancelled"}) }
+	settings, err := d.settings()
+	if err != nil {
+		return d.retry(ctx, job, now, err)
+	}
 	if allowed, err := d.checkSettings(ctx, job, now); !allowed || err != nil {
 		return err
 	}
@@ -211,8 +223,11 @@ func (d *ReminderDelivery) Deliver(ctx context.Context, job *schedulingmodel.Ser
 		return cancelJob()
 	}
 	remaining := date.StartTime.Sub(deliveryTime).Truncate(time.Minute)
+	if settings.Template == nil {
+		return d.retry(ctx, job, now, fmt.Errorf("render reminder: template is not configured"))
+	}
 	var message bytes.Buffer
-	err = d.Template.Execute(&message, map[string]string{"Date": date.Date.Format("2006-01-02"), "StartTime": start.Format("15:04"), "Room": room.Name, "PendingCount": strconv.FormatInt(count, 10), "LeadTime": remaining.String()})
+	err = settings.Template.Execute(&message, map[string]string{"Date": date.Date.Format("2006-01-02"), "StartTime": start.Format("15:04"), "Room": room.Name, "PendingCount": strconv.FormatInt(count, 10), "LeadTime": remaining.String()})
 	if err != nil {
 		return d.retry(ctx, job, now, fmt.Errorf("render reminder: %w", err))
 	}
@@ -220,21 +235,27 @@ func (d *ReminderDelivery) Deliver(ctx context.Context, job *schedulingmodel.Ser
 	if err != nil {
 		return err
 	}
-	account := d.Account
-	if d.AccountGetter != nil {
-		account = d.AccountGetter()
+	endpoint := strings.TrimRight(settings.BaseURL, "/") + "/api/v1/accounts/" + url.PathEscape(settings.Account) + "/send_private_msg_async"
+	requestCtx := ctx
+	cancelRequest := func() {}
+	if settings.Timeout > 0 {
+		requestCtx, cancelRequest = context.WithTimeout(ctx, settings.Timeout)
 	}
-	endpoint := strings.TrimRight(d.BaseURL, "/") + "/api/v1/accounts/" + url.PathEscape(account) + "/send_private_msg_async"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	defer cancelRequest()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return d.retry(ctx, job, now, err)
 	}
-	req.Header.Set("Authorization", "Bearer "+d.Token)
+	req.Header.Set("Authorization", "Bearer "+settings.Token)
 	req.Header.Set("Content-Type", "application/json")
 	if allowed, err := d.checkSettings(ctx, job, now); !allowed || err != nil {
 		return err
 	}
-	resp, err := d.Client.Do(req)
+	client := d.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return d.retry(ctx, job, now, fmt.Errorf("submit reminder: %w", err))
 	}
@@ -271,4 +292,38 @@ func (d *ReminderDelivery) retry(ctx context.Context, job *schedulingmodel.Servi
 		return err
 	}
 	return cause
+}
+
+// DeliveryTimeout returns the configured HTTP timeout for one delivery. The
+// worker uses it to bound the whole record-and-send operation.
+func (d *ReminderDelivery) DeliveryTimeout() time.Duration {
+	settings, err := d.settings()
+	if err == nil && settings.Timeout > 0 {
+		return settings.Timeout
+	}
+	return 5 * time.Second
+}
+
+// ReminderDeliveryConfig is the active database-backed snapshot used for one
+// reminder operation.
+type ReminderDeliveryConfig struct {
+	Enabled   bool
+	LeadTimes []time.Duration
+	BaseURL   string
+	Account   string
+	Token     string
+	Timeout   time.Duration
+	Template  *template.Template
+}
+
+func (d *ReminderDelivery) settings() (ReminderDeliveryConfig, error) {
+	if d.Config == nil {
+		return ReminderDeliveryConfig{Enabled: true}, nil
+	}
+	settings, err := d.Config()
+	if err != nil {
+		return ReminderDeliveryConfig{}, fmt.Errorf("load reminder delivery settings: %w", err)
+	}
+	settings.LeadTimes = append([]time.Duration(nil), settings.LeadTimes...)
+	return settings, nil
 }

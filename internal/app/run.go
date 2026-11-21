@@ -73,12 +73,7 @@ func Run() {
 		log.Fatalf("seed runtime configuration: %v", err)
 	}
 	err = configSvc.InitializeRuntime(func(settings configservice.RuntimeSettings) error {
-		_, err := LoadServiceDateReminderConfig(
-			os.Getenv,
-			settings.ServiceDateReminderEnabled,
-			settings.ServiceDateReminderLeadTimes,
-			settings.MessageGatewayAccount,
-		)
+		_, err := LoadServiceDateReminderConfig(settings)
 		return err
 	})
 	if err != nil {
@@ -91,17 +86,6 @@ func Run() {
 	if err != nil {
 		closeDatabase(db)
 		log.Fatalf("photo configuration: %v", err)
-	}
-
-	reminderCfg, err := LoadServiceDateReminderConfig(
-		os.Getenv,
-		runtimeSettings.ServiceDateReminderEnabled,
-		runtimeSettings.ServiceDateReminderLeadTimes,
-		runtimeSettings.MessageGatewayAccount,
-	)
-	if err != nil {
-		closeDatabase(db)
-		log.Fatalf("reminder configuration: %v", err)
 	}
 
 	photoSvc, err := recordservice.NewPhotoService(rawDB, storageSvc, photoCfg.MaxCount, photoCfg.MaxSizeBytes)
@@ -172,12 +156,7 @@ func Run() {
 		log.Fatalf("initialize tagger runtime: %v", err)
 	}
 	configSvc.SetRuntimeValidator(func(settings configservice.RuntimeSettings) error {
-		if _, err := LoadServiceDateReminderConfig(
-			os.Getenv,
-			settings.ServiceDateReminderEnabled,
-			settings.ServiceDateReminderLeadTimes,
-			settings.MessageGatewayAccount,
-		); err != nil {
+		if _, err := LoadServiceDateReminderConfig(settings); err != nil {
 			return err
 		}
 		return taggerRuntime.Prepare(settings)
@@ -309,17 +288,30 @@ func Run() {
 
 	var reminderDone <-chan struct{}
 	{
-		discovery := &schedulingservice.ReminderDiscovery{DB: rawDB, Location: serviceDateLoc, LeadTimes: reminderCfg.LeadTimes}
+		discovery := &schedulingservice.ReminderDiscovery{
+			DB:        rawDB,
+			Location:  serviceDateLoc,
+			LeadTimes: runtimeSettings.ServiceDateReminderLeadTimes,
+		}
 		delivery := &schedulingservice.ReminderDelivery{
-			DB:            rawDB,
-			Discovery:     discovery,
-			Client:        &http.Client{Timeout: reminderCfg.Gateway.Timeout},
-			BaseURL:       reminderCfg.Gateway.BaseURL,
-			Account:       reminderCfg.Gateway.Account,
-			AccountGetter: func() string { return configSvc.Current().MessageGatewayAccount },
-			Token:         reminderCfg.Gateway.AccountToken,
-			Template:      reminderCfg.MessageTemplate,
-			Lease:         reminderCfg.Gateway.Timeout + 45*time.Second,
+			DB:        rawDB,
+			Discovery: discovery,
+			Client:    &http.Client{},
+			Config: func() (schedulingservice.ReminderDeliveryConfig, error) {
+				cfg, err := LoadServiceDateReminderConfig(configSvc.Current())
+				if err != nil {
+					return schedulingservice.ReminderDeliveryConfig{}, err
+				}
+				return schedulingservice.ReminderDeliveryConfig{
+					Enabled:   cfg.Enabled,
+					LeadTimes: cfg.LeadTimes,
+					BaseURL:   cfg.Gateway.BaseURL,
+					Account:   cfg.Gateway.Account,
+					Token:     cfg.Gateway.AccountToken,
+					Timeout:   cfg.Gateway.Timeout,
+					Template:  cfg.MessageTemplate,
+				}, nil
+			},
 		}
 		leadTimes := func() []time.Duration { return configSvc.Current().ServiceDateReminderLeadTimes }
 		enabled := func() bool { return configSvc.Current().ServiceDateReminderEnabled }
@@ -331,10 +323,6 @@ func Run() {
 				}
 				return run()
 			})
-		}
-		delivery.Settings = func() (bool, []time.Duration) {
-			settings := configSvc.Current()
-			return settings.ServiceDateReminderEnabled, settings.ServiceDateReminderLeadTimes
 		}
 		worker := &schedulingservice.ReminderWorker{Discovery: discovery, Delivery: delivery, Enabled: enabled}
 		done := make(chan struct{})

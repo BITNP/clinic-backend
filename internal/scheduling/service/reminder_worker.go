@@ -69,7 +69,7 @@ func (w *ReminderWorker) deliverLoop(ctx context.Context, wake <-chan struct{}) 
 				break
 			}
 			processed++
-			deliveryCtx, stop := context.WithTimeout(ctx, w.Delivery.Client.Timeout+10*time.Second)
+			deliveryCtx, stop := context.WithTimeout(ctx, w.Delivery.DeliveryTimeout()+10*time.Second)
 			err = w.Delivery.Deliver(deliveryCtx, job, time.Now())
 			stop()
 			if err != nil && ctx.Err() == nil {
