@@ -23,7 +23,11 @@ func RuntimeSettingsValues() map[string]string {
 		"RECORD_PHOTO_MAX_SIZE_BYTES":      "10485760",
 		"SERVICE_DATE_REMINDER_ENABLED":    "false",
 		"SERVICE_DATE_REMINDER_LEAD_TIMES": "5h,3h",
+		"SERVICE_DATE_REMINDER_TEMPLATE":   "[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待审核工单，请及时处理。",
+		"MESSAGE_GATEWAY_URL":              "http://message-gateway:8081",
 		"MESSAGE_GATEWAY_ACCOUNT":          "qq",
+		"MESSAGE_GATEWAY_ACCOUNT_TOKEN":    "",
+		"MESSAGE_GATEWAY_TIMEOUT":          "5s",
 	}
 }
 

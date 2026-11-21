@@ -204,6 +204,18 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	if settings.MessageGatewayAccount != "qq" {
 		t.Errorf("MessageGatewayAccount = %q, want qq", settings.MessageGatewayAccount)
 	}
+	if settings.MessageGatewayURL != "http://message-gateway:8081" {
+		t.Errorf("MessageGatewayURL = %q", settings.MessageGatewayURL)
+	}
+	if settings.MessageGatewayAccountToken != "" {
+		t.Errorf("MessageGatewayAccountToken = %q, want empty", settings.MessageGatewayAccountToken)
+	}
+	if settings.MessageGatewayTimeout != 5*time.Second {
+		t.Errorf("MessageGatewayTimeout = %v, want 5s", settings.MessageGatewayTimeout)
+	}
+	if settings.ServiceDateReminderTemplate != configservice.DefaultServiceDateReminderTemplate {
+		t.Errorf("ServiceDateReminderTemplate = %q", settings.ServiceDateReminderTemplate)
+	}
 	if settings.TaggerLLMAPIKey != "" {
 		t.Errorf("TaggerLLMAPIKey = %q, want empty", settings.TaggerLLMAPIKey)
 	}
@@ -231,8 +243,8 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	if err := db.Model(&configmodel.ClinicConfigItem{}).Count(&itemCount).Error; err != nil {
 		t.Fatalf("count items: %v", err)
 	}
-	if groupCount != 3 || itemCount != 14 {
-		t.Errorf("seeded counts = %d groups, %d items; want 3 and 14", groupCount, itemCount)
+	if groupCount != 3 || itemCount != 18 {
+		t.Errorf("seeded counts = %d groups, %d items; want 3 and 18", groupCount, itemCount)
 	}
 
 	var taggerKey configmodel.ClinicConfigItem
@@ -241,6 +253,13 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	}
 	if taggerKey.Value != "" || !taggerKey.WriteOnly || taggerKey.IsRequired {
 		t.Errorf("tagger API key item = %+v", taggerKey)
+	}
+	var gatewayToken configmodel.ClinicConfigItem
+	if err := db.Where("name = ?", "MESSAGE_GATEWAY_ACCOUNT_TOKEN").First(&gatewayToken).Error; err != nil {
+		t.Fatalf("get gateway token item: %v", err)
+	}
+	if gatewayToken.Value != "" || !gatewayToken.WriteOnly || gatewayToken.IsRequired {
+		t.Errorf("gateway token item = %+v", gatewayToken)
 	}
 
 	var maintainerCount int64
@@ -264,7 +283,11 @@ func TestConfigService_EnsureRuntimeSettingsUsesExternalFileAndIgnoresEnvironmen
 	t.Setenv("RECORD_PHOTO_MAX_SIZE_BYTES", "2048")
 	t.Setenv("SERVICE_DATE_REMINDER_ENABLED", "true")
 	t.Setenv("SERVICE_DATE_REMINDER_LEAD_TIMES", "3h,7h")
+	t.Setenv("SERVICE_DATE_REMINDER_TEMPLATE", "ignored template")
+	t.Setenv("MESSAGE_GATEWAY_URL", "https://ignored.example")
 	t.Setenv("MESSAGE_GATEWAY_ACCOUNT", "custom")
+	t.Setenv("MESSAGE_GATEWAY_ACCOUNT_TOKEN", "ignored-token")
+	t.Setenv("MESSAGE_GATEWAY_TIMEOUT", "9s")
 	t.Setenv("TAGGER_LLM_API_KEY", "ignored-environment-key")
 	t.Setenv("TAGGER_LLM_BASE_URL", "https://ignored.example/v1")
 	t.Setenv("TAGGER_LLM_MODEL", "ignored-model")
@@ -287,6 +310,10 @@ func TestConfigService_EnsureRuntimeSettingsUsesExternalFileAndIgnoresEnvironmen
 		settings.RecordPhotoMaxSizeBytes != 10485760 ||
 		settings.ServiceDateReminderEnabled ||
 		settings.MessageGatewayAccount != "qq" ||
+		settings.MessageGatewayURL != "http://message-gateway:8081" ||
+		settings.MessageGatewayAccountToken != "" ||
+		settings.MessageGatewayTimeout != 5*time.Second ||
+		settings.ServiceDateReminderTemplate != configservice.DefaultServiceDateReminderTemplate ||
 		settings.TaggerLLMAPIKey != "" ||
 		settings.TaggerAgentPoolSize != 4 ||
 		settings.TaggerContextTokens != 32000 ||
@@ -343,13 +370,17 @@ func TestConfigService_SeedsTaggerAPIKeyFromExternalFile(t *testing.T) {
 func TestConfigService_SeedsMissingItemsFromLegacyValuesOnce(t *testing.T) {
 	svc, db := setupConfigServiceDB(t)
 	initial := map[string]string{
-		"TAGGER_LLM_BASE_URL":         "https://legacy.example/v1",
-		"TAGGER_LLM_MODEL":            "legacy-model",
-		"TAGGER_AGENT_POOL_SIZE":      "6",
-		"TAGGER_CONTEXT_TOKENS":       "24000",
-		"TAGGER_TIMEOUT":              "12s",
-		"RECORD_PHOTO_MAX_SIZE_BYTES": "2048",
-		"MESSAGE_GATEWAY_ACCOUNT":     "legacy-account",
+		"TAGGER_LLM_BASE_URL":            "https://legacy.example/v1",
+		"TAGGER_LLM_MODEL":               "legacy-model",
+		"TAGGER_AGENT_POOL_SIZE":         "6",
+		"TAGGER_CONTEXT_TOKENS":          "24000",
+		"TAGGER_TIMEOUT":                 "12s",
+		"RECORD_PHOTO_MAX_SIZE_BYTES":    "2048",
+		"SERVICE_DATE_REMINDER_TEMPLATE": "旧模板 {{.Room}}",
+		"MESSAGE_GATEWAY_URL":            "https://legacy.example",
+		"MESSAGE_GATEWAY_ACCOUNT":        "legacy-account",
+		"MESSAGE_GATEWAY_ACCOUNT_TOKEN":  "legacy-token",
+		"MESSAGE_GATEWAY_TIMEOUT":        "8s",
 	}
 	if err := svc.EnsureRuntimeSettingsWithInitialValues(initial); err != nil {
 		t.Fatalf("ensure runtime settings: %v", err)
@@ -362,11 +393,19 @@ func TestConfigService_SeedsMissingItemsFromLegacyValuesOnce(t *testing.T) {
 	if item.Value != "6" {
 		t.Errorf("pool size = %q, want legacy value 6", item.Value)
 	}
+	item = configmodel.ClinicConfigItem{}
+	if err := db.Where("name = ?", "MESSAGE_GATEWAY_ACCOUNT_TOKEN").First(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	if item.Value != "legacy-token" {
+		t.Errorf("gateway token = %q, want legacy-token", item.Value)
+	}
 
 	replacement := map[string]string{"TAGGER_AGENT_POOL_SIZE": "12"}
 	if err := svc.EnsureRuntimeSettingsWithInitialValues(replacement); err != nil {
 		t.Fatal(err)
 	}
+	item = configmodel.ClinicConfigItem{}
 	if err := db.Where("name = ?", "TAGGER_AGENT_POOL_SIZE").First(&item).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -461,6 +500,30 @@ func TestConfigService_RequiresCompleteExternalRuntimeSettingsFile(t *testing.T)
 				return testutil.WriteRuntimeSettingsFile(t, values)
 			},
 		},
+		{
+			name: "invalid gateway URL",
+			path: func(t *testing.T) string {
+				values := testutil.RuntimeSettingsValues()
+				values["MESSAGE_GATEWAY_URL"] = "message-gateway:8081"
+				return testutil.WriteRuntimeSettingsFile(t, values)
+			},
+		},
+		{
+			name: "invalid gateway timeout",
+			path: func(t *testing.T) string {
+				values := testutil.RuntimeSettingsValues()
+				values["MESSAGE_GATEWAY_TIMEOUT"] = "0s"
+				return testutil.WriteRuntimeSettingsFile(t, values)
+			},
+		},
+		{
+			name: "invalid reminder template",
+			path: func(t *testing.T) string {
+				values := testutil.RuntimeSettingsValues()
+				values["SERVICE_DATE_REMINDER_TEMPLATE"] = "{{.Missing}}"
+				return testutil.WriteRuntimeSettingsFile(t, values)
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -470,6 +533,37 @@ func TestConfigService_RequiresCompleteExternalRuntimeSettingsFile(t *testing.T)
 				t.Fatal("expected external runtime settings validation error")
 			}
 		})
+	}
+}
+
+func TestConfigService_ExternalRuntimeSettingsUseMessageDefaults(t *testing.T) {
+	_, db := setupConfigServiceDB(t)
+	values := testutil.RuntimeSettingsValues()
+	for _, name := range []string{
+		"SERVICE_DATE_REMINDER_TEMPLATE",
+		"MESSAGE_GATEWAY_URL",
+		"MESSAGE_GATEWAY_ACCOUNT",
+		"MESSAGE_GATEWAY_ACCOUNT_TOKEN",
+		"MESSAGE_GATEWAY_TIMEOUT",
+	} {
+		delete(values, name)
+	}
+	runtimeFile := testutil.WriteRuntimeSettingsFile(t, values)
+	svc := configservice.NewConfigServiceWithRuntimeSettingsFile(testutil.RawDB(t, db), runtimeFile)
+	if err := svc.EnsureRuntimeSettings(); err != nil {
+		t.Fatalf("ensure runtime settings: %v", err)
+	}
+
+	settings, err := svc.LoadRuntimeSettings()
+	if err != nil {
+		t.Fatalf("load runtime settings: %v", err)
+	}
+	if settings.ServiceDateReminderTemplate != configservice.DefaultServiceDateReminderTemplate ||
+		settings.MessageGatewayURL != "" ||
+		settings.MessageGatewayAccount != "qq" ||
+		settings.MessageGatewayAccountToken != "" ||
+		settings.MessageGatewayTimeout != 5*time.Second {
+		t.Errorf("message defaults = %+v", settings)
 	}
 }
 

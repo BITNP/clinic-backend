@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"text/template"
 	"time"
 
 	configmodel "clinic-backend/internal/config/model"
@@ -27,7 +28,11 @@ const (
 	runtimeSettingRecordPhotoMaxCount      = "RECORD_PHOTO_MAX_COUNT"
 	runtimeSettingServiceReminderEnabled   = "SERVICE_DATE_REMINDER_ENABLED"
 	runtimeSettingServiceReminderLeadTimes = "SERVICE_DATE_REMINDER_LEAD_TIMES"
+	runtimeSettingServiceReminderTemplate  = "SERVICE_DATE_REMINDER_TEMPLATE"
+	runtimeSettingMessageGatewayURL        = "MESSAGE_GATEWAY_URL"
 	runtimeSettingMessageGatewayAccount    = "MESSAGE_GATEWAY_ACCOUNT"
+	runtimeSettingMessageGatewayToken      = "MESSAGE_GATEWAY_ACCOUNT_TOKEN"
+	runtimeSettingMessageGatewayTimeout    = "MESSAGE_GATEWAY_TIMEOUT"
 	runtimeSettingTaggerLLMAPIKey          = "TAGGER_LLM_API_KEY"
 	runtimeSettingTaggerLLMBaseURL         = "TAGGER_LLM_BASE_URL"
 	runtimeSettingTaggerLLMModel           = "TAGGER_LLM_MODEL"
@@ -36,6 +41,10 @@ const (
 	runtimeSettingTaggerTimeout            = "TAGGER_TIMEOUT"
 	runtimeSettingRecordPhotoMaxSizeBytes  = "RECORD_PHOTO_MAX_SIZE_BYTES"
 )
+
+// DefaultServiceDateReminderTemplate is used for new installations and for
+// legacy runtime settings files that predate the configurable template.
+const DefaultServiceDateReminderTemplate = `[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待审核工单，请及时处理。`
 
 //go:embed data/template.json
 var runtimeSettingsTemplateJSON []byte
@@ -54,6 +63,7 @@ type runtimeSettingDefinition struct {
 	SortOrder   int                         `json:"sort_order"`
 	IsRequired  bool                        `json:"is_required"`
 	WriteOnly   bool                        `json:"writeonly"`
+	Default     *string                     `json:"default,omitempty"`
 }
 
 type runtimeSettingsTemplate struct {
@@ -68,7 +78,11 @@ var runtimeSettingExpectedTypes = map[string]configmodel.ConfigValueType{
 	runtimeSettingRecordPhotoMaxCount:      configmodel.ConfigValueTypeInt,
 	runtimeSettingServiceReminderEnabled:   configmodel.ConfigValueTypeBoolean,
 	runtimeSettingServiceReminderLeadTimes: configmodel.ConfigValueTypeString,
+	runtimeSettingServiceReminderTemplate:  configmodel.ConfigValueTypeString,
+	runtimeSettingMessageGatewayURL:        configmodel.ConfigValueTypeString,
 	runtimeSettingMessageGatewayAccount:    configmodel.ConfigValueTypeString,
+	runtimeSettingMessageGatewayToken:      configmodel.ConfigValueTypeString,
+	runtimeSettingMessageGatewayTimeout:    configmodel.ConfigValueTypeString,
 	runtimeSettingTaggerLLMAPIKey:          configmodel.ConfigValueTypeString,
 	runtimeSettingTaggerLLMBaseURL:         configmodel.ConfigValueTypeString,
 	runtimeSettingTaggerLLMModel:           configmodel.ConfigValueTypeString,
@@ -168,6 +182,11 @@ func validateRuntimeTemplate(template runtimeSettingsTemplate) error {
 		if _, exists := groupNames[item.GroupName]; !exists {
 			return fmt.Errorf("runtime settings template item %s references unknown group %s", item.Name, item.GroupName)
 		}
+		if item.Default != nil {
+			if _, err := validateRuntimeSettingValue(item.Name, *item.Default); err != nil {
+				return fmt.Errorf("runtime settings template item %s has invalid default: %w", item.Name, err)
+			}
+		}
 	}
 
 	for name := range runtimeSettingExpectedTypes {
@@ -187,7 +206,11 @@ type RuntimeSettings struct {
 	RecordPhotoMaxSizeBytes      int64
 	ServiceDateReminderEnabled   bool
 	ServiceDateReminderLeadTimes []time.Duration
+	ServiceDateReminderTemplate  string
+	MessageGatewayURL            string
 	MessageGatewayAccount        string
+	MessageGatewayAccountToken   string
+	MessageGatewayTimeout        time.Duration
 	TaggerLLMAPIKey              string
 	TaggerLLMBaseURL             string
 	TaggerLLMModel               string
@@ -307,7 +330,10 @@ func loadRuntimeSettingsValues(path string, template runtimeSettingsTemplate) (m
 		expected[item.Name] = struct{}{}
 		raw, ok := values[item.Name]
 		if !ok {
-			return nil, fmt.Errorf("runtime settings file %s is missing item %s", path, item.Name)
+			if item.Default == nil {
+				return nil, fmt.Errorf("runtime settings file %s is missing item %s", path, item.Name)
+			}
+			raw = *item.Default
 		}
 		normalized, err := validateRuntimeSettingValue(item.Name, raw)
 		if err != nil {
@@ -383,8 +409,16 @@ func loadRuntimeSettings(q interface{ QueryRow(string, ...any) *sql.Row }) (Runt
 			settings.ServiceDateReminderEnabled = normalized == "true"
 		case runtimeSettingServiceReminderLeadTimes:
 			settings.ServiceDateReminderLeadTimes, err = parseRuntimeLeadTimes(normalized)
+		case runtimeSettingServiceReminderTemplate:
+			settings.ServiceDateReminderTemplate = normalized
+		case runtimeSettingMessageGatewayURL:
+			settings.MessageGatewayURL = normalized
 		case runtimeSettingMessageGatewayAccount:
 			settings.MessageGatewayAccount = normalized
+		case runtimeSettingMessageGatewayToken:
+			settings.MessageGatewayAccountToken = normalized
+		case runtimeSettingMessageGatewayTimeout:
+			settings.MessageGatewayTimeout, err = time.ParseDuration(normalized)
 		case runtimeSettingTaggerLLMAPIKey:
 			settings.TaggerLLMAPIKey = normalized
 		case runtimeSettingTaggerLLMBaseURL:
@@ -510,6 +544,34 @@ func validateRuntimeSettingValue(name, raw string) (string, error) {
 			parts[i] = formatRuntimeDuration(leadTime)
 		}
 		return strings.Join(parts, ","), nil
+	case runtimeSettingServiceReminderTemplate:
+		if err := validateServiceDateReminderTemplate(value); err != nil {
+			return "", err
+		}
+		return value, nil
+	case runtimeSettingMessageGatewayURL:
+		if value == "" {
+			return "", nil
+		}
+		parsed, err := url.Parse(value)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return "", fmt.Errorf("%w: %s must be an HTTP(S) URL", ErrConfigValueInvalid, name)
+		}
+		if parsed.RawQuery != "" || parsed.Fragment != "" {
+			return "", fmt.Errorf("%w: %s must not contain a query or fragment", ErrConfigValueInvalid, name)
+		}
+		return value, nil
+	case runtimeSettingMessageGatewayToken:
+		return value, nil
+	case runtimeSettingMessageGatewayTimeout:
+		duration, err := parseRuntimeDuration(name, value)
+		if err != nil {
+			return "", err
+		}
+		if duration <= 0 {
+			return "", fmt.Errorf("%w: %s must be positive", ErrConfigValueInvalid, name)
+		}
+		return formatRuntimeDuration(duration), nil
 	case runtimeSettingTaggerLLMAPIKey:
 		return value, nil
 	case runtimeSettingTaggerLLMBaseURL:
@@ -559,7 +621,11 @@ func validateRuntimeSettingValue(name, raw string) (string, error) {
 
 func runtimeSettingIsOptional(name string) bool {
 	switch name {
-	case runtimeSettingTaggerLLMAPIKey, runtimeSettingTaggerLLMBaseURL, runtimeSettingTaggerLLMModel:
+	case runtimeSettingMessageGatewayURL,
+		runtimeSettingMessageGatewayToken,
+		runtimeSettingTaggerLLMAPIKey,
+		runtimeSettingTaggerLLMBaseURL,
+		runtimeSettingTaggerLLMModel:
 		return true
 	default:
 		return false
@@ -567,7 +633,7 @@ func runtimeSettingIsOptional(name string) bool {
 }
 
 func runtimeSettingIsWriteOnly(name string) bool {
-	return name == runtimeSettingTaggerLLMAPIKey
+	return name == runtimeSettingMessageGatewayToken || name == runtimeSettingTaggerLLMAPIKey
 }
 
 func parseRuntimeDuration(name, raw string) (time.Duration, error) {
@@ -658,4 +724,32 @@ func parseRuntimeLeadTimes(raw string) ([]time.Duration, error) {
 		return leadTimes[i] > leadTimes[j]
 	})
 	return leadTimes, nil
+}
+
+func validateServiceDateReminderTemplate(raw string) error {
+	tmpl, err := template.New("service_date_reminder").
+		Option("missingkey=error").
+		Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%w: %s must be a valid Go template", ErrConfigValueInvalid, runtimeSettingServiceReminderTemplate)
+	}
+
+	var rendered strings.Builder
+	if err := tmpl.Execute(&rendered, map[string]string{
+		"Date":         "2026-11-12",
+		"StartTime":    "18:30",
+		"Room":         "北区医务室",
+		"PendingCount": "3",
+		"LeadTime":     "5h0m",
+	}); err != nil {
+		return fmt.Errorf(
+			"%w: %s references an unsupported value",
+			ErrConfigValueInvalid,
+			runtimeSettingServiceReminderTemplate,
+		)
+	}
+	if strings.TrimSpace(rendered.String()) == "" {
+		return fmt.Errorf("%w: %s must render non-empty text", ErrConfigValueInvalid, runtimeSettingServiceReminderTemplate)
+	}
+	return nil
 }

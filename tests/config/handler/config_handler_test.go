@@ -343,6 +343,52 @@ func TestConfigHandler_TaggerAPIKeyStaysWriteOnly(t *testing.T) {
 	}
 }
 
+func TestConfigHandler_MessageGatewayTokenStaysWriteOnly(t *testing.T) {
+	r, svc, db := setupConfigHandlerRouter(t, authhandler.RoleAdmin)
+	if err := svc.EnsureRuntimeSettings(); err != nil {
+		t.Fatalf("seed runtime settings: %v", err)
+	}
+
+	var item configmodel.ClinicConfigItem
+	if err := db.Where("name = ?", "MESSAGE_GATEWAY_ACCOUNT_TOKEN").First(&item).Error; err != nil {
+		t.Fatalf("get gateway token item: %v", err)
+	}
+	value := "legacy-gateway-token"
+	if _, err := svc.UpdateItem(item.ID, configservice.UpdateItemInput{Value: &value}); err != nil {
+		t.Fatalf("seed gateway token: %v", err)
+	}
+	path := "/api/admin/config/items/" + testutil.Itoa(item.ID)
+
+	w := testutil.DoRequest(t, r, http.MethodGet, "/api/admin/config", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list catalog: %d %s", w.Code, w.Body)
+	}
+	if strings.Contains(w.Body.String(), "legacy-gateway-token") {
+		t.Fatalf("catalog exposed gateway token: %s", w.Body)
+	}
+
+	w = testutil.DoRequest(t, r, http.MethodPut, path, map[string]any{"value": "replacement-gateway-token"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("update gateway token: %d %s", w.Code, w.Body)
+	}
+	if strings.Contains(w.Body.String(), "replacement-gateway-token") || strings.Contains(w.Body.String(), `"value":`) {
+		t.Fatalf("update response exposed gateway token: %s", w.Body)
+	}
+	stored, err := svc.GetItem(item.ID)
+	if err != nil || stored.Value != "replacement-gateway-token" {
+		t.Fatalf("stored gateway token = %q, error = %v", stored.Value, err)
+	}
+
+	w = testutil.DoRequest(t, r, http.MethodPut, path, map[string]any{"writeonly": false})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("declassify gateway token: %d %s", w.Code, w.Body)
+	}
+	w = testutil.DoRequest(t, r, http.MethodDelete, path, nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("delete built-in gateway token: %d %s", w.Code, w.Body)
+	}
+}
+
 func TestConfigHandler_AdminItemRoleScope(t *testing.T) {
 	r, svc, _ := setupConfigHandlerRouter(t, authhandler.RoleAdmin)
 	group, err := svc.CreateGroup(configservice.CreateGroupInput{
