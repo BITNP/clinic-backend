@@ -3,12 +3,14 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
 	"time"
 
 	"clinic-backend/internal/database"
+	"clinic-backend/internal/journal"
 	recordmodel "clinic-backend/internal/record/model"
 	schedulingmodel "clinic-backend/internal/scheduling/model"
 	staffmodel "clinic-backend/internal/staff/model"
@@ -21,6 +23,7 @@ type ReminderDiscovery struct {
 	LeadTimes       []time.Duration
 	LeadTimesGetter func() []time.Duration
 	Guard           func(func() error) error
+	Journal         *journal.Service
 }
 
 func (d *ReminderDiscovery) Discover(ctx context.Context, now time.Time) error {
@@ -34,6 +37,14 @@ func (d *ReminderDiscovery) discover(ctx context.Context, now time.Time) error {
 	leadTimes := d.LeadTimes
 	if d.LeadTimesGetter != nil {
 		leadTimes = d.LeadTimesGetter()
+	}
+	operationID := ""
+	if d.Journal != nil {
+		var err error
+		operationID, err = journal.NewOperationID()
+		if err != nil {
+			return fmt.Errorf("prepare reminder discovery journal: %w", err)
+		}
 	}
 	for _, lead := range leadTimes {
 		from, until := ReminderStartWindow(now.UTC(), lead)
@@ -74,15 +85,50 @@ func (d *ReminderDiscovery) discover(ctx context.Context, now time.Time) error {
 					log.Printf("reminder: staff %d has no QQ number", admin.ID)
 					continue
 				}
-				if _, err := d.DB.ExecContext(
-					ctx,
-					`INSERT INTO clinic_service_date_reminder
-					 (service_date_id, service_start_at, lead_time_seconds, staff_id, status, attempts, next_attempt_at, claim_token, last_error, created_at, updated_at)
-					 VALUES ($1, $2, $3, $4, 'pending', 0, $5, '', '', $6, $6)
-					 ON CONFLICT DO NOTHING`,
-					date.ID, date.StartTime, int64(lead/time.Second), admin.ID, now, now,
-				); err != nil {
-					return fmt.Errorf("create reminder job: %w", err)
+				if err := database.WithTx(ctx, d.DB.DB, func(tx *sql.Tx) error {
+					var reminderID uint
+					err := tx.QueryRowContext(
+						ctx,
+						`INSERT INTO clinic_service_date_reminder
+						 (service_date_id, service_start_at, lead_time_seconds, staff_id, status, attempts, next_attempt_at, claim_token, last_error, created_at, updated_at)
+						 VALUES ($1, $2, $3, $4, 'pending', 0, $5, '', '', $6, $6)
+						 ON CONFLICT DO NOTHING
+						 RETURNING id`,
+						date.ID, date.StartTime, int64(lead/time.Second), admin.ID, now, now,
+					).Scan(&reminderID)
+					if errors.Is(err, sql.ErrNoRows) {
+						return nil
+					}
+					if err != nil {
+						return fmt.Errorf("create reminder job: %w", err)
+					}
+					if d.Journal == nil {
+						return nil
+					}
+					if _, err := journal.InsertTx(ctx, tx, journal.EventInput{
+						OccurredAt:  now,
+						ActorType:   journal.ActorSystem,
+						ActorID:     "reminder_worker",
+						Action:      "notification.requested",
+						EntityType:  "service_date",
+						EntityID:    fmt.Sprint(date.ID),
+						OperationID: operationID,
+						Details: map[string]any{
+							"version":           1,
+							"reminder_id":       reminderID,
+							"kind":              "service_date_pending_records",
+							"channel":           "qq",
+							"recipient":         map[string]any{"type": "staff", "id": admin.ID},
+							"service_start_at":  date.StartTime.UTC().Format(time.RFC3339Nano),
+							"lead_time_seconds": int64(lead / time.Second),
+							"next_attempt_at":   now.UTC().Format(time.RFC3339Nano),
+						},
+					}); err != nil {
+						return err
+					}
+					return nil
+				}); err != nil {
+					return err
 				}
 			}
 		}

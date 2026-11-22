@@ -35,6 +35,12 @@ func (w *ReminderWorker) Run(ctx context.Context) {
 		if err != nil && ctx.Err() == nil {
 			log.Printf("reminder discovery: %v", err)
 		}
+		trackCtx, cancelTrack := context.WithTimeout(ctx, 15*time.Second)
+		err = w.Delivery.Track(trackCtx, time.Now())
+		cancelTrack()
+		if err != nil && ctx.Err() == nil {
+			log.Printf("reminder delivery tracking: %v", err)
+		}
 		select {
 		case wake <- struct{}{}:
 		default:

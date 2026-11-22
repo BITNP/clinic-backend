@@ -24,7 +24,7 @@ const workScheduleStaffColumns = "id, weekday_id, staff_id, schedule_id"
 const staffColumns = "id, account_id, realname, email, qq_number, role, version"
 const roomColumns = "id, name, address, enabled, campus_id, type"
 const roomWithCampusColumns = "r.id, r.name, r.address, r.enabled, r.campus_id, r.type, c.id, c.name, c.selection_policy"
-const reminderColumns = "id, service_date_id, service_start_at, lead_time_seconds, staff_id, status, attempts, next_attempt_at, lease_until, claim_token, sent_at, last_error, created_at, updated_at"
+const reminderColumns = "id, service_date_id, service_start_at, lead_time_seconds, staff_id, status, attempts, next_attempt_at, lease_until, claim_token, gateway_delivery_id, gateway_account, accepted_at, sent_at, last_tracked_at, last_error, created_at, updated_at"
 
 func scanServiceDate(row rowScanner) (schedulingmodel.ClinicServiceDate, error) {
 	var date schedulingmodel.ClinicServiceDate
@@ -99,7 +99,7 @@ func scanRoom(row rowScanner) (roommodel.ClinicRoom, error) {
 
 func scanReminder(row rowScanner) (schedulingmodel.ServiceDateReminder, error) {
 	var reminder schedulingmodel.ServiceDateReminder
-	var leaseUntil, sentAt, createdAt, updatedAt sql.NullTime
+	var leaseUntil, acceptedAt, sentAt, lastTrackedAt, createdAt, updatedAt sql.NullTime
 	err := row.Scan(
 		&reminder.ID,
 		&reminder.ServiceDateID,
@@ -111,7 +111,11 @@ func scanReminder(row rowScanner) (schedulingmodel.ServiceDateReminder, error) {
 		&reminder.NextAttemptAt,
 		&leaseUntil,
 		&reminder.ClaimToken,
+		&reminder.GatewayDeliveryID,
+		&reminder.GatewayAccount,
+		&acceptedAt,
 		&sentAt,
+		&lastTrackedAt,
 		&reminder.LastError,
 		&createdAt,
 		&updatedAt,
@@ -119,8 +123,14 @@ func scanReminder(row rowScanner) (schedulingmodel.ServiceDateReminder, error) {
 	if leaseUntil.Valid {
 		reminder.LeaseUntil = &leaseUntil.Time
 	}
+	if acceptedAt.Valid {
+		reminder.AcceptedAt = &acceptedAt.Time
+	}
 	if sentAt.Valid {
 		reminder.SentAt = &sentAt.Time
+	}
+	if lastTrackedAt.Valid {
+		reminder.LastTrackedAt = &lastTrackedAt.Time
 	}
 	if createdAt.Valid {
 		reminder.CreatedAt = createdAt.Time

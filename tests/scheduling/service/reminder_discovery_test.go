@@ -1,6 +1,8 @@
 package service_test
 
 import (
+	"clinic-backend/internal/journal"
+	journalmodel "clinic-backend/internal/journal/model"
 	recordmodel "clinic-backend/internal/record/model"
 	roommodel "clinic-backend/internal/room/model"
 	schedulingmodel "clinic-backend/internal/scheduling/model"
@@ -25,7 +27,7 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = db.AutoMigrate(&schedulingmodel.ClinicServiceDate{}, &schedulingmodel.ServiceDateReminder{}, &schedulingmodel.ClinicWorkSchedule{}, &schedulingmodel.ClinicWorkScheduleWeekday{}, &schedulingmodel.ClinicWorkScheduleStaff{}, &staffmodel.ClinicStaff{}, &recordmodel.ClinicRecord{}); err != nil {
+	if err = db.AutoMigrate(&schedulingmodel.ClinicServiceDate{}, &schedulingmodel.ServiceDateReminder{}, &schedulingmodel.ClinicWorkSchedule{}, &schedulingmodel.ClinicWorkScheduleWeekday{}, &schedulingmodel.ClinicWorkScheduleStaff{}, &staffmodel.ClinicStaff{}, &recordmodel.ClinicRecord{}, &journalmodel.Event{}); err != nil {
 		t.Fatal(err)
 	}
 	loc := time.FixedZone("UTC+8", 8*3600)
@@ -51,7 +53,8 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 		}
 	}
 	rawDB := testutil.RawDB(t, db)
-	d := schedulingservice.ReminderDiscovery{DB: rawDB, Location: loc, LeadTimes: []time.Duration{time.Hour}}
+	journalSvc := journal.NewService(rawDB)
+	d := schedulingservice.ReminderDiscovery{DB: rawDB, Location: loc, LeadTimes: []time.Duration{time.Hour}, Journal: journalSvc}
 	now := start.Add(-time.Hour).Add(time.Second)
 	for range 2 {
 		if err = d.Discover(context.Background(), now); err != nil {
@@ -71,7 +74,8 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 	if err = db.Create(&roommodel.ClinicRoom{ID: room, Name: "clinic", Address: "A"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	requests := 0
+	deliveryRequests := 0
+	trackRequests := 0
 	sentMessages := make([]string, 0, 2)
 	deliveryConfig := schedulingservice.ReminderDeliveryConfig{
 		Enabled:   true,
@@ -83,9 +87,21 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 		Template:  template.Must(template.New("message").Parse("{{.PendingCount}} {{.LeadTime}}")),
 	}
 	expectedPath := "/api/v1/accounts/dynamic/send_private_msg_async"
+	expectedStatusPath := "/api/v1/accounts/dynamic/message-status/qq-1"
 	expectedToken := "Bearer secret"
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		requests++
+		if r.Method == http.MethodGet {
+			trackRequests++
+			if r.URL.Path != expectedStatusPath {
+				t.Errorf("gateway status path = %q, want %q", r.URL.Path, expectedStatusPath)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"id":"qq-1","status":"sent"}`)),
+				Header:     make(http.Header),
+			}, nil
+		}
+		deliveryRequests++
 		if r.URL.Path != expectedPath {
 			t.Errorf("gateway path = %q, want %q", r.URL.Path, expectedPath)
 		}
@@ -106,8 +122,9 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 		Config: func() (schedulingservice.ReminderDeliveryConfig, error) {
 			return deliveryConfig, nil
 		},
-		Lease: time.Minute,
-		Now:   func() time.Time { return now },
+		Lease:   time.Minute,
+		Now:     func() time.Time { return now },
+		Journal: journalSvc,
 	}
 	job, err := delivery.Claim(context.Background(), now)
 	if err != nil || job == nil {
@@ -126,11 +143,34 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 	if len(sentMessages) != 1 || !strings.Contains(sentMessages[0], `"message":"1 59m0s"`) {
 		t.Fatalf("messages = %v", sentMessages)
 	}
-	if requests != 1 {
-		t.Fatalf("requests=%d", requests)
+	if deliveryRequests != 1 {
+		t.Fatalf("requests=%d", deliveryRequests)
+	}
+	if err = db.First(&jobs[0], job.ID).Error; err != nil || jobs[0].Status != "accepted" {
+		t.Fatalf("job=%+v err=%v", jobs[0], err)
+	}
+	var actions []string
+	if err := db.Model(&journalmodel.Event{}).Order("id").Pluck("action", &actions).Error; err != nil {
+		t.Fatal(err)
+	}
+	wantActions := []string{"notification.requested", "notification.attempt_started", "notification.accepted"}
+	if fmt.Sprint(actions) != fmt.Sprint(wantActions) {
+		t.Fatalf("journal actions = %v, want %v", actions, wantActions)
+	}
+	if err := delivery.Track(context.Background(), now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if trackRequests != 1 {
+		t.Fatalf("status requests = %d, want 1", trackRequests)
 	}
 	if err = db.First(&jobs[0], job.ID).Error; err != nil || jobs[0].Status != "sent" {
-		t.Fatalf("job=%+v err=%v", jobs[0], err)
+		t.Fatalf("tracked job=%+v err=%v", jobs[0], err)
+	}
+	if err := db.Model(&journalmodel.Event{}).Order("id").Pluck("action", &actions).Error; err != nil {
+		t.Fatal(err)
+	}
+	if actions[len(actions)-1] != "notification.sent" {
+		t.Fatalf("last journal action = %q, want notification.sent", actions[len(actions)-1])
 	}
 	if next, err := delivery.Claim(context.Background(), now.Add(time.Minute)); err != nil || next != nil {
 		t.Fatalf("second claim=%+v err=%v", next, err)
@@ -187,11 +227,15 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 	if err != nil || retryClaim == nil {
 		t.Fatalf("retry claim %v %v", retryClaim, err)
 	}
-	if err = delivery.Deliver(context.Background(), retryClaim, now); err == nil {
-		t.Fatal("expected failed submission")
+	if err = delivery.Deliver(context.Background(), retryClaim, now); err != nil {
+		t.Fatal(err)
 	}
-	if err = db.First(&retryJob, retryJob.ID).Error; err != nil || retryJob.Status != "pending" || retryJob.Attempts != 1 || !retryJob.NextAttemptAt.After(now) {
+	if err = db.First(&retryJob, retryJob.ID).Error; err != nil || retryJob.Status != "unknown" || retryJob.Attempts != 1 {
 		t.Fatalf("retry job=%+v err=%v", retryJob, err)
+	}
+	retryJob.NextAttemptAt = now.Add(time.Second)
+	if err = db.Model(&retryJob).Updates(map[string]any{"status": "pending", "next_attempt_at": retryJob.NextAttemptAt}).Error; err != nil {
+		t.Fatal(err)
 	}
 	lateJob := schedulingmodel.ServiceDateReminder{ServiceDateID: date.ID, ServiceStartAt: date.StartTime, LeadTimeSeconds: 900, StaffID: admin.ID, Status: "pending", NextAttemptAt: now}
 	if err = db.Create(&lateJob).Error; err != nil {
