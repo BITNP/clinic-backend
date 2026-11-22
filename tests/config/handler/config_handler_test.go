@@ -406,6 +406,52 @@ func TestConfigHandler_MessageGatewayTokenStaysWriteOnly(t *testing.T) {
 	}
 }
 
+func TestConfigHandler_DingTalkAppSecretStaysWriteOnly(t *testing.T) {
+	r, svc, db := setupConfigHandlerRouter(t, authhandler.RoleSuperAdmin)
+	if err := svc.EnsureRuntimeSettings(); err != nil {
+		t.Fatalf("seed runtime settings: %v", err)
+	}
+
+	var item configmodel.ClinicConfigItem
+	if err := db.Where("name = ?", "DINGTALK_APP_SECRET").First(&item).Error; err != nil {
+		t.Fatalf("get DingTalk app secret item: %v", err)
+	}
+	value := "legacy-dingtalk-secret"
+	if _, err := svc.UpdateItem(item.ID, configservice.UpdateItemInput{Value: &value}); err != nil {
+		t.Fatalf("seed DingTalk app secret: %v", err)
+	}
+	path := "/api/admin/config/items/" + testutil.Itoa(item.ID)
+
+	w := testutil.DoRequest(t, r, http.MethodGet, "/api/admin/config", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list catalog: %d %s", w.Code, w.Body)
+	}
+	if strings.Contains(w.Body.String(), "legacy-dingtalk-secret") {
+		t.Fatalf("catalog exposed DingTalk app secret: %s", w.Body)
+	}
+
+	w = testutil.DoRequest(t, r, http.MethodPut, path, map[string]any{"value": "replacement-dingtalk-secret"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("update DingTalk app secret: %d %s", w.Code, w.Body)
+	}
+	if strings.Contains(w.Body.String(), "replacement-dingtalk-secret") || strings.Contains(w.Body.String(), `"value":`) {
+		t.Fatalf("update response exposed DingTalk app secret: %s", w.Body)
+	}
+	stored, err := svc.GetItem(item.ID)
+	if err != nil || stored.Value != "replacement-dingtalk-secret" {
+		t.Fatalf("stored DingTalk app secret = %q, error = %v", stored.Value, err)
+	}
+
+	w = testutil.DoRequest(t, r, http.MethodPut, path, map[string]any{"writeonly": false})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("declassify DingTalk app secret: %d %s", w.Code, w.Body)
+	}
+	w = testutil.DoRequest(t, r, http.MethodDelete, path, nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("delete built-in DingTalk app secret: %d %s", w.Code, w.Body)
+	}
+}
+
 func TestConfigHandler_AdminItemRoleScope(t *testing.T) {
 	r, svc, _ := setupConfigHandlerRouter(t, authhandler.RoleAdmin)
 	group, err := svc.CreateGroup(configservice.CreateGroupInput{
@@ -479,16 +525,25 @@ func TestConfigHandler_AdminItemRoleScope(t *testing.T) {
 
 func TestConfigHandler_SuperAdminOnlyRuntimeSettings(t *testing.T) {
 	superAdminOnly := map[string]struct{}{
-		"TAGGER_LLM_API_KEY":            {},
-		"TAGGER_LLM_BASE_URL":           {},
-		"TAGGER_LLM_MODEL":              {},
-		"TAGGER_AGENT_POOL_SIZE":        {},
-		"TAGGER_CONTEXT_TOKENS":         {},
-		"TAGGER_TIMEOUT":                {},
-		"MESSAGE_GATEWAY_URL":           {},
-		"MESSAGE_GATEWAY_ACCOUNT":       {},
-		"MESSAGE_GATEWAY_ACCOUNT_TOKEN": {},
-		"MESSAGE_GATEWAY_TIMEOUT":       {},
+		"TAGGER_LLM_API_KEY":              {},
+		"TAGGER_LLM_BASE_URL":             {},
+		"TAGGER_LLM_MODEL":                {},
+		"TAGGER_AGENT_POOL_SIZE":          {},
+		"TAGGER_CONTEXT_TOKENS":           {},
+		"TAGGER_TIMEOUT":                  {},
+		"MESSAGE_GATEWAY_URL":             {},
+		"MESSAGE_GATEWAY_ACCOUNT":         {},
+		"MESSAGE_GATEWAY_ACCOUNT_TOKEN":   {},
+		"MESSAGE_GATEWAY_TIMEOUT":         {},
+		"DINGTALK_NOTIFY_ENABLED":         {},
+		"DINGTALK_BASE_URL":               {},
+		"DINGTALK_APP_CODE":               {},
+		"DINGTALK_APP_KEY":                {},
+		"DINGTALK_APP_SECRET":             {},
+		"DINGTALK_TIMEOUT":                {},
+		"DINGTALK_REMINDER_POLL_INTERVAL": {},
+		"DINGTALK_REDIRECT_ENABLED":       {},
+		"DINGTALK_REDIRECT_RECEIVER":      {},
 	}
 
 	r, svc, db := setupConfigHandlerRouter(t, authhandler.RoleAdmin)
@@ -503,8 +558,8 @@ func TestConfigHandler_SuperAdminOnlyRuntimeSettings(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &catalog); err != nil {
 		t.Fatalf("decode admin catalog: %v", err)
 	}
-	if len(catalog.Items) != 8 {
-		t.Errorf("admin catalog item count = %d, want 8", len(catalog.Items))
+	if len(catalog.Items) != 19 {
+		t.Errorf("admin catalog item count = %d, want 19", len(catalog.Items))
 	}
 	for _, item := range catalog.Items {
 		if _, restricted := superAdminOnly[item.Name]; restricted {
@@ -536,8 +591,8 @@ func TestConfigHandler_SuperAdminOnlyRuntimeSettings(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &catalog); err != nil {
 		t.Fatalf("decode superadmin catalog: %v", err)
 	}
-	if len(catalog.Items) != 18 {
-		t.Errorf("superadmin catalog item count = %d, want 18", len(catalog.Items))
+	if len(catalog.Items) != 38 {
+		t.Errorf("superadmin catalog item count = %d, want 38", len(catalog.Items))
 	}
 }
 

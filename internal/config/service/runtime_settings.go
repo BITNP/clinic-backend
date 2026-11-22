@@ -15,36 +15,67 @@ import (
 	"sync"
 	"text/template"
 	"time"
+	"unicode/utf8"
 
 	configmodel "clinic-backend/internal/config/model"
 	"clinic-backend/internal/database"
 )
 
 const (
-	DefaultRuntimeSettingsFile             = "runtime_settings.json"
-	runtimeSettingSyncPollInterval         = "SYNC_POLL_INTERVAL"
-	runtimeSettingStaffVersion             = "STAFF_VERSION"
-	runtimeSettingRecordActionWindow       = "RECORD_ACTION_WINDOW"
-	runtimeSettingRecordPhotoMaxCount      = "RECORD_PHOTO_MAX_COUNT"
-	runtimeSettingServiceReminderEnabled   = "SERVICE_DATE_REMINDER_ENABLED"
-	runtimeSettingServiceReminderLeadTimes = "SERVICE_DATE_REMINDER_LEAD_TIMES"
-	runtimeSettingServiceReminderTemplate  = "SERVICE_DATE_REMINDER_TEMPLATE"
-	runtimeSettingMessageGatewayURL        = "MESSAGE_GATEWAY_URL"
-	runtimeSettingMessageGatewayAccount    = "MESSAGE_GATEWAY_ACCOUNT"
-	runtimeSettingMessageGatewayToken      = "MESSAGE_GATEWAY_ACCOUNT_TOKEN"
-	runtimeSettingMessageGatewayTimeout    = "MESSAGE_GATEWAY_TIMEOUT"
-	runtimeSettingTaggerLLMAPIKey          = "TAGGER_LLM_API_KEY"
-	runtimeSettingTaggerLLMBaseURL         = "TAGGER_LLM_BASE_URL"
-	runtimeSettingTaggerLLMModel           = "TAGGER_LLM_MODEL"
-	runtimeSettingTaggerPoolSize           = "TAGGER_AGENT_POOL_SIZE"
-	runtimeSettingTaggerContextTokens      = "TAGGER_CONTEXT_TOKENS"
-	runtimeSettingTaggerTimeout            = "TAGGER_TIMEOUT"
-	runtimeSettingRecordPhotoMaxSizeBytes  = "RECORD_PHOTO_MAX_SIZE_BYTES"
+	DefaultRuntimeSettingsFile              = "runtime_settings.json"
+	runtimeSettingSyncPollInterval          = "SYNC_POLL_INTERVAL"
+	runtimeSettingStaffVersion              = "STAFF_VERSION"
+	runtimeSettingRecordActionWindow        = "RECORD_ACTION_WINDOW"
+	runtimeSettingRecordPhotoMaxCount       = "RECORD_PHOTO_MAX_COUNT"
+	runtimeSettingServiceReminderEnabled    = "SERVICE_DATE_REMINDER_ENABLED"
+	runtimeSettingServiceReminderLeadTimes  = "SERVICE_DATE_REMINDER_LEAD_TIMES"
+	runtimeSettingServiceReminderTemplate   = "SERVICE_DATE_REMINDER_TEMPLATE"
+	runtimeSettingMessageGatewayURL         = "MESSAGE_GATEWAY_URL"
+	runtimeSettingMessageGatewayAccount     = "MESSAGE_GATEWAY_ACCOUNT"
+	runtimeSettingMessageGatewayToken       = "MESSAGE_GATEWAY_ACCOUNT_TOKEN"
+	runtimeSettingMessageGatewayTimeout     = "MESSAGE_GATEWAY_TIMEOUT"
+	runtimeSettingTaggerLLMAPIKey           = "TAGGER_LLM_API_KEY"
+	runtimeSettingTaggerLLMBaseURL          = "TAGGER_LLM_BASE_URL"
+	runtimeSettingTaggerLLMModel            = "TAGGER_LLM_MODEL"
+	runtimeSettingTaggerPoolSize            = "TAGGER_AGENT_POOL_SIZE"
+	runtimeSettingTaggerContextTokens       = "TAGGER_CONTEXT_TOKENS"
+	runtimeSettingTaggerTimeout             = "TAGGER_TIMEOUT"
+	runtimeSettingRecordPhotoMaxSizeBytes   = "RECORD_PHOTO_MAX_SIZE_BYTES"
+	runtimeSettingDingTalkNotifyEnabled     = "DINGTALK_NOTIFY_ENABLED"
+	runtimeSettingDingTalkBaseURL           = "DINGTALK_BASE_URL"
+	runtimeSettingDingTalkAppCode           = "DINGTALK_APP_CODE"
+	runtimeSettingDingTalkAppKey            = "DINGTALK_APP_KEY"
+	runtimeSettingDingTalkAppSecret         = "DINGTALK_APP_SECRET"
+	runtimeSettingDingTalkTimeout           = "DINGTALK_TIMEOUT"
+	runtimeSettingDingTalkReminderLeadTime  = "DINGTALK_REMINDER_LEAD_TIME"
+	runtimeSettingDingTalkReminderPoll      = "DINGTALK_REMINDER_POLL_INTERVAL"
+	runtimeSettingDingTalkRedirectEnabled   = "DINGTALK_REDIRECT_ENABLED"
+	runtimeSettingDingTalkRedirectReceiver  = "DINGTALK_REDIRECT_RECEIVER"
+	runtimeSettingDingTalkTitle             = "DINGTALK_NOTIFICATION_TITLE"
+	runtimeSettingDingTalkHeader            = "DINGTALK_NOTIFICATION_HEADER"
+	runtimeSettingDingTalkQQAccount         = "DINGTALK_NOTIFICATION_QQ_ACCOUNT"
+	runtimeSettingDingTalkTransferRoom      = "DINGTALK_NOTIFICATION_TRANSFER_ROOM"
+	runtimeSettingDingTalkTransferAddress   = "DINGTALK_NOTIFICATION_TRANSFER_ADDRESS"
+	runtimeSettingDingTalkConfirmedTemplate = "DINGTALK_TEMPLATE_CONFIRMED"
+	runtimeSettingDingTalkRejectedTemplate  = "DINGTALK_TEMPLATE_REJECTED"
+	runtimeSettingDingTalkReferredTemplate  = "DINGTALK_TEMPLATE_REFERRED"
+	runtimeSettingDingTalkNoShowTemplate    = "DINGTALK_TEMPLATE_NO_SHOW"
+	runtimeSettingDingTalkReminderTemplate  = "DINGTALK_TEMPLATE_REMINDER"
 )
 
 // DefaultServiceDateReminderTemplate is used for new installations and for
 // legacy runtime settings files that predate the configurable template.
 const DefaultServiceDateReminderTemplate = `[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待审核工单，请及时处理。`
+
+const (
+	DefaultDingTalkNotificationTitle  = "电脑诊所工单状态更新"
+	DefaultDingTalkNotificationHeader = "网络开拓者协会"
+	DefaultDingTalkConfirmedTemplate  = "【{{.HEDR}}】您的预约已通过，请于{{.DATE}}前往{{.ROOM}}诊室。诊室地址为{{.LOCA}}。若因故无法按时前往，请在电脑义诊平台删除预约。\n感谢您对网协工作的理解！"
+	DefaultDingTalkRejectedTemplate   = "【{{.HEDR}}】您于{{.DATE}}的预约被驳回，驳回原因为：\n{{.REAS}}\n感谢您对网协工作的理解！"
+	DefaultDingTalkReferredTemplate   = "【{{.HEDR}}】您于{{.DATE}}的预约建议联系售后进行维修，详细情况说明：\n{{.REAS}}\n感谢您对网协工作的理解！"
+	DefaultDingTalkNoShowTemplate     = "【{{.HEDR}}】由于您未在值班时间前往诊所，您于{{.DATE}}的预约已关闭。未到诊所会导致您后两天无法预约。若您并未未到诊所，请联系{{.QQAC}}进行申诉。\n感谢您对网协工作的理解！"
+	DefaultDingTalkReminderTemplate   = "【{{.HEDR}}】您预约的位于{{.ROOM}}的值班即将开始，请在{{.DATE}}前往{{.ROOM}}诊室。诊所地址为{{.LOCA}}。"
+)
 
 //go:embed data/template.json
 var runtimeSettingsTemplateJSON []byte
@@ -75,37 +106,66 @@ type runtimeSettingsTemplate struct {
 }
 
 var runtimeSettingExpectedTypes = map[string]configmodel.ConfigValueType{
-	runtimeSettingSyncPollInterval:         configmodel.ConfigValueTypeString,
-	runtimeSettingStaffVersion:             configmodel.ConfigValueTypeInt,
-	runtimeSettingRecordActionWindow:       configmodel.ConfigValueTypeString,
-	runtimeSettingRecordPhotoMaxCount:      configmodel.ConfigValueTypeInt,
-	runtimeSettingServiceReminderEnabled:   configmodel.ConfigValueTypeBoolean,
-	runtimeSettingServiceReminderLeadTimes: configmodel.ConfigValueTypeString,
-	runtimeSettingServiceReminderTemplate:  configmodel.ConfigValueTypeString,
-	runtimeSettingMessageGatewayURL:        configmodel.ConfigValueTypeString,
-	runtimeSettingMessageGatewayAccount:    configmodel.ConfigValueTypeString,
-	runtimeSettingMessageGatewayToken:      configmodel.ConfigValueTypeString,
-	runtimeSettingMessageGatewayTimeout:    configmodel.ConfigValueTypeString,
-	runtimeSettingTaggerLLMAPIKey:          configmodel.ConfigValueTypeString,
-	runtimeSettingTaggerLLMBaseURL:         configmodel.ConfigValueTypeString,
-	runtimeSettingTaggerLLMModel:           configmodel.ConfigValueTypeString,
-	runtimeSettingTaggerPoolSize:           configmodel.ConfigValueTypeInt,
-	runtimeSettingTaggerContextTokens:      configmodel.ConfigValueTypeInt,
-	runtimeSettingTaggerTimeout:            configmodel.ConfigValueTypeString,
-	runtimeSettingRecordPhotoMaxSizeBytes:  configmodel.ConfigValueTypeInt,
+	runtimeSettingSyncPollInterval:          configmodel.ConfigValueTypeString,
+	runtimeSettingStaffVersion:              configmodel.ConfigValueTypeInt,
+	runtimeSettingRecordActionWindow:        configmodel.ConfigValueTypeString,
+	runtimeSettingRecordPhotoMaxCount:       configmodel.ConfigValueTypeInt,
+	runtimeSettingServiceReminderEnabled:    configmodel.ConfigValueTypeBoolean,
+	runtimeSettingServiceReminderLeadTimes:  configmodel.ConfigValueTypeString,
+	runtimeSettingServiceReminderTemplate:   configmodel.ConfigValueTypeString,
+	runtimeSettingMessageGatewayURL:         configmodel.ConfigValueTypeString,
+	runtimeSettingMessageGatewayAccount:     configmodel.ConfigValueTypeString,
+	runtimeSettingMessageGatewayToken:       configmodel.ConfigValueTypeString,
+	runtimeSettingMessageGatewayTimeout:     configmodel.ConfigValueTypeString,
+	runtimeSettingTaggerLLMAPIKey:           configmodel.ConfigValueTypeString,
+	runtimeSettingTaggerLLMBaseURL:          configmodel.ConfigValueTypeString,
+	runtimeSettingTaggerLLMModel:            configmodel.ConfigValueTypeString,
+	runtimeSettingTaggerPoolSize:            configmodel.ConfigValueTypeInt,
+	runtimeSettingTaggerContextTokens:       configmodel.ConfigValueTypeInt,
+	runtimeSettingTaggerTimeout:             configmodel.ConfigValueTypeString,
+	runtimeSettingRecordPhotoMaxSizeBytes:   configmodel.ConfigValueTypeInt,
+	runtimeSettingDingTalkNotifyEnabled:     configmodel.ConfigValueTypeBoolean,
+	runtimeSettingDingTalkBaseURL:           configmodel.ConfigValueTypeString,
+	runtimeSettingDingTalkAppCode:           configmodel.ConfigValueTypeString,
+	runtimeSettingDingTalkAppKey:            configmodel.ConfigValueTypeString,
+	runtimeSettingDingTalkAppSecret:         configmodel.ConfigValueTypeString,
+	runtimeSettingDingTalkTimeout:           configmodel.ConfigValueTypeString,
+	runtimeSettingDingTalkReminderLeadTime:  configmodel.ConfigValueTypeString,
+	runtimeSettingDingTalkReminderPoll:      configmodel.ConfigValueTypeString,
+	runtimeSettingDingTalkRedirectEnabled:   configmodel.ConfigValueTypeBoolean,
+	runtimeSettingDingTalkRedirectReceiver:  configmodel.ConfigValueTypeString,
+	runtimeSettingDingTalkTitle:             configmodel.ConfigValueTypeString,
+	runtimeSettingDingTalkHeader:            configmodel.ConfigValueTypeString,
+	runtimeSettingDingTalkQQAccount:         configmodel.ConfigValueTypeString,
+	runtimeSettingDingTalkTransferRoom:      configmodel.ConfigValueTypeString,
+	runtimeSettingDingTalkTransferAddress:   configmodel.ConfigValueTypeString,
+	runtimeSettingDingTalkConfirmedTemplate: configmodel.ConfigValueTypeString,
+	runtimeSettingDingTalkRejectedTemplate:  configmodel.ConfigValueTypeString,
+	runtimeSettingDingTalkReferredTemplate:  configmodel.ConfigValueTypeString,
+	runtimeSettingDingTalkNoShowTemplate:    configmodel.ConfigValueTypeString,
+	runtimeSettingDingTalkReminderTemplate:  configmodel.ConfigValueTypeString,
 }
 
 var superAdminOnlyRuntimeSettings = map[string]struct{}{
-	runtimeSettingTaggerLLMAPIKey:       {},
-	runtimeSettingTaggerLLMBaseURL:      {},
-	runtimeSettingTaggerLLMModel:        {},
-	runtimeSettingTaggerPoolSize:        {},
-	runtimeSettingTaggerContextTokens:   {},
-	runtimeSettingTaggerTimeout:         {},
-	runtimeSettingMessageGatewayURL:     {},
-	runtimeSettingMessageGatewayAccount: {},
-	runtimeSettingMessageGatewayToken:   {},
-	runtimeSettingMessageGatewayTimeout: {},
+	runtimeSettingTaggerLLMAPIKey:          {},
+	runtimeSettingTaggerLLMBaseURL:         {},
+	runtimeSettingTaggerLLMModel:           {},
+	runtimeSettingTaggerPoolSize:           {},
+	runtimeSettingTaggerContextTokens:      {},
+	runtimeSettingTaggerTimeout:            {},
+	runtimeSettingMessageGatewayURL:        {},
+	runtimeSettingMessageGatewayAccount:    {},
+	runtimeSettingMessageGatewayToken:      {},
+	runtimeSettingMessageGatewayTimeout:    {},
+	runtimeSettingDingTalkNotifyEnabled:    {},
+	runtimeSettingDingTalkBaseURL:          {},
+	runtimeSettingDingTalkAppCode:          {},
+	runtimeSettingDingTalkAppKey:           {},
+	runtimeSettingDingTalkAppSecret:        {},
+	runtimeSettingDingTalkTimeout:          {},
+	runtimeSettingDingTalkReminderPoll:     {},
+	runtimeSettingDingTalkRedirectEnabled:  {},
+	runtimeSettingDingTalkRedirectReceiver: {},
 }
 
 var (
@@ -241,6 +301,31 @@ type RuntimeSettings struct {
 	TaggerAgentPoolSize          int
 	TaggerContextTokens          int
 	TaggerTimeout                time.Duration
+	DingTalk                     DingTalkRuntimeSettings
+}
+
+// DingTalkRuntimeSettings contains validated DingTalk message-center settings.
+type DingTalkRuntimeSettings struct {
+	Enabled              bool
+	BaseURL              string
+	AppCode              string
+	AppKey               string
+	AppSecret            string
+	Timeout              time.Duration
+	ReminderLeadTime     time.Duration
+	ReminderPollInterval time.Duration
+	RedirectEnabled      bool
+	RedirectReceiver     string
+	NotificationTitle    string
+	NotificationHeader   string
+	QQAccount            string
+	TransferRoom         string
+	TransferAddress      string
+	ConfirmedTemplate    string
+	RejectedTemplate     string
+	ReferredTemplate     string
+	NoShowTemplate       string
+	ReminderTemplate     string
 }
 
 // EnsureRuntimeSettings inserts missing groups and settings using the embedded
@@ -455,6 +540,46 @@ func loadRuntimeSettings(q interface{ QueryRow(string, ...any) *sql.Row }) (Runt
 			settings.TaggerContextTokens, err = strconv.Atoi(normalized)
 		case runtimeSettingTaggerTimeout:
 			settings.TaggerTimeout, err = time.ParseDuration(normalized)
+		case runtimeSettingDingTalkNotifyEnabled:
+			settings.DingTalk.Enabled = normalized == "true"
+		case runtimeSettingDingTalkBaseURL:
+			settings.DingTalk.BaseURL = normalized
+		case runtimeSettingDingTalkAppCode:
+			settings.DingTalk.AppCode = normalized
+		case runtimeSettingDingTalkAppKey:
+			settings.DingTalk.AppKey = normalized
+		case runtimeSettingDingTalkAppSecret:
+			settings.DingTalk.AppSecret = normalized
+		case runtimeSettingDingTalkTimeout:
+			settings.DingTalk.Timeout, err = time.ParseDuration(normalized)
+		case runtimeSettingDingTalkReminderLeadTime:
+			settings.DingTalk.ReminderLeadTime, err = time.ParseDuration(normalized)
+		case runtimeSettingDingTalkReminderPoll:
+			settings.DingTalk.ReminderPollInterval, err = time.ParseDuration(normalized)
+		case runtimeSettingDingTalkRedirectEnabled:
+			settings.DingTalk.RedirectEnabled = normalized == "true"
+		case runtimeSettingDingTalkRedirectReceiver:
+			settings.DingTalk.RedirectReceiver = normalized
+		case runtimeSettingDingTalkTitle:
+			settings.DingTalk.NotificationTitle = normalized
+		case runtimeSettingDingTalkHeader:
+			settings.DingTalk.NotificationHeader = normalized
+		case runtimeSettingDingTalkQQAccount:
+			settings.DingTalk.QQAccount = normalized
+		case runtimeSettingDingTalkTransferRoom:
+			settings.DingTalk.TransferRoom = normalized
+		case runtimeSettingDingTalkTransferAddress:
+			settings.DingTalk.TransferAddress = normalized
+		case runtimeSettingDingTalkConfirmedTemplate:
+			settings.DingTalk.ConfirmedTemplate = normalized
+		case runtimeSettingDingTalkRejectedTemplate:
+			settings.DingTalk.RejectedTemplate = normalized
+		case runtimeSettingDingTalkReferredTemplate:
+			settings.DingTalk.ReferredTemplate = normalized
+		case runtimeSettingDingTalkNoShowTemplate:
+			settings.DingTalk.NoShowTemplate = normalized
+		case runtimeSettingDingTalkReminderTemplate:
+			settings.DingTalk.ReminderTemplate = normalized
 		}
 		if err != nil {
 			return RuntimeSettings{}, fmt.Errorf("parse runtime config %s: %w", setting.Name, err)
@@ -532,6 +657,9 @@ func runtimeSettingRoleLevel(name string) configmodel.ConfigRoleLevel {
 
 func validateRuntimeSettingValue(name, raw string) (string, error) {
 	value := strings.TrimSpace(raw)
+	if !runtimeSettingIsOptional(name) && value == "" {
+		return "", fmt.Errorf("%w: %s is required", ErrConfigValueInvalid, name)
+	}
 	switch name {
 	case runtimeSettingSyncPollInterval:
 		duration, err := parseRuntimeDuration(name, value)
@@ -649,6 +777,61 @@ func validateRuntimeSettingValue(name, raw string) (string, error) {
 			return "", fmt.Errorf("%w: %s must be positive", ErrConfigValueInvalid, name)
 		}
 		return formatRuntimeDuration(duration), nil
+	case runtimeSettingDingTalkNotifyEnabled, runtimeSettingDingTalkRedirectEnabled:
+		if value != "true" && value != "false" {
+			return "", fmt.Errorf("%w: %s must be true or false", ErrConfigValueInvalid, name)
+		}
+		return value, nil
+	case runtimeSettingDingTalkBaseURL:
+		if value == "" {
+			return "", nil
+		}
+		parsed, err := url.Parse(value)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return "", fmt.Errorf("%w: %s must be an HTTP(S) URL", ErrConfigValueInvalid, name)
+		}
+		if parsed.RawQuery != "" || parsed.Fragment != "" {
+			return "", fmt.Errorf("%w: %s must not contain a query or fragment", ErrConfigValueInvalid, name)
+		}
+		return value, nil
+	case runtimeSettingDingTalkAppCode, runtimeSettingDingTalkAppKey, runtimeSettingDingTalkAppSecret:
+		return value, nil
+	case runtimeSettingDingTalkTimeout, runtimeSettingDingTalkReminderLeadTime, runtimeSettingDingTalkReminderPoll:
+		duration, err := parseRuntimeDuration(name, value)
+		if err != nil {
+			return "", err
+		}
+		if duration <= 0 {
+			return "", fmt.Errorf("%w: %s must be positive", ErrConfigValueInvalid, name)
+		}
+		return formatRuntimeDuration(duration), nil
+	case runtimeSettingDingTalkRedirectReceiver:
+		if value == "" {
+			return "", nil
+		}
+		if strings.ContainsAny(value, ",，") {
+			return "", fmt.Errorf("%w: %s must contain exactly one receiver", ErrConfigValueInvalid, name)
+		}
+		return value, nil
+	case runtimeSettingDingTalkTitle:
+		if utf8.RuneCountInString(value) > 128 {
+			return "", fmt.Errorf("%w: %s must not exceed 128 characters", ErrConfigValueInvalid, name)
+		}
+		return value, nil
+	case runtimeSettingDingTalkHeader,
+		runtimeSettingDingTalkQQAccount,
+		runtimeSettingDingTalkTransferRoom,
+		runtimeSettingDingTalkTransferAddress:
+		return value, nil
+	case runtimeSettingDingTalkConfirmedTemplate,
+		runtimeSettingDingTalkRejectedTemplate,
+		runtimeSettingDingTalkReferredTemplate,
+		runtimeSettingDingTalkNoShowTemplate,
+		runtimeSettingDingTalkReminderTemplate:
+		if err := validateDingTalkTemplate(name, value); err != nil {
+			return "", err
+		}
+		return value, nil
 	case runtimeSettingMessageGatewayAccount:
 		if value == "" || value == "." || value == ".." || strings.ContainsAny(value, "/?#") {
 			return "", fmt.Errorf("%w: %s must be a valid gateway account", ErrConfigValueInvalid, name)
@@ -665,7 +848,15 @@ func runtimeSettingIsOptional(name string) bool {
 		runtimeSettingMessageGatewayToken,
 		runtimeSettingTaggerLLMAPIKey,
 		runtimeSettingTaggerLLMBaseURL,
-		runtimeSettingTaggerLLMModel:
+		runtimeSettingTaggerLLMModel,
+		runtimeSettingDingTalkBaseURL,
+		runtimeSettingDingTalkAppCode,
+		runtimeSettingDingTalkAppKey,
+		runtimeSettingDingTalkAppSecret,
+		runtimeSettingDingTalkRedirectReceiver,
+		runtimeSettingDingTalkQQAccount,
+		runtimeSettingDingTalkTransferRoom,
+		runtimeSettingDingTalkTransferAddress:
 		return true
 	default:
 		return false
@@ -673,7 +864,36 @@ func runtimeSettingIsOptional(name string) bool {
 }
 
 func runtimeSettingIsWriteOnly(name string) bool {
-	return name == runtimeSettingMessageGatewayToken || name == runtimeSettingTaggerLLMAPIKey
+	return name == runtimeSettingMessageGatewayToken ||
+		name == runtimeSettingTaggerLLMAPIKey ||
+		name == runtimeSettingDingTalkAppSecret
+}
+
+func validateDingTalkTemplate(name, value string) error {
+	parsed, err := template.New(name).Option("missingkey=error").Parse(
+		strings.TrimSpace(strings.ReplaceAll(value, `\n`, "\n")),
+	)
+	if err != nil {
+		return fmt.Errorf("%w: %s must be a valid template", ErrConfigValueInvalid, name)
+	}
+	var rendered strings.Builder
+	if err := parsed.Execute(&rendered, map[string]string{
+		"HEDR": "header",
+		"DATE": "date",
+		"ID":   "#1",
+		"ROOM": "room",
+		"TRRO": "transfer room",
+		"LOCA": "room address",
+		"TRLO": "transfer address",
+		"REAS": "reason",
+		"QQAC": "QQ",
+	}); err != nil {
+		return fmt.Errorf("%w: %s must be a valid template", ErrConfigValueInvalid, name)
+	}
+	if strings.TrimSpace(rendered.String()) == "" {
+		return fmt.Errorf("%w: %s must not render an empty message", ErrConfigValueInvalid, name)
+	}
+	return nil
 }
 
 func parseRuntimeDuration(name, raw string) (time.Duration, error) {

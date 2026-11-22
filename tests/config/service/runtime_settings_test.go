@@ -239,6 +239,25 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 			settings.TaggerTimeout,
 		)
 	}
+	if settings.DingTalk.Enabled || settings.DingTalk.RedirectEnabled {
+		t.Errorf("DingTalk enable flags = notify %t, redirect %t; want false", settings.DingTalk.Enabled, settings.DingTalk.RedirectEnabled)
+	}
+	if settings.DingTalk.Timeout != 10*time.Second ||
+		settings.DingTalk.ReminderLeadTime != 30*time.Minute ||
+		settings.DingTalk.ReminderPollInterval != time.Minute {
+		t.Errorf(
+			"DingTalk durations = timeout %v, lead %v, poll %v",
+			settings.DingTalk.Timeout,
+			settings.DingTalk.ReminderLeadTime,
+			settings.DingTalk.ReminderPollInterval,
+		)
+	}
+	if settings.DingTalk.NotificationTitle != configservice.DefaultDingTalkNotificationTitle ||
+		settings.DingTalk.NotificationHeader != configservice.DefaultDingTalkNotificationHeader ||
+		settings.DingTalk.ConfirmedTemplate != configservice.DefaultDingTalkConfirmedTemplate ||
+		settings.DingTalk.ReminderTemplate != configservice.DefaultDingTalkReminderTemplate {
+		t.Errorf("DingTalk notification defaults = %+v", settings.DingTalk)
+	}
 	if len(settings.ServiceDateReminderLeadTimes) != 2 ||
 		settings.ServiceDateReminderLeadTimes[0] != 5*time.Hour ||
 		settings.ServiceDateReminderLeadTimes[1] != 3*time.Hour {
@@ -252,8 +271,8 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	if err := db.Model(&configmodel.ClinicConfigItem{}).Count(&itemCount).Error; err != nil {
 		t.Fatalf("count items: %v", err)
 	}
-	if groupCount != 3 || itemCount != 18 {
-		t.Errorf("seeded counts = %d groups, %d items; want 3 and 18", groupCount, itemCount)
+	if groupCount != 4 || itemCount != 38 {
+		t.Errorf("seeded counts = %d groups, %d items; want 4 and 38", groupCount, itemCount)
 	}
 
 	var taggerKey configmodel.ClinicConfigItem
@@ -269,6 +288,13 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	}
 	if gatewayToken.Value != "" || !gatewayToken.WriteOnly || gatewayToken.IsRequired {
 		t.Errorf("gateway token item = %+v", gatewayToken)
+	}
+	var dingtalkSecret configmodel.ClinicConfigItem
+	if err := db.Where("name = ?", "DINGTALK_APP_SECRET").First(&dingtalkSecret).Error; err != nil {
+		t.Fatalf("get DingTalk app secret item: %v", err)
+	}
+	if dingtalkSecret.Value != "" || !dingtalkSecret.WriteOnly || dingtalkSecret.IsRequired {
+		t.Errorf("DingTalk app secret item = %+v", dingtalkSecret)
 	}
 
 	var maintainerCount int64
@@ -306,6 +332,15 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 		"MESSAGE_GATEWAY_ACCOUNT",
 		"MESSAGE_GATEWAY_ACCOUNT_TOKEN",
 		"MESSAGE_GATEWAY_TIMEOUT",
+		"DINGTALK_NOTIFY_ENABLED",
+		"DINGTALK_BASE_URL",
+		"DINGTALK_APP_CODE",
+		"DINGTALK_APP_KEY",
+		"DINGTALK_APP_SECRET",
+		"DINGTALK_TIMEOUT",
+		"DINGTALK_REMINDER_POLL_INTERVAL",
+		"DINGTALK_REDIRECT_ENABLED",
+		"DINGTALK_REDIRECT_RECEIVER",
 	} {
 		t.Run(name, func(t *testing.T) {
 			var item configmodel.ClinicConfigItem
@@ -434,6 +469,11 @@ func TestConfigService_SeedsMissingItemsFromLegacyValuesOnce(t *testing.T) {
 		"MESSAGE_GATEWAY_ACCOUNT":        "legacy-account",
 		"MESSAGE_GATEWAY_ACCOUNT_TOKEN":  "legacy-token",
 		"MESSAGE_GATEWAY_TIMEOUT":        "8s",
+		"DINGTALK_NOTIFY_ENABLED":        "true",
+		"DINGTALK_BASE_URL":              "https://legacy-dingtalk.example",
+		"DINGTALK_APP_CODE":              "legacy-code",
+		"DINGTALK_APP_KEY":               "legacy-key",
+		"DINGTALK_APP_SECRET":            "legacy-secret",
 	}
 	if err := svc.EnsureRuntimeSettingsWithInitialValues(initial); err != nil {
 		t.Fatalf("ensure runtime settings: %v", err)
@@ -452,6 +492,13 @@ func TestConfigService_SeedsMissingItemsFromLegacyValuesOnce(t *testing.T) {
 	}
 	if item.Value != "legacy-token" {
 		t.Errorf("gateway token = %q, want legacy-token", item.Value)
+	}
+	item = configmodel.ClinicConfigItem{}
+	if err := db.Where("name = ?", "DINGTALK_APP_SECRET").First(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	if item.Value != "legacy-secret" || !item.WriteOnly {
+		t.Errorf("DingTalk app secret = %+v, want legacy-secret write-only", item)
 	}
 
 	replacement := map[string]string{"TAGGER_AGENT_POOL_SIZE": "12"}
@@ -574,6 +621,38 @@ func TestConfigService_RequiresCompleteExternalRuntimeSettingsFile(t *testing.T)
 			path: func(t *testing.T) string {
 				values := testutil.RuntimeSettingsValues()
 				values["SERVICE_DATE_REMINDER_TEMPLATE"] = "{{.Missing}}"
+				return testutil.WriteRuntimeSettingsFile(t, values)
+			},
+		},
+		{
+			name: "invalid DingTalk URL",
+			path: func(t *testing.T) string {
+				values := testutil.RuntimeSettingsValues()
+				values["DINGTALK_BASE_URL"] = "message-center.example"
+				return testutil.WriteRuntimeSettingsFile(t, values)
+			},
+		},
+		{
+			name: "invalid DingTalk timeout",
+			path: func(t *testing.T) string {
+				values := testutil.RuntimeSettingsValues()
+				values["DINGTALK_TIMEOUT"] = "0s"
+				return testutil.WriteRuntimeSettingsFile(t, values)
+			},
+		},
+		{
+			name: "multiple DingTalk redirect receivers",
+			path: func(t *testing.T) string {
+				values := testutil.RuntimeSettingsValues()
+				values["DINGTALK_REDIRECT_RECEIVER"] = "first,second"
+				return testutil.WriteRuntimeSettingsFile(t, values)
+			},
+		},
+		{
+			name: "invalid DingTalk template",
+			path: func(t *testing.T) string {
+				values := testutil.RuntimeSettingsValues()
+				values["DINGTALK_TEMPLATE_CONFIRMED"] = "{{.Missing}}"
 				return testutil.WriteRuntimeSettingsFile(t, values)
 			},
 		},

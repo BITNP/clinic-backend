@@ -14,6 +14,11 @@
       "name": "reminder",
       "display_name": "提醒与通知",
       "sort_order": 2
+    },
+    {
+      "name": "dingtalk",
+      "display_name": "钉钉通知",
+      "sort_order": 3
     }
   ],
   "items": [
@@ -202,6 +207,227 @@
       "is_required": true,
       "role_level": "superadmin",
       "default": "5s"
+    },
+    {
+      "name": "DINGTALK_NOTIFY_ENABLED",
+      "display_name": "启用钉钉通知",
+      "hint": "关闭后停止新的钉钉状态通知和提醒；已持久化的提醒会在重新启用后继续。",
+      "value_type": "boolean",
+      "group": "dingtalk",
+      "sort_order": 0,
+      "is_required": true,
+      "role_level": "superadmin",
+      "default": "false"
+    },
+    {
+      "name": "DINGTALK_BASE_URL",
+      "display_name": "钉钉消息中心地址",
+      "hint": "消息中心业务地址，必须使用 HTTP(S)；启用钉钉通知时必填。",
+      "value_type": "string",
+      "group": "dingtalk",
+      "sort_order": 1,
+      "is_required": false,
+      "role_level": "superadmin",
+      "default": ""
+    },
+    {
+      "name": "DINGTALK_APP_CODE",
+      "display_name": "钉钉消息中心应用代码",
+      "hint": "发送请求时作为 msg-center-app-code；启用钉钉通知时必填。",
+      "value_type": "string",
+      "group": "dingtalk",
+      "sort_order": 2,
+      "is_required": false,
+      "role_level": "superadmin",
+      "default": ""
+    },
+    {
+      "name": "DINGTALK_APP_KEY",
+      "display_name": "钉钉开放平台应用 Key",
+      "hint": "用于获取 access token；启用钉钉通知时必填。",
+      "value_type": "string",
+      "group": "dingtalk",
+      "sort_order": 3,
+      "is_required": false,
+      "role_level": "superadmin",
+      "default": ""
+    },
+    {
+      "name": "DINGTALK_APP_SECRET",
+      "display_name": "钉钉开放平台应用 Secret",
+      "hint": "仅写入；用于获取 access token，启用钉钉通知时必填。",
+      "value_type": "string",
+      "group": "dingtalk",
+      "sort_order": 4,
+      "is_required": false,
+      "role_level": "superadmin",
+      "writeonly": true,
+      "default": ""
+    },
+    {
+      "name": "DINGTALK_TIMEOUT",
+      "display_name": "钉钉请求超时时间",
+      "hint": "Go 时长格式，必须大于 0；下一次发送时生效。",
+      "value_type": "string",
+      "group": "dingtalk",
+      "sort_order": 5,
+      "is_required": true,
+      "role_level": "superadmin",
+      "default": "10s"
+    },
+    {
+      "name": "DINGTALK_REDIRECT_ENABLED",
+      "display_name": "启用钉钉接收人重定向",
+      "hint": "开启后所有钉钉消息只发送到指定账号，不再发送给原始接收人。",
+      "value_type": "boolean",
+      "group": "dingtalk",
+      "sort_order": 6,
+      "is_required": true,
+      "role_level": "superadmin",
+      "default": "false"
+    },
+    {
+      "name": "DINGTALK_REDIRECT_RECEIVER",
+      "display_name": "钉钉重定向账号",
+      "hint": "只能填写一个钉钉账号；启用重定向时必填。",
+      "value_type": "string",
+      "group": "dingtalk",
+      "sort_order": 7,
+      "is_required": false,
+      "role_level": "superadmin",
+      "default": ""
+    },
+    {
+      "name": "DINGTALK_REMINDER_LEAD_TIME",
+      "display_name": "钉钉提醒提前时间",
+      "hint": "Go 时长格式，必须大于 0；下一次提醒发现时生效。",
+      "value_type": "string",
+      "group": "dingtalk",
+      "sort_order": 8,
+      "is_required": true,
+      "role_level": "admin",
+      "default": "30m"
+    },
+    {
+      "name": "DINGTALK_REMINDER_POLL_INTERVAL",
+      "display_name": "钉钉提醒轮询间隔",
+      "hint": "Go 时长格式，必须大于 0；下一次轮询调度时生效。",
+      "value_type": "string",
+      "group": "dingtalk",
+      "sort_order": 9,
+      "is_required": true,
+      "role_level": "superadmin",
+      "default": "1m"
+    },
+    {
+      "name": "DINGTALK_NOTIFICATION_TITLE",
+      "display_name": "钉钉通知标题",
+      "hint": "最多 128 个字符；下一条消息生效。",
+      "value_type": "string",
+      "group": "dingtalk",
+      "sort_order": 10,
+      "is_required": true,
+      "role_level": "admin",
+      "default": "电脑诊所工单状态更新"
+    },
+    {
+      "name": "DINGTALK_NOTIFICATION_HEADER",
+      "display_name": "钉钉通知机构抬头",
+      "hint": "模板变量 {{.HEDR}} 的取值。",
+      "value_type": "string",
+      "group": "dingtalk",
+      "sort_order": 11,
+      "is_required": true,
+      "role_level": "admin",
+      "default": "网络开拓者协会"
+    },
+    {
+      "name": "DINGTALK_NOTIFICATION_QQ_ACCOUNT",
+      "display_name": "钉钉通知申诉 QQ",
+      "hint": "模板变量 {{.QQAC}} 的取值。",
+      "value_type": "string",
+      "group": "dingtalk",
+      "sort_order": 12,
+      "is_required": false,
+      "role_level": "admin",
+      "default": ""
+    },
+    {
+      "name": "DINGTALK_NOTIFICATION_TRANSFER_ROOM",
+      "display_name": "钉钉通知转诊室",
+      "hint": "模板变量 {{.TRRO}} 的取值。",
+      "value_type": "string",
+      "group": "dingtalk",
+      "sort_order": 13,
+      "is_required": false,
+      "role_level": "admin",
+      "default": ""
+    },
+    {
+      "name": "DINGTALK_NOTIFICATION_TRANSFER_ADDRESS",
+      "display_name": "钉钉通知转诊地址",
+      "hint": "模板变量 {{.TRLO}} 的取值。",
+      "value_type": "string",
+      "group": "dingtalk",
+      "sort_order": 14,
+      "is_required": false,
+      "role_level": "admin",
+      "default": ""
+    },
+    {
+      "name": "DINGTALK_TEMPLATE_CONFIRMED",
+      "display_name": "钉钉预约通过模板",
+      "hint": "支持 HEDR、DATE、ID、ROOM、LOCA、TRRO、TRLO、REAS、QQAC；保存时校验语法。",
+      "value_type": "string",
+      "group": "dingtalk",
+      "sort_order": 15,
+      "is_required": true,
+      "role_level": "admin",
+      "default": "【{{.HEDR}}】您的预约已通过，请于{{.DATE}}前往{{.ROOM}}诊室。诊室地址为{{.LOCA}}。若因故无法按时前往，请在电脑义诊平台删除预约。\n感谢您对网协工作的理解！"
+    },
+    {
+      "name": "DINGTALK_TEMPLATE_REJECTED",
+      "display_name": "钉钉预约驳回模板",
+      "hint": "支持 HEDR、DATE、ID、ROOM、LOCA、TRRO、TRLO、REAS、QQAC；保存时校验语法。",
+      "value_type": "string",
+      "group": "dingtalk",
+      "sort_order": 16,
+      "is_required": true,
+      "role_level": "admin",
+      "default": "【{{.HEDR}}】您于{{.DATE}}的预约被驳回，驳回原因为：\n{{.REAS}}\n感谢您对网协工作的理解！"
+    },
+    {
+      "name": "DINGTALK_TEMPLATE_REFERRED",
+      "display_name": "钉钉预约转诊模板",
+      "hint": "支持 HEDR、DATE、ID、ROOM、LOCA、TRRO、TRLO、REAS、QQAC；保存时校验语法。",
+      "value_type": "string",
+      "group": "dingtalk",
+      "sort_order": 17,
+      "is_required": true,
+      "role_level": "admin",
+      "default": "【{{.HEDR}}】您于{{.DATE}}的预约建议联系售后进行维修，详细情况说明：\n{{.REAS}}\n感谢您对网协工作的理解！"
+    },
+    {
+      "name": "DINGTALK_TEMPLATE_NO_SHOW",
+      "display_name": "钉钉未到店模板",
+      "hint": "支持 HEDR、DATE、ID、ROOM、LOCA、TRRO、TRLO、REAS、QQAC；保存时校验语法。",
+      "value_type": "string",
+      "group": "dingtalk",
+      "sort_order": 18,
+      "is_required": true,
+      "role_level": "admin",
+      "default": "【{{.HEDR}}】由于您未在值班时间前往诊所，您于{{.DATE}}的预约已关闭。未到诊所会导致您后两天无法预约。若您并未未到诊所，请联系{{.QQAC}}进行申诉。\n感谢您对网协工作的理解！"
+    },
+    {
+      "name": "DINGTALK_TEMPLATE_REMINDER",
+      "display_name": "钉钉到店提醒模板",
+      "hint": "支持 HEDR、DATE、ID、ROOM、LOCA、TRRO、TRLO、REAS、QQAC；保存时校验语法。",
+      "value_type": "string",
+      "group": "dingtalk",
+      "sort_order": 19,
+      "is_required": true,
+      "role_level": "admin",
+      "default": "【{{.HEDR}}】您预约的位于{{.ROOM}}的值班即将开始，请在{{.DATE}}前往{{.ROOM}}诊室。诊所地址为{{.LOCA}}。"
     }
   ]
 }
