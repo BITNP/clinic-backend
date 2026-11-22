@@ -46,14 +46,16 @@ type DingTalkReminderConfig struct {
 // DingTalkConfig contains the message-center settings used for DingTalk
 // notifications.
 type DingTalkConfig struct {
-	Enabled      bool
-	BaseURL      string
-	AppCode      string
-	AppKey       string
-	AppSecret    string
-	Timeout      time.Duration
-	Notification DingTalkNotificationConfig
-	Reminder     DingTalkReminderConfig
+	Enabled          bool
+	BaseURL          string
+	AppCode          string
+	AppKey           string
+	AppSecret        string
+	Timeout          time.Duration
+	RedirectEnabled  bool
+	RedirectReceiver string
+	Notification     DingTalkNotificationConfig
+	Reminder         DingTalkReminderConfig
 }
 
 // LoadDingTalkConfig reads and validates DingTalk message-center settings.
@@ -78,14 +80,27 @@ func LoadDingTalkConfig(getenv func(string) string) (DingTalkConfig, error) {
 	if err != nil {
 		return DingTalkConfig{}, fmt.Errorf("invalid DINGTALK_REMINDER_POLL_INTERVAL: %w", err)
 	}
+	redirectEnabled, err := parseBoolSetting(getenv("DINGTALK_REDIRECT_ENABLED"), false)
+	if err != nil {
+		return DingTalkConfig{}, fmt.Errorf("invalid DINGTALK_REDIRECT_ENABLED: %w", err)
+	}
+	redirectReceiver := strings.TrimSpace(getenv("DINGTALK_REDIRECT_RECEIVER"))
+	if redirectEnabled && redirectReceiver == "" {
+		return DingTalkConfig{}, fmt.Errorf("DINGTALK_REDIRECT_RECEIVER is required when DINGTALK_REDIRECT_ENABLED is true")
+	}
+	if !redirectEnabled {
+		redirectReceiver = ""
+	}
 
 	cfg := DingTalkConfig{
-		Enabled:   true,
-		BaseURL:   strings.TrimSpace(getenv("DINGTALK_BASE_URL")),
-		AppCode:   strings.TrimSpace(getenv("DINGTALK_APP_CODE")),
-		AppKey:    strings.TrimSpace(getenv("DINGTALK_APP_KEY")),
-		AppSecret: strings.TrimSpace(getenv("DINGTALK_APP_SECRET")),
-		Timeout:   timeout,
+		Enabled:          true,
+		BaseURL:          strings.TrimSpace(getenv("DINGTALK_BASE_URL")),
+		AppCode:          strings.TrimSpace(getenv("DINGTALK_APP_CODE")),
+		AppKey:           strings.TrimSpace(getenv("DINGTALK_APP_KEY")),
+		AppSecret:        strings.TrimSpace(getenv("DINGTALK_APP_SECRET")),
+		Timeout:          timeout,
+		RedirectEnabled:  redirectEnabled,
+		RedirectReceiver: redirectReceiver,
 		Notification: DingTalkNotificationConfig{
 			Title:             dingTalkStringSetting(getenv, "DINGTALK_NOTIFICATION_TITLE", defaultDingTalkNotificationTitle),
 			Header:            dingTalkStringSetting(getenv, "DINGTALK_NOTIFICATION_HEADER", defaultDingTalkNotificationHeader),
@@ -104,11 +119,12 @@ func LoadDingTalkConfig(getenv func(string) string) (DingTalkConfig, error) {
 		},
 	}
 	if _, err := notificationclient.NewDingTalkClient(notificationclient.Config{
-		BaseURL:   cfg.BaseURL,
-		AppCode:   cfg.AppCode,
-		AppKey:    cfg.AppKey,
-		AppSecret: cfg.AppSecret,
-		Timeout:   cfg.Timeout,
+		BaseURL:          cfg.BaseURL,
+		AppCode:          cfg.AppCode,
+		AppKey:           cfg.AppKey,
+		AppSecret:        cfg.AppSecret,
+		Timeout:          cfg.Timeout,
+		ReceiverOverride: cfg.RedirectReceiver,
 	}); err != nil {
 		return DingTalkConfig{}, err
 	}

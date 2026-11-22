@@ -27,13 +27,14 @@ const (
 // Config describes the message-center endpoint and credentials used for
 // DingTalk notifications.
 type Config struct {
-	BaseURL    string
-	AppCode    string
-	AppKey     string
-	AppSecret  string
-	Timeout    time.Duration
-	HTTPClient *http.Client
-	Now        func() time.Time
+	BaseURL          string
+	AppCode          string
+	AppKey           string
+	AppSecret        string
+	Timeout          time.Duration
+	ReceiverOverride string
+	HTTPClient       *http.Client
+	Now              func() time.Time
 }
 
 // SendRequest describes a DingTalk message submitted through the message
@@ -107,6 +108,7 @@ type DingTalkClient struct {
 	appCode    string
 	appKey     string
 	appSecret  string
+	receiver   string
 	httpClient *http.Client
 	now        func() time.Time
 
@@ -135,6 +137,14 @@ func NewDingTalkClient(cfg Config) (*DingTalkClient, error) {
 	if appSecret == "" {
 		return nil, fmt.Errorf("dingtalk client: app secret is required")
 	}
+	receiverOverride := strings.TrimSpace(cfg.ReceiverOverride)
+	if receiverOverride != "" {
+		normalized, err := normalizeReceiver(receiverOverride)
+		if err != nil {
+			return nil, fmt.Errorf("dingtalk client: invalid receiver override: %w", err)
+		}
+		receiverOverride = normalized
+	}
 
 	httpClient := cfg.HTTPClient
 	if cfg.Timeout < 0 {
@@ -158,6 +168,7 @@ func NewDingTalkClient(cfg Config) (*DingTalkClient, error) {
 		appCode:    appCode,
 		appKey:     appKey,
 		appSecret:  appSecret,
+		receiver:   receiverOverride,
 		httpClient: httpClient,
 		now:        now,
 	}, nil
@@ -256,7 +267,11 @@ func checkDingTalkDelivery(msgID string, status MessageStatus) error {
 }
 
 func (c *DingTalkClient) sendPayload(input SendRequest) (any, error) {
-	receivers, err := normalizeReceivers(input.Receivers)
+	rawReceivers := input.Receivers
+	if c.receiver != "" {
+		rawReceivers = c.receiver
+	}
+	receivers, err := normalizeReceivers(rawReceivers)
 	if err != nil {
 		return nil, err
 	}
@@ -469,6 +484,17 @@ func normalizeReceivers(raw string) (string, error) {
 		return "", fmt.Errorf("send dingtalk message: at least one receiver is required")
 	}
 	return strings.Join(receivers, ","), nil
+}
+
+func normalizeReceiver(raw string) (string, error) {
+	receivers, err := normalizeReceivers(raw)
+	if err != nil {
+		return "", err
+	}
+	if strings.Contains(receivers, ",") {
+		return "", fmt.Errorf("send dingtalk message: exactly one receiver is required")
+	}
+	return receivers, nil
 }
 
 func addOptional(values map[string]any, key, value string) {

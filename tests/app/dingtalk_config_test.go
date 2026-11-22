@@ -87,7 +87,8 @@ func TestLoadDingTalkConfigDisabledByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadDingTalkConfig() error = %v", err)
 	}
-	if cfg.Enabled || cfg.BaseURL != "" || cfg.AppCode != "" || cfg.AppKey != "" || cfg.AppSecret != "" || cfg.Timeout != 0 {
+	if cfg.Enabled || cfg.BaseURL != "" || cfg.AppCode != "" || cfg.AppKey != "" || cfg.AppSecret != "" || cfg.Timeout != 0 ||
+		cfg.RedirectEnabled || cfg.RedirectReceiver != "" {
 		t.Errorf("config = %+v, want disabled zero delivery config", cfg)
 	}
 }
@@ -104,14 +105,52 @@ func TestLoadDingTalkConfigDefaults(t *testing.T) {
 
 func TestLoadDingTalkConfigDisabledSkipsDeliverySettings(t *testing.T) {
 	cfg, err := app.LoadDingTalkConfig(envMap(map[string]string{
-		"DINGTALK_NOTIFY_ENABLED": "false",
-		"DINGTALK_TIMEOUT":        "invalid",
+		"DINGTALK_NOTIFY_ENABLED":    "false",
+		"DINGTALK_TIMEOUT":           "invalid",
+		"DINGTALK_REDIRECT_ENABLED":  "invalid",
+		"DINGTALK_REDIRECT_RECEIVER": "dev-user",
 	}))
 	if err != nil {
 		t.Fatalf("LoadDingTalkConfig() error = %v", err)
 	}
-	if cfg.Enabled || cfg.BaseURL != "" || cfg.AppCode != "" || cfg.AppKey != "" || cfg.AppSecret != "" || cfg.Timeout != 0 {
+	if cfg.Enabled || cfg.BaseURL != "" || cfg.AppCode != "" || cfg.AppKey != "" || cfg.AppSecret != "" || cfg.Timeout != 0 ||
+		cfg.RedirectEnabled || cfg.RedirectReceiver != "" {
 		t.Errorf("config = %+v, want disabled zero delivery config", cfg)
+	}
+}
+
+func TestLoadDingTalkConfigRedirectOverride(t *testing.T) {
+	values := validDingTalkEnv()
+	values["DINGTALK_REDIRECT_ENABLED"] = " true "
+	values["DINGTALK_REDIRECT_RECEIVER"] = " dev-user "
+
+	cfg, err := app.LoadDingTalkConfig(envMap(values))
+	if err != nil {
+		t.Fatalf("LoadDingTalkConfig() error = %v", err)
+	}
+	if !cfg.RedirectEnabled || cfg.RedirectReceiver != "dev-user" {
+		t.Errorf("redirect config = enabled %t, receiver %q", cfg.RedirectEnabled, cfg.RedirectReceiver)
+	}
+}
+
+func TestLoadDingTalkConfigRequiresRedirectReceiver(t *testing.T) {
+	values := validDingTalkEnv()
+	values["DINGTALK_REDIRECT_ENABLED"] = "true"
+
+	_, err := app.LoadDingTalkConfig(envMap(values))
+	if err == nil || !strings.Contains(err.Error(), "DINGTALK_REDIRECT_RECEIVER is required") {
+		t.Fatalf("error = %v, want DINGTALK_REDIRECT_RECEIVER required", err)
+	}
+}
+
+func TestLoadDingTalkConfigRejectsMultipleRedirectReceivers(t *testing.T) {
+	values := validDingTalkEnv()
+	values["DINGTALK_REDIRECT_ENABLED"] = "true"
+	values["DINGTALK_REDIRECT_RECEIVER"] = "dev-user,other-user"
+
+	_, err := app.LoadDingTalkConfig(envMap(values))
+	if err == nil || !strings.Contains(err.Error(), "exactly one receiver is required") {
+		t.Fatalf("error = %v, want single receiver validation", err)
 	}
 }
 
@@ -123,6 +162,7 @@ func TestLoadDingTalkConfigRejectsInvalidValues(t *testing.T) {
 		want  string
 	}{
 		{"enabled", "DINGTALK_NOTIFY_ENABLED", "sometimes", "invalid DINGTALK_NOTIFY_ENABLED"},
+		{"redirect enabled", "DINGTALK_REDIRECT_ENABLED", "sometimes", "invalid DINGTALK_REDIRECT_ENABLED"},
 		{"base URL", "DINGTALK_BASE_URL", "", "base URL is required"},
 		{"app code", "DINGTALK_APP_CODE", "", "app code is required"},
 		{"app key", "DINGTALK_APP_KEY", "", "app key is required"},

@@ -278,6 +278,47 @@ func TestDingTalkClientSendAndCheckStatus(t *testing.T) {
 	}
 }
 
+func TestDingTalkClientOverridesReceiver(t *testing.T) {
+	var gotReceivers string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/prod-api/auth/open/platform/getToken":
+			fmt.Fprint(w, `{"code":200,"data":{"access_token":"token-1","expires_in":10}}`)
+		case "/prod-api/msg-center/api/send/msg":
+			var payload struct {
+				Receivers string `json:"receivers"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Errorf("decode send request: %v", err)
+			}
+			gotReceivers = payload.Receivers
+			fmt.Fprint(w, `{"code":200,"data":{"msgId":"message-1"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cfg := validDingTalkConfig(server.URL)
+	cfg.ReceiverOverride = " dev-user "
+	client, err := notificationclient.NewDingTalkClient(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Send(context.Background(), notificationclient.SendRequest{
+		Receivers: "real-user-1,real-user-2",
+		Title:     "提醒",
+		Content:   "审核工单",
+	})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if gotReceivers != "dev-user" {
+		t.Errorf("receivers = %q, want dev-user", gotReceivers)
+	}
+}
+
 func TestDingTalkClientRefreshesTokenAtEightyPercent(t *testing.T) {
 	start := time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC)
 	now := start
@@ -436,6 +477,7 @@ func TestDingTalkClientValidatesConfiguration(t *testing.T) {
 		{"app code", func(cfg *notificationclient.Config) { cfg.AppCode = "" }, "app code is required"},
 		{"app key", func(cfg *notificationclient.Config) { cfg.AppKey = "" }, "app key is required"},
 		{"app secret", func(cfg *notificationclient.Config) { cfg.AppSecret = "" }, "app secret is required"},
+		{"receiver override", func(cfg *notificationclient.Config) { cfg.ReceiverOverride = "first,second" }, "exactly one receiver is required"},
 		{"timeout", func(cfg *notificationclient.Config) { cfg.Timeout = -time.Second }, "timeout must not be negative"},
 	}
 	for _, tt := range tests {

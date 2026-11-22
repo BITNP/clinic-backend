@@ -67,11 +67,12 @@ func Run() {
 	var ticketNotifier *recordservice.DingTalkTicketNotifier
 	if dingtalkCfg.Enabled {
 		dingtalkClient, err = notificationclient.NewDingTalkClient(notificationclient.Config{
-			BaseURL:   dingtalkCfg.BaseURL,
-			AppCode:   dingtalkCfg.AppCode,
-			AppKey:    dingtalkCfg.AppKey,
-			AppSecret: dingtalkCfg.AppSecret,
-			Timeout:   dingtalkCfg.Timeout,
+			BaseURL:          dingtalkCfg.BaseURL,
+			AppCode:          dingtalkCfg.AppCode,
+			AppKey:           dingtalkCfg.AppKey,
+			AppSecret:        dingtalkCfg.AppSecret,
+			Timeout:          dingtalkCfg.Timeout,
+			ReceiverOverride: dingtalkCfg.RedirectReceiver,
 		})
 		if err != nil {
 			log.Fatalf("dingtalk client: %v", err)
@@ -94,6 +95,9 @@ func Run() {
 		)
 		if err != nil {
 			log.Fatalf("dingtalk notification templates: %v", err)
+		}
+		if dingtalkCfg.RedirectEnabled {
+			log.Println("dingtalk notifications redirected to the configured receiver")
 		}
 	} else {
 		log.Println("dingtalk ticket notifications disabled")
