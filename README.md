@@ -198,6 +198,20 @@ credential (the default URL is `http://message-gateway:8081` inside Compose).
 Do not set `NAPCAT_BASE_URL`; the legacy in-process manager must remain
 disabled.
 
+Ticket status messages use the separate V2 DingTalk message-center client and
+do not pass through the QQ message gateway. The backend sends to the record's
+`user` DingTalk id when a ticket becomes `confirmed`, `rejected`, `referred`, or
+`no_show`, then verifies the per-platform delivery status. Its
+`DINGTALK_BASE_URL`, `DINGTALK_APP_CODE`, and credential settings are documented
+in `CONFIGURATION.md`. Ticket notifications are disabled by default; set
+`DINGTALK_NOTIFY_ENABLED=true` after configuring the message center. Notification
+text and organization-specific fields are configurable through the
+`DINGTALK_TEMPLATE_*` and `DINGTALK_NOTIFICATION_*` settings. Confirmed tickets
+also receive a persisted pre-shift reminder 30 minutes before their service
+window by default. For notification testing, enable `DINGTALK_REDIRECT_ENABLED`
+and set `DINGTALK_REDIRECT_RECEIVER` to route every DingTalk message to one
+development account.
+
 The image tags in the commands above come from `.env`; see
 [CONFIGURATION.md](CONFIGURATION.md#production-stack-docker-composeprodyml) for
 pinning specific versions, including `HEALTH_MONITOR_IMAGE_TAG`.
@@ -354,20 +368,21 @@ the backend to the frontend's address. Because the frontend proxies `/api`,
 ## Run locally (development)
 
 `scripts/dev.sh` loads `.env` and starts bundled PostgreSQL, the fake CAS
-server, Redis, local RustFS (when `S3_ENDPOINT` points at it),
-`message-gateway`, and the backend. NapCat is external to the gateway stack;
-its optional sample stack is in
+server, the fake DingTalk message center, Redis, local RustFS (when
+`S3_ENDPOINT` points at it), `message-gateway`, and the backend. NapCat is
+external to the gateway stack; its optional sample stack is in
 `../message-gateway/docker-compose.napcat.yml`.
 
 ```bash
 scripts/dev.sh
 ```
 
-Use `--no-postgres`, `--no-cas`, `--no-redis`, `--no-storage`, or
-`--no-message-gateway` when a service is already running or the database,
-storage, or gateway is managed elsewhere. `--no-napcat` is a deprecated alias
-for `--no-message-gateway`. For testing without a QQ login, add `--fake-napcat`;
-it starts the dev fake OneBot server directly from `../message-gateway`. The complete
+Use `--no-postgres`, `--no-cas`, `--no-dingtalk`, `--no-redis`,
+`--no-storage`, or `--no-message-gateway` when a service is already running or
+the database, storage, or gateway is managed elsewhere. `--no-napcat` is a
+deprecated alias for `--no-message-gateway`. For testing without a QQ login,
+add `--fake-napcat`; it starts the dev fake OneBot server directly from
+`../message-gateway`. The complete
 local-development settings, defaults, and manual steps are in
 [CONFIGURATION.md](CONFIGURATION.md#local-development).
 

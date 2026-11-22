@@ -23,9 +23,10 @@ var (
 )
 
 type AdminRecordService struct {
-	db      *database.DB
-	tagSvc  *taggingservice.RecordTagService
-	actions *RecordActionService
+	db       *database.DB
+	tagSvc   *taggingservice.RecordTagService
+	actions  *RecordActionService
+	notifier TicketStatusNotifier
 }
 
 func NewAdminRecordService(db *database.DB) *AdminRecordService {
@@ -42,6 +43,12 @@ func (s *AdminRecordService) SetRecordTagService(tagSvc *taggingservice.RecordTa
 // journal and revert record operations. When unset, reverting is unavailable.
 func (s *AdminRecordService) SetRecordActionService(actions *RecordActionService) {
 	s.actions = actions
+}
+
+// SetTicketStatusNotifier attaches the guest notification sender used after
+// successful ticket state transitions.
+func (s *AdminRecordService) SetTicketStatusNotifier(notifier TicketStatusNotifier) {
+	s.notifier = notifier
 }
 
 type ListAdminRecordFilter struct {

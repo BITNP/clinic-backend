@@ -210,6 +210,116 @@ The gateway queue is in-memory and assumes one gateway instance per sender/QQ
 account. Pending messages are lost on gateway restart. See
 `message-gateway/README.md` and `message-gateway/API.md`.
 
+### DingTalk message center
+
+DingTalk notifications use the V2 message-center API through the reusable
+`internal/notification/client` package. This path is independent of the QQ
+`message-gateway` path. The backend uses it to notify the record's `user`
+DingTalk id when a ticket becomes `confirmed`, `rejected`, `referred`, or
+`no_show`. Notifications are disabled by default:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `DINGTALK_NOTIFY_ENABLED` | `false` | Enables ticket status notifications. When `false`, the DingTalk delivery settings below are ignored. |
+| `DINGTALK_BASE_URL` | — (required) | Message-center business base URL. HTTP and HTTPS are supported. |
+| `DINGTALK_APP_CODE` | — (required) | Authorized message-center application code, sent as `msg-center-app-code`. |
+| `DINGTALK_APP_KEY` | — (required) | Open-platform application key used by the token API. |
+| `DINGTALK_APP_SECRET` | — (required) | Open-platform application secret used by the token API. |
+| `DINGTALK_TIMEOUT` | `10s` | Per-request HTTP timeout; must be positive. |
+| `DINGTALK_REMINDER_LEAD_TIME` | `30m` | How long before the service start a confirmed ticket becomes eligible for its guest reminder. |
+| `DINGTALK_REMINDER_POLL_INTERVAL` | `1m` | How often the worker discovers and delivers due reminder jobs. |
+| `DINGTALK_REDIRECT_ENABLED` | `false` | Routes every DingTalk message to `DINGTALK_REDIRECT_RECEIVER` instead of its requested recipients. |
+| `DINGTALK_REDIRECT_RECEIVER` | empty | The single DingTalk account id used when `DINGTALK_REDIRECT_ENABLED=true`; required in that case. |
+
+The delivery settings are required only when `DINGTALK_NOTIFY_ENABLED=true`.
+Leaving it `false` means ticket transitions and cleanup remain unchanged while
+all DingTalk sends and status checks are skipped.
+
+For development or notifications testing, enable the receiver override to keep
+real guests and staff from receiving messages:
+
+```env
+DINGTALK_REDIRECT_ENABLED=true
+DINGTALK_REDIRECT_RECEIVER=development-dingtalk-user-id
+```
+
+The override replaces the message-center payload's `receivers` value for all
+DingTalk messages. Message content, templates, credentials, and delivery-status
+checks are unchanged. Startup fails if the override is enabled without exactly
+one receiver.
+
+Notification text is configurable with Go templates. Leave a template setting
+empty to use its built-in default. Use `\n` for a line break.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `DINGTALK_NOTIFICATION_TITLE` | `电脑诊所工单状态更新` | DingTalk notification title. |
+| `DINGTALK_NOTIFICATION_HEADER` | `网络开拓者协会` | Value rendered as `{{.HEDR}}`. |
+| `DINGTALK_NOTIFICATION_QQ_ACCOUNT` | empty | Appeal QQ rendered as `{{.QQAC}}`. |
+| `DINGTALK_NOTIFICATION_TRANSFER_ROOM` | empty | Transfer room rendered as `{{.TRRO}}`. |
+| `DINGTALK_NOTIFICATION_TRANSFER_ADDRESS` | empty | Transfer address rendered as `{{.TRLO}}`. |
+| `DINGTALK_TEMPLATE_CONFIRMED` | built-in approval example | Template for `confirmed`. |
+| `DINGTALK_TEMPLATE_REJECTED` | built-in rejection example | Template for `rejected`. |
+| `DINGTALK_TEMPLATE_REFERRED` | built-in referral example | Template for `referred`. |
+| `DINGTALK_TEMPLATE_NO_SHOW` | built-in no-show example | Template for `no_show`. |
+| `DINGTALK_TEMPLATE_REMINDER` | built-in reminder example | Template for confirmed-ticket pre-shift reminders. |
+
+Available template fields:
+
+| Field | Source |
+| --- | --- |
+| `HEDR` | `DINGTALK_NOTIFICATION_HEADER` |
+| `DATE` | Appointment date and service window, formatted `YYYY-MM-DD的HH:MM-HH:MM`. |
+| `ID` | Record id prefixed with `#`. |
+| `ROOM` | Booked room name. |
+| `LOCA` | Booked room address. |
+| `TRRO` | `DINGTALK_NOTIFICATION_TRANSFER_ROOM`. |
+| `TRLO` | `DINGTALK_NOTIFICATION_TRANSFER_ADDRESS`. |
+| `REAS` | Rejection or referral reason. |
+| `QQAC` | `DINGTALK_NOTIFICATION_QQ_ACCOUNT`. |
+
+Example override:
+
+```env
+DINGTALK_NOTIFICATION_QQ_ACCOUNT=123456789
+DINGTALK_NOTIFICATION_TRANSFER_ROOM=求是社区
+DINGTALK_NOTIFICATION_TRANSFER_ADDRESS=疏桐园D地下室D116
+DINGTALK_TEMPLATE_CONFIRMED=【{{.HEDR}}】工单{{.ID}}已通过，请于{{.DATE}}前往{{.ROOM}}。\n地址：{{.LOCA}}
+```
+
+When notifications are enabled, the backend scans at
+`DINGTALK_REMINDER_POLL_INTERVAL` for confirmed tickets whose service window is
+at most `DINGTALK_REMINDER_LEAD_TIME` away and has not started. It persists one
+reminder job per record and service window, rechecks eligibility before sending,
+and retries transient failures with backoff. Reminder jobs are stored in
+`clinic_record_dingtalk_reminder`, so they survive backend restarts.
+
+The client obtains an open-platform token with the configured key and secret,
+caches it, and requests a replacement on the first DingTalk operation at or
+after 80% of `expires_in`. The V2 API reports `expires_in` in minutes. Calls use
+`open-access-token` and `msg-center-app-code`; they return non-200 API `code`
+values as errors. After submission, the client queries the message status and
+requires a successful `dingTalk` detail with at least one successful recipient
+and no failed or unauthorized recipients. Notification delivery is best-effort:
+the ticket state remains committed if sending or status verification fails, and
+the failure is logged.
+
+For local development, `scripts/dev.sh` starts `fake/fake_dingtalk.go` on
+`:9998` when `DINGTALK_BASE_URL` is empty. To run it manually:
+
+```bash
+go run fake/fake_dingtalk.go
+export DINGTALK_BASE_URL=http://127.0.0.1:9998
+export DINGTALK_APP_CODE=local-dev-app
+export DINGTALK_APP_KEY=local-dev-key
+export DINGTALK_APP_SECRET=local-dev-secret
+```
+
+The fake implements token, send, and delivery-status requests. It prints each
+received method, path, query, headers, and formatted JSON body to stdout, while
+redacting application secrets and access tokens. Sent messages are kept in
+memory so their status can be queried until the process exits.
+
 ### Health monitor (`clinic-health-monitor`)
 
 `clinic-health-monitor` polls the backend's `/healthz` endpoint and the admin
@@ -452,11 +562,17 @@ environment variables), and then starts:
 
 1. bundled PostgreSQL on `:5432` and configures the host-run backend to use it;
 2. the fake CAS server on `:9999`;
-3. Redis on `:6379` (container, falling back to `redis-server`);
-4. RustFS and `rustfs-init` on `:9000` / `:9001` when `S3_ENDPOINT` points at
+3. the fake DingTalk message center on `:9998`;
+4. Redis on `:6379` (container, falling back to `redis-server`);
+5. RustFS and `rustfs-init` on `:9000` / `:9001` when `S3_ENDPOINT` points at
    local storage;
-5. message-gateway, gateway API on `:8081`;
-6. the backend on `:8080`.
+6. message-gateway, gateway API on `:8081`;
+7. the backend on `:8080`.
+
+The fake DingTalk writes received requests directly to the terminal. If
+`DINGTALK_BASE_URL` points at another host, `dev.sh` uses that service instead
+of starting the fake. Use `--no-dingtalk` only when all `DINGTALK_*` settings
+already point at a reachable message center.
 
 NapCat is external to the gateway stack. To use the optional sample, start it
 after the gateway network exists:
@@ -504,6 +620,7 @@ Defaults applied by `scripts/dev.sh` when the variables are unset:
 | `POSTGRES_USER` | `clinic` |
 | `POSTGRES_PASSWORD` | `clinic` |
 | `POSTGRES_DB` | `clinic` |
+| `DINGTALK_PORT` | `9998` |
 | `REDIS_PORT` | `6379` |
 | `BACKEND_PORT` | `8080` |
 | `REDIS_CONTAINER` | `clinic-dev-redis` |
@@ -516,6 +633,10 @@ Defaults applied by `scripts/dev.sh` when the variables are unset:
 | `REDIS_PASSWORD` | empty |
 | `REDIS_DB` | `0` |
 | `CAS_SERVER_URL` | `http://127.0.0.1:9999` |
+| `DINGTALK_BASE_URL` | `http://127.0.0.1:9998` |
+| `DINGTALK_APP_CODE` | `local-dev-app` |
+| `DINGTALK_APP_KEY` | `local-dev-key` |
+| `DINGTALK_APP_SECRET` | `local-dev-secret` |
 | `APP_BASE_URL` | `http://127.0.0.1:5173` |
 | `CAS_DEFAULT_REDIRECT` | `/` |
 | `SESSION_COOKIE_SAMESITE` | `lax` |
@@ -525,6 +646,13 @@ Manual setup:
 ```bash
 # 1. Start the fake CAS server (defaults to the manual-admin account)
 go run fake/fake_cas.go --role staff        # use admin or superadmin as needed
+
+# 1b. Start the fake DingTalk message center and point the backend at it
+go run fake/fake_dingtalk.go   # runs on :9998
+export DINGTALK_BASE_URL=http://127.0.0.1:9998
+export DINGTALK_APP_CODE=local-dev-app
+export DINGTALK_APP_KEY=local-dev-key
+export DINGTALK_APP_SECRET=local-dev-secret
 
 # 2. Start PostgreSQL and Redis (required; see docker-compose.yml)
 docker compose up -d db

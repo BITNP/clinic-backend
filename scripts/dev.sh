@@ -5,20 +5,24 @@
 #
 #   1. PostgreSQL             -> 127.0.0.1:5432 (docker compose)
 #   2. fake CAS server        -> http://127.0.0.1:9999
-#   3. Redis                  -> 127.0.0.1:6379 (docker, falls back to redis-server)
-#   4. RustFS + provisioning  -> http://127.0.0.1:9000, when S3 storage is local
-#   5. message-gateway        -> http://127.0.0.1:8081 (with fake NapCat)
-#   6. backend (this repo)    -> http://127.0.0.1:8080
+#   3. fake DingTalk          -> http://127.0.0.1:9998
+#   4. Redis                  -> 127.0.0.1:6379 (docker, falls back to redis-server)
+#   5. RustFS + provisioning  -> http://127.0.0.1:9000, when S3 storage is local
+#   6. message-gateway        -> http://127.0.0.1:8081 (with fake NapCat)
+#   7. backend (this repo)    -> http://127.0.0.1:8080
 #
 # The backend runs in the foreground with its stdout/stderr untouched, so
 # everything main.go logs (Gin routes, request logs, startup messages) stays
-# in your terminal. Only the helpers (PostgreSQL, fake CAS, Redis, RustFS,
-# message-gateway, and fake NapCat) are backgrounded. Ctrl-C stops the backend
-# and the helpers this script started.
-# PostgreSQL, RustFS, and message-gateway are left running if they were already
-# running before this script started.
+# in your terminal. Only the helpers (PostgreSQL, fake CAS, fake DingTalk,
+# Redis, RustFS, message-gateway, and fake NapCat) are backgrounded. The fake
+# DingTalk also writes every request it receives directly to the terminal.
+# Ctrl-C stops the backend and the helpers this script started. PostgreSQL,
+# RustFS, and message-gateway are left running if they were already running
+# before this script started.
 #
-# Usage: scripts/dev.sh [--role staff|admin|superadmin] [--no-postgres] [--no-cas] [--no-redis] [--no-storage] [--no-message-gateway] [--no-fake-napcat]
+# Usage: scripts/dev.sh [--role staff|admin|superadmin] [--no-postgres]
+#                       [--no-cas] [--no-dingtalk] [--no-redis] [--no-storage]
+#                       [--no-message-gateway] [--no-fake-napcat]
 
 set -Eeuo pipefail
 
@@ -45,6 +49,7 @@ POSTGRES_PORT=${POSTGRES_PORT:-5432}
 POSTGRES_USER=${POSTGRES_USER:-clinic}
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-clinic}
 POSTGRES_DB=${POSTGRES_DB:-clinic}
+DINGTALK_PORT=${DINGTALK_PORT:-9998}
 REDIS_PORT=${REDIS_PORT:-6379}
 BACKEND_PORT=${BACKEND_PORT:-8080}
 REDIS_CONTAINER=${REDIS_CONTAINER:-clinic-dev-redis}
@@ -61,6 +66,7 @@ mkdir -p "$LOG_DIR"
 
 START_POSTGRES=1
 START_CAS=1
+START_DINGTALK=1
 START_REDIS=1
 START_STORAGE=1
 START_MESSAGE_GATEWAY=1
@@ -80,6 +86,7 @@ Options:
   --no-postgres   Do not start the bundled PostgreSQL service (assume an
                   external database or SQLite is configured)
   --no-cas        Do not start the fake CAS server (assume one is running)
+  --no-dingtalk   Do not start the fake DingTalk message-center server
   --no-redis      Do not start Redis (assume one is running)
   --no-storage    Do not start or provision local RustFS (assume configured
                   storage is already running, or use an external S3 endpoint)
@@ -106,6 +113,7 @@ while (($# > 0)); do
 	--role=*) CAS_ROLE=${1#*=} ;;
 	--no-postgres) START_POSTGRES=0 ;;
 	--no-cas) START_CAS=0 ;;
+	--no-dingtalk) START_DINGTALK=0 ;;
 	--no-redis) START_REDIS=0 ;;
 	--no-storage | --no-rustfs) START_STORAGE=0 ;;
 	--no-message-gateway | --no-napcat) START_MESSAGE_GATEWAY=0 ;;
@@ -159,6 +167,7 @@ wait_for_port() {
 
 CAS_PGID=""
 POSTGRES_STARTED=0
+DINGTALK_PGID=""
 REDIS_CONTAINER_STARTED=0
 REDIS_PGID=""
 MESSAGE_GATEWAY_PGID=""
@@ -203,6 +212,11 @@ cleanup() {
 	if [[ -n "$MESSAGE_GATEWAY_PGID" ]]; then
 		log "stopping message-gateway"
 		kill_group "$MESSAGE_GATEWAY_PGID"
+	fi
+
+	if [[ -n "$DINGTALK_PGID" ]]; then
+		log "stopping fake DingTalk"
+		kill_group "$DINGTALK_PGID"
 	fi
 
 	if [[ -n "$CAS_PGID" ]]; then
@@ -303,7 +317,53 @@ start_cas() {
 	log "fake CAS ready ($CAS_ROLE role)"
 }
 
-# --- 3. Redis ----------------------------------------------------------------
+# --- 3. fake DingTalk --------------------------------------------------------
+
+start_fake_dingtalk() {
+	case "${DINGTALK_NOTIFY_ENABLED:-false}" in
+	0 | f | F | false | FALSE | False)
+		log "DingTalk ticket notifications disabled"
+		return
+		;;
+	esac
+
+	local local_url=http://127.0.0.1:$DINGTALK_PORT
+	export DINGTALK_BASE_URL=${DINGTALK_BASE_URL:-$local_url}
+	DINGTALK_BASE_URL=${DINGTALK_BASE_URL%/}
+
+	case "$DINGTALK_BASE_URL" in
+	"$local_url" | http://localhost:"$DINGTALK_PORT") ;;
+	*)
+		log "using configured DingTalk message center at $DINGTALK_BASE_URL"
+		return
+		;;
+	esac
+
+	export DINGTALK_BASE_URL=$local_url
+	export DINGTALK_APP_CODE=${DINGTALK_APP_CODE:-local-dev-app}
+	export DINGTALK_APP_KEY=${DINGTALK_APP_KEY:-local-dev-key}
+	export DINGTALK_APP_SECRET=${DINGTALK_APP_SECRET:-local-dev-secret}
+
+	if port_open 127.0.0.1 "$DINGTALK_PORT"; then
+		log "port $DINGTALK_PORT already in use - reusing existing fake DingTalk"
+		return
+	fi
+
+	command -v go >/dev/null 2>&1 || die "go is not installed"
+	[[ -f "$ROOT_DIR/fake/fake_dingtalk.go" ]] || die "fake/fake_dingtalk.go not found"
+
+	log "starting fake DingTalk on :$DINGTALK_PORT (requests are printed below)"
+	export FAKE_DINGTALK_ADDR=127.0.0.1:$DINGTALK_PORT
+	spawn go run fake/fake_dingtalk.go
+	DINGTALK_PGID=$SPAWNED_PGID
+
+	if ! wait_for_port 127.0.0.1 "$DINGTALK_PORT" "fake DingTalk" 60; then
+		die "fake DingTalk did not come up"
+	fi
+	log "fake DingTalk ready: $DINGTALK_BASE_URL"
+}
+
+# --- 4. Redis ----------------------------------------------------------------
 
 start_redis_container() {
 	docker run --rm --name "$REDIS_CONTAINER" \
@@ -351,7 +411,7 @@ start_redis() {
 	log "Redis ready"
 }
 
-# --- 4. RustFS ---------------------------------------------------------------
+# --- 5. RustFS ---------------------------------------------------------------
 
 storage_host() {
 	local url=$1
@@ -412,7 +472,7 @@ start_storage() {
 	log "storage ready"
 }
 
-# --- 5. message-gateway ------------------------------------------------------
+# --- 6. message-gateway ------------------------------------------------------
 
 start_message_gateway() {
 	if ((!START_MESSAGE_GATEWAY)); then
@@ -498,7 +558,7 @@ start_fake_napcat() {
 	log "fake NapCat messages: curl http://127.0.0.1:$fake_napcat_port/_messages"
 }
 
-# --- 6. backend --------------------------------------------------------------
+# --- 7. backend --------------------------------------------------------------
 
 start_backend() {
 	if port_open 127.0.0.1 "$BACKEND_PORT"; then
@@ -529,6 +589,7 @@ fi
 
 start_postgres
 ((START_CAS)) && start_cas
+((START_DINGTALK)) && start_fake_dingtalk
 ((START_REDIS)) && start_redis
 start_storage
 start_message_gateway

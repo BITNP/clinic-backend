@@ -77,6 +77,7 @@ func openDatabase() (*gorm.DB, *databasepkg.DB) {
 		&recordmodel.ClinicRecordArrival{},
 		&recordmodel.ClinicRecordRejection{},
 		&recordmodel.ClinicRecordReferral{},
+		&recordmodel.ClinicRecordDingTalkReminder{},
 		&authmodel.AuthSession{},
 		&schedulingmodel.ClinicWorkSchedule{},
 		&schedulingmodel.ClinicWorkScheduleWeekday{},

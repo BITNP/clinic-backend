@@ -13,6 +13,7 @@ import (
 	recordmodel "clinic-backend/internal/record/model"
 	recordservice "clinic-backend/internal/record/service"
 	roommodel "clinic-backend/internal/room/model"
+	schedulingmodel "clinic-backend/internal/scheduling/model"
 	staffmodel "clinic-backend/internal/staff/model"
 	taggingservice "clinic-backend/internal/tagging/service"
 	"clinic-backend/internal/testutil"
@@ -35,6 +36,8 @@ func migrateAdminRecordTestModels(t *testing.T, db *gorm.DB) {
 		&recordmodel.ClinicRecordArrival{},
 		&recordmodel.ClinicRecordRejection{},
 		&recordmodel.ClinicRecordReferral{},
+		&recordmodel.ClinicRecordDingTalkReminder{},
+		&schedulingmodel.ClinicServiceDate{},
 		&staffmodel.ClinicStaff{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
@@ -47,6 +50,12 @@ func setupAdminRecordTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get SQL database: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
 	migrateAdminRecordTestModels(t, db)
 	return db
 }

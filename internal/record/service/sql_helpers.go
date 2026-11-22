@@ -28,6 +28,7 @@ const recordDeviceColumns = "record_id, laptop_model, password"
 const recordWorkerColumns = "record_id, worker, worker_desc, finish_time"
 const recordRejectionColumns = "record_id, reject_reason"
 const recordReferralColumns = "record_id, referral_reason"
+const recordDingTalkReminderColumns = "id, record_id, service_date_id, status, attempts, next_attempt_at, lease_until, claim_token, sent_at, last_error, created_at, updated_at"
 const recordArrivalColumns = "record_id, arrive_time"
 const recordPhotoColumns = "id, record_id, object_key, content_type, size, position, created_at"
 const serviceDateColumns = "id, capacity, room_id, date, start_time, end_time, title"
@@ -112,6 +113,38 @@ func scanRecordReferral(row rowScanner) (recordmodel.ClinicRecordReferral, error
 	var referral recordmodel.ClinicRecordReferral
 	err := row.Scan(&referral.RecordID, &referral.ReferralReason)
 	return referral, err
+}
+
+func scanRecordDingTalkReminder(row rowScanner) (recordmodel.ClinicRecordDingTalkReminder, error) {
+	var reminder recordmodel.ClinicRecordDingTalkReminder
+	var leaseUntil, sentAt, createdAt, updatedAt sql.NullTime
+	err := row.Scan(
+		&reminder.ID,
+		&reminder.RecordID,
+		&reminder.ServiceDateID,
+		&reminder.Status,
+		&reminder.Attempts,
+		&reminder.NextAttemptAt,
+		&leaseUntil,
+		&reminder.ClaimToken,
+		&sentAt,
+		&reminder.LastError,
+		&createdAt,
+		&updatedAt,
+	)
+	if leaseUntil.Valid {
+		reminder.LeaseUntil = &leaseUntil.Time
+	}
+	if sentAt.Valid {
+		reminder.SentAt = &sentAt.Time
+	}
+	if createdAt.Valid {
+		reminder.CreatedAt = createdAt.Time
+	}
+	if updatedAt.Valid {
+		reminder.UpdatedAt = updatedAt.Time
+	}
+	return reminder, err
 }
 
 func scanRecordArrival(row rowScanner) (recordmodel.ClinicRecordArrival, error) {
