@@ -56,16 +56,16 @@ func (p Payload) MarshalJSON() ([]byte, error) {
 
 // Event is one immutable business-history record.
 type Event struct {
-	ID              uint64    `gorm:"primaryKey;autoIncrement;column:id"`
-	OccurredAt      time.Time `gorm:"not null;index:idx_journal_entity_time,priority:3;index:idx_journal_actor_time,priority:3;column:occurred_at"`
-	RecordedAt      time.Time `gorm:"not null;column:recorded_at"`
-	ActorType       string    `gorm:"size:32;not null;index:idx_journal_actor_time,priority:1;column:actor_type"`
-	ActorID         string    `gorm:"size:128;not null;index:idx_journal_actor_time,priority:2;column:actor_id"`
-	Action          string    `gorm:"size:64;not null;column:action"`
-	EntityType      string    `gorm:"size:32;not null;index:idx_journal_entity_time,priority:1;column:entity_type"`
-	EntityID        string    `gorm:"size:128;not null;index:idx_journal_entity_time,priority:2;column:entity_id"`
-	OperationID     string    `gorm:"size:64;not null;index;column:operation_id"`
-	CausedByEventID *uint64   `gorm:"index;column:caused_by_event_id"`
+	ID              uint64    `gorm:"primaryKey;autoIncrement;column:id" json:"id"`
+	OccurredAt      time.Time `gorm:"not null;index:idx_journal_entity_time,priority:3;index:idx_journal_actor_time,priority:3;column:occurred_at" json:"occurred_at"`
+	RecordedAt      time.Time `gorm:"not null;column:recorded_at" json:"recorded_at"`
+	ActorType       string    `gorm:"size:32;not null;index:idx_journal_actor_time,priority:1;column:actor_type" json:"actor_type"`
+	ActorID         string    `gorm:"size:128;not null;index:idx_journal_actor_time,priority:2;column:actor_id" json:"actor_id"`
+	Action          string    `gorm:"size:64;not null;column:action" json:"action"`
+	EntityType      string    `gorm:"size:32;not null;index:idx_journal_entity_time,priority:1;column:entity_type" json:"entity_type"`
+	EntityID        string    `gorm:"size:128;not null;index:idx_journal_entity_time,priority:2;column:entity_id" json:"entity_id"`
+	OperationID     string    `gorm:"size:64;not null;index;column:operation_id" json:"operation_id"`
+	CausedByEventID *uint64   `gorm:"index;column:caused_by_event_id" json:"caused_by_event_id"`
 	Details         Payload   `gorm:"type:jsonb;not null;column:details" json:"details"`
 }
 

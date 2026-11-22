@@ -103,6 +103,32 @@ func TestJournalListFiltersAndPaginates(t *testing.T) {
 		t.Fatalf("details = %+v", first.Items[0].Details)
 	}
 
+	var response map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode journal response keys: %v", err)
+	}
+	items, ok := response["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("journal response items = %#v", response["items"])
+	}
+	event, ok := items[0].(map[string]any)
+	if !ok {
+		t.Fatalf("journal response event = %#v", items[0])
+	}
+	for _, key := range []string{
+		"id", "occurred_at", "recorded_at", "actor_type", "actor_id", "action",
+		"entity_type", "entity_id", "operation_id", "caused_by_event_id", "details",
+	} {
+		if _, exists := event[key]; !exists {
+			t.Errorf("journal response missing %q: %s", key, w.Body.String())
+		}
+	}
+	for _, key := range []string{"ID", "OccurredAt", "RecordedAt", "ActorType", "EntityType"} {
+		if _, exists := event[key]; exists {
+			t.Errorf("journal response leaked Go field %q: %s", key, w.Body.String())
+		}
+	}
+
 	w = testutil.DoRequest(
 		t,
 		r,
