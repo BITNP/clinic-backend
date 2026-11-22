@@ -19,6 +19,8 @@ import (
 	"clinic-backend/internal/changes"
 	confighandler "clinic-backend/internal/config/handler"
 	configservice "clinic-backend/internal/config/service"
+	"clinic-backend/internal/journal"
+	journalhandler "clinic-backend/internal/journal/handler"
 	"clinic-backend/internal/legacy"
 	"clinic-backend/internal/message"
 	"clinic-backend/internal/message/napcat"
@@ -69,6 +71,8 @@ func Run() {
 	}
 
 	db, rawDB := openDatabase()
+	journalSvc := journal.NewService(rawDB)
+	journalH := journalhandler.NewHandler(journalSvc)
 	configSvc := configservice.NewConfigService(rawDB)
 	if err := configSvc.EnsureRuntimeSettingsWithInitialValues(legacyRuntimeSettingValues(os.Getenv)); err != nil {
 		closeDatabase(db)
@@ -82,6 +86,7 @@ func Run() {
 		closeDatabase(db)
 		log.Fatalf("load runtime configuration: %v", err)
 	}
+	configSvc.SetJournalService(journalSvc)
 	runtimeSettings := configSvc.Current()
 	dingtalkRuntime := newDingTalkRuntimeManager(serviceDateLoc)
 	if err := dingtalkRuntime.Initialize(runtimeSettings); err != nil {
@@ -214,6 +219,7 @@ func Run() {
 	recordActionSvc.SetWindowGetter(func() time.Duration { return configSvc.Current().RecordActionWindow })
 	adminRecordSvc.SetRecordActionService(recordActionSvc)
 	adminRecordSvc.SetTicketStatusNotifier(dingtalkRuntime)
+	adminRecordSvc.SetJournalService(journalSvc)
 	adminRecordH := recordhandler.NewAdminRecordHandler(adminRecordSvc)
 
 	workScheduleSvc := schedulingservice.NewWorkScheduleService(rawDB)
@@ -280,6 +286,7 @@ func Run() {
 		CampusH:       campusH,
 		RoomH:         roomH,
 		ConfigH:       configH,
+		JournalH:      journalH,
 		StaffH:        staffH,
 		WorkScheduleH: workScheduleH,
 		AdminRecordH:  adminRecordH,
@@ -305,11 +312,13 @@ func Run() {
 			DB:        rawDB,
 			Location:  serviceDateLoc,
 			LeadTimes: runtimeSettings.ServiceDateReminderLeadTimes,
+			Journal:   journalSvc,
 		}
 		delivery := &schedulingservice.ReminderDelivery{
 			DB:        rawDB,
 			Discovery: discovery,
 			Client:    &http.Client{},
+			Journal:   journalSvc,
 			Config: func() (schedulingservice.ReminderDeliveryConfig, error) {
 				cfg, err := LoadServiceDateReminderConfig(configSvc.Current())
 				if err != nil {

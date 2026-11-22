@@ -1157,6 +1157,98 @@ curl -X DELETE "$BASE/api/admin/config/items/10" \
   -b cookies.txt -H "X-CSRF-Token: $CSRF"
 ```
 
+## Admin: business journal
+
+The journal is an append-only business history. Successful record staff
+actions, record undo operations, configuration item updates, and reminder
+notification lifecycle events are written in the same database transaction as
+their corresponding state change. Read operations are not journaled.
+
+Journal entries are immutable. A record undo creates a new `record.reverted`
+event and does not modify the original event. Write-only and known secret
+configuration values are stored as `{"changed":true,"redacted":true}`.
+
+### `GET /api/admin/journal`
+
+**Description:** Lists journal events newest first. Requires an admin or
+superadmin session or Keycloak token. Uses cursor pagination instead of the
+page/pageSize convention used by older list endpoints.
+
+**Query parameters**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `entity_type` | string | no | Exact entity type, for example `record`, `service_date`, or `config_item`. |
+| `entity_id` | string | no | Exact entity identifier. |
+| `actor_type` | string | no | One of `staff`, `customer`, `system`, or `integration`. |
+| `actor_id` | string | no | Exact actor identifier. Staff IDs use their decimal string form. |
+| `action` | string | no | Exact stable action, for example `record.confirmed`. |
+| `from` | string | no | Inclusive lower `occurred_at` bound in RFC3339 format. |
+| `to` | string | no | Inclusive upper `occurred_at` bound in RFC3339 format. |
+| `cursor` | integer | no | Return events with IDs lower than this cursor. |
+| `limit` | integer | no | Page size from 1 to 100; defaults to 50. |
+
+**Response `200 OK`**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `items` | array | Journal events, newest first. |
+| `items[].id` | integer | Monotonic event ID used for cursor pagination. |
+| `items[].occurred_at` | string | Server-recorded event time in RFC3339. |
+| `items[].recorded_at` | string | Persistence time in RFC3339. |
+| `items[].actor_type` | string | Actor category. |
+| `items[].actor_id` | string | Trusted actor identifier. |
+| `items[].action` | string | Stable action name. |
+| `items[].entity_type` | string | Affected entity category. |
+| `items[].entity_id` | string | Affected entity identifier. |
+| `items[].operation_id` | string | Groups events created by one operation. |
+| `items[].caused_by_event_id` | integer or null | Optional causal event reference. |
+| `items[].details` | object | Versioned operation-specific JSON payload. |
+| `next_cursor` | integer or null | Pass as `cursor` to request the next page; null means no more results. |
+
+```json
+{
+  "items": [
+    {
+      "id": 1002,
+      "occurred_at": "2026-11-22T02:05:00Z",
+      "recorded_at": "2026-11-22T02:05:00.012Z",
+      "actor_type": "staff",
+      "actor_id": "42",
+      "action": "record.confirmed",
+      "entity_type": "record",
+      "entity_id": "123",
+      "operation_id": "op_5f5f0ac1d4924c9f9d2d0e1b195f4c42",
+      "caused_by_event_id": null,
+      "details": {
+        "version": 1,
+        "changes": {
+          "status": {
+            "before": "pending",
+            "after": "confirmed"
+          },
+          "approver_id": {
+            "before": null,
+            "after": 42
+          }
+        }
+      }
+    }
+  ],
+  "next_cursor": 1002
+}
+```
+
+**Error responses:** `400` (invalid actor type, cursor, limit, time bound, or
+time range), `401`, `403`, `500`.
+
+**curl**
+
+```bash
+curl "$BASE/api/admin/journal?entity_type=record&entity_id=123&limit=20" \
+  -b cookies.txt
+```
+
 ## Admin: records
 
 Record lifecycle states:

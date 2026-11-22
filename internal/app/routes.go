@@ -5,6 +5,7 @@ import (
 	authhandler "clinic-backend/internal/auth/handler"
 	"clinic-backend/internal/changes"
 	confighandler "clinic-backend/internal/config/handler"
+	journalhandler "clinic-backend/internal/journal/handler"
 	"clinic-backend/internal/legacy"
 	recordhandler "clinic-backend/internal/record/handler"
 	roomhandler "clinic-backend/internal/room/handler"
@@ -23,6 +24,7 @@ type RouterConfig struct {
 	CampusH       *roomhandler.CampusHandler
 	RoomH         *roomhandler.RoomHandler
 	ConfigH       *confighandler.ConfigHandler
+	JournalH      *journalhandler.Handler
 	StaffH        *staffhandler.StaffHandler
 	WorkScheduleH *schedulinghandler.WorkScheduleHandler
 	AdminRecordH  *recordhandler.AdminRecordHandler
@@ -47,6 +49,7 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 		campusH:       cfg.CampusH,
 		roomH:         cfg.RoomH,
 		configH:       cfg.ConfigH,
+		journalH:      cfg.JournalH,
 		staffH:        cfg.StaffH,
 		workScheduleH: cfg.WorkScheduleH,
 		adminRecordH:  cfg.AdminRecordH,
@@ -70,6 +73,7 @@ type routeHandlers struct {
 	campusH       *roomhandler.CampusHandler
 	roomH         *roomhandler.RoomHandler
 	configH       *confighandler.ConfigHandler
+	journalH      *journalhandler.Handler
 	staffH        *staffhandler.StaffHandler
 	workScheduleH *schedulinghandler.WorkScheduleHandler
 	adminRecordH  *recordhandler.AdminRecordHandler
@@ -176,6 +180,13 @@ func (h routeHandlers) router() *gin.Engine {
 		config.POST("/items", h.configH.CreateItem)
 		config.PUT("/items/:id", h.configH.UpdateItem)
 		config.DELETE("/items/:id", h.configH.DeleteItem)
+	}
+
+	// ── Admin: Business Journal ───────────────────────────────────────────
+	journalRead := r.Group("/api/admin/journal")
+	journalRead.Use(h.adminAuth, authhandler.RequireAdmin)
+	{
+		journalRead.GET("", h.journalH.List)
 	}
 
 	// ── Admin: Records (staff can read and perform site operations) ───────
