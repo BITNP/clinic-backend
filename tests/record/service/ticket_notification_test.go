@@ -353,6 +353,28 @@ func TestConfirmToRoomNotifiesSelectedRoom(t *testing.T) {
 	}
 }
 
+func TestConfirmToRoomRejectsUnavailableRoom(t *testing.T) {
+	db := setupAdminRecordTestDB(t)
+	source := seedActionRoom(t, db)
+	disabled := roommodel.ClinicRoom{Name: "Disabled", Address: "Disabled Address", Enabled: false}
+	if err := db.Create(&disabled).Error; err != nil {
+		t.Fatal(err)
+	}
+	record := seedActionRecord(t, db, recordmodel.RecordStatusPending, source.ID)
+	svc := recordservice.NewAdminRecordService(testutil.RawDB(t, db))
+
+	_, err := svc.MarkConfirmedToRoom(context.Background(), record.ID, &disabled.ID, 7)
+	if !errors.Is(err, recordservice.ErrRoomUnavailable) {
+		t.Fatalf("error = %v, want ErrRoomUnavailable", err)
+	}
+	if err := db.First(&record, record.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != recordmodel.RecordStatusPending || record.RoomID != source.ID {
+		t.Fatalf("record = status %s, room %d; want pending in room %d", record.Status, record.RoomID, source.ID)
+	}
+}
+
 func TestTicketTransitionSkipsUnsupportedStatus(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)
