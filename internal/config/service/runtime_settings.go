@@ -57,6 +57,7 @@ const (
 	runtimeSettingDingTalkConfirmedTemplate = "DINGTALK_TEMPLATE_CONFIRMED"
 	runtimeSettingDingTalkRejectedTemplate  = "DINGTALK_TEMPLATE_REJECTED"
 	runtimeSettingDingTalkReferredTemplate  = "DINGTALK_TEMPLATE_REFERRED"
+	runtimeSettingDingTalkTransferTemplate  = "DINGTALK_TEMPLATE_TRANSFER"
 	runtimeSettingDingTalkNoShowTemplate    = "DINGTALK_TEMPLATE_NO_SHOW"
 	runtimeSettingDingTalkReminderTemplate  = "DINGTALK_TEMPLATE_REMINDER"
 )
@@ -71,8 +72,10 @@ const (
 	DefaultDingTalkConfirmedTemplate  = "【{{.HEDR}}】您的预约已通过，请于{{.DATE}}前往{{.ROOM}}诊室。诊室地址为{{.LOCA}}。若因故无法按时前往，请在电脑义诊平台删除预约。\n感谢您对网协工作的理解！"
 	DefaultDingTalkRejectedTemplate   = "【{{.HEDR}}】您于{{.DATE}}的预约被驳回，驳回原因为：\n{{.REAS}}\n感谢您对网协工作的理解！"
 	DefaultDingTalkReferredTemplate   = "【{{.HEDR}}】您于{{.DATE}}的预约建议联系售后进行维修，详细情况说明：\n{{.REAS}}\n感谢您对网协工作的理解！"
+	DefaultDingTalkTransferTemplate   = "【{{.HEDR}}】您于{{.DATE}}的预约被转送至{{.TRRO}}，请在预约时间前往{{.TRRO}}。诊室地址为{{.TRLO}}。\n感谢您对网协工作的理解！"
 	DefaultDingTalkNoShowTemplate     = "【{{.HEDR}}】由于您未在值班时间前往诊所，您于{{.DATE}}的预约已关闭。未到诊所会导致您后两天无法预约。若您并未未到诊所，请联系{{.QQAC}}进行申诉。\n感谢您对网协工作的理解！"
 	DefaultDingTalkReminderTemplate   = "【{{.HEDR}}】您预约的位于{{.ROOM}}的值班即将开始，请在{{.DATE}}前往{{.ROOM}}诊室。诊所地址为{{.LOCA}}。"
+	DefaultDingTalkTransferTitle      = "工单转诊"
 )
 
 //go:embed data/template.json
@@ -138,6 +141,7 @@ var runtimeSettingExpectedTypes = map[string]configmodel.ConfigValueType{
 	runtimeSettingDingTalkConfirmedTemplate: configmodel.ConfigValueTypeString,
 	runtimeSettingDingTalkRejectedTemplate:  configmodel.ConfigValueTypeString,
 	runtimeSettingDingTalkReferredTemplate:  configmodel.ConfigValueTypeString,
+	runtimeSettingDingTalkTransferTemplate:  configmodel.ConfigValueTypeString,
 	runtimeSettingDingTalkNoShowTemplate:    configmodel.ConfigValueTypeString,
 	runtimeSettingDingTalkReminderTemplate:  configmodel.ConfigValueTypeString,
 }
@@ -318,6 +322,7 @@ type DingTalkRuntimeSettings struct {
 	ConfirmedTemplate    string
 	RejectedTemplate     string
 	ReferredTemplate     string
+	TransferTemplate     string
 	NoShowTemplate       string
 	ReminderTemplate     string
 }
@@ -566,6 +571,8 @@ func loadRuntimeSettings(q interface{ QueryRow(string, ...any) *sql.Row }) (Runt
 			settings.DingTalk.RejectedTemplate = normalized
 		case runtimeSettingDingTalkReferredTemplate:
 			settings.DingTalk.ReferredTemplate = normalized
+		case runtimeSettingDingTalkTransferTemplate:
+			settings.DingTalk.TransferTemplate = normalized
 		case runtimeSettingDingTalkNoShowTemplate:
 			settings.DingTalk.NoShowTemplate = normalized
 		case runtimeSettingDingTalkReminderTemplate:
@@ -814,6 +821,7 @@ func validateRuntimeSettingValue(name, raw string) (string, error) {
 	case runtimeSettingDingTalkConfirmedTemplate,
 		runtimeSettingDingTalkRejectedTemplate,
 		runtimeSettingDingTalkReferredTemplate,
+		runtimeSettingDingTalkTransferTemplate,
 		runtimeSettingDingTalkNoShowTemplate,
 		runtimeSettingDingTalkReminderTemplate:
 		if err := validateDingTalkTemplate(name, value); err != nil {
