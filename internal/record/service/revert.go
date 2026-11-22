@@ -27,7 +27,7 @@ func (s *AdminRecordService) recordAction(ctx context.Context, entry RecordActio
 // snapshotTx captures every piece of mutable state that a record action may
 // overwrite, so the action can later be reverted by restoring it.
 func (s *AdminRecordService) snapshotTx(tx *sql.Tx, rec recordmodel.ClinicRecord) (RecordSnapshot, error) {
-	snap := RecordSnapshot{Status: rec.Status}
+	snap := RecordSnapshot{Status: rec.Status, RoomID: rec.RoomID}
 	if rec.ApproverID != nil {
 		value := *rec.ApproverID
 		snap.ApproverID = &value
@@ -196,9 +196,13 @@ func (s *AdminRecordService) Revert(ctx context.Context, actorID int, id uint) (
 
 // restoreSnapshotTx writes a snapshot back onto a record and its side tables.
 func (s *AdminRecordService) restoreSnapshotTx(tx *sql.Tx, rec *recordmodel.ClinicRecord, snap RecordSnapshot, prevSeq uint, prevToken string) error {
+	roomID := snap.RoomID
+	if roomID == 0 {
+		roomID = rec.RoomID
+	}
 	if _, err := tx.Exec(
-		"UPDATE clinic_record SET status = $1, approver_id = $2, action_seq = $3, action_token = $4 WHERE id = $5",
-		snap.Status, nullableUint(snap.ApproverID), prevSeq, prevToken, rec.ID,
+		"UPDATE clinic_record SET status = $1, room = $2, approver_id = $3, action_seq = $4, action_token = $5 WHERE id = $6",
+		snap.Status, roomID, nullableUint(snap.ApproverID), prevSeq, prevToken, rec.ID,
 	); err != nil {
 		return fmt.Errorf("restore record %d: %w", rec.ID, err)
 	}

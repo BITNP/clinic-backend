@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -125,6 +126,77 @@ func TestAdminRecordHandlerListSearchByRealname(t *testing.T) {
 		if result.Total != tc.want {
 			t.Errorf("%s: total %d, want %d", tc.query, result.Total, tc.want)
 		}
+	}
+}
+
+func TestAdminRecordHandlerConfirmMovesToSelectedRoom(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db, err := gorm.Open(sqlite.Open(":memory:?_fk=1"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open fake database: %v", err)
+	}
+	if err := db.AutoMigrate(
+		&roommodel.ClinicCampus{},
+		&roommodel.ClinicRoom{},
+		&recordmodel.ClinicRecord{},
+		&recordmodel.ClinicRecordDevice{},
+		&recordmodel.ClinicRecordWorker{},
+		&recordmodel.ClinicRecordPhoto{},
+		&recordmodel.ClinicRecordArrival{},
+		&recordmodel.ClinicRecordRejection{},
+		&recordmodel.ClinicRecordReferral{},
+		&staffmodel.ClinicStaff{},
+	); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	source := roommodel.ClinicRoom{Name: "Source", Address: "Source Address", Enabled: true}
+	destination := roommodel.ClinicRoom{Name: "Destination", Address: "Destination Address", Enabled: true}
+	if err := db.Create(&source).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&destination).Error; err != nil {
+		t.Fatal(err)
+	}
+	record := recordmodel.ClinicRecord{
+		User:            "u",
+		Realname:        "r",
+		PhoneNum:        "p",
+		Status:          recordmodel.RecordStatusPending,
+		AppointmentTime: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
+		QuestionDesc:    "x",
+		RoomID:          source.ID,
+	}
+	if err := db.Create(&record).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	h := recordhandler.NewAdminRecordHandler(recordservice.NewAdminRecordService(testutil.RawDB(t, db)))
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("staff", staffmodel.ClinicStaff{ID: 7})
+	})
+	router.POST("/api/admin/records/:id/confirm", h.Confirm)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/admin/records/"+testutil.Itoa(record.ID)+"/confirm",
+		strings.NewReader(`{"room_id":`+testutil.Itoa(destination.ID)+`}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+
+	var updated recordmodel.ClinicRecord
+	if err := db.First(&updated, record.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if updated.RoomID != destination.ID || updated.Status != recordmodel.RecordStatusConfirmed {
+		t.Fatalf("updated record = room %d, status %s", updated.RoomID, updated.Status)
 	}
 }
 

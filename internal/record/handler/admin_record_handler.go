@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -27,6 +28,10 @@ type rejectRecordRequest struct {
 
 type referRecordRequest struct {
 	Reason string `json:"reason"`
+}
+
+type confirmRecordRequest struct {
+	RoomID *uint `json:"room_id" binding:"omitempty,gt=0"`
 }
 
 func (h *AdminRecordHandler) List(c *gin.Context) {
@@ -148,7 +153,13 @@ func (h *AdminRecordHandler) Confirm(c *gin.Context) {
 		return
 	}
 
-	v, err := h.svc.MarkConfirmed(c.Request.Context(), id, uint(staff.ID))
+	var req confirmRecordRequest
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	v, err := h.svc.MarkConfirmedToRoom(c.Request.Context(), id, req.RoomID, uint(staff.ID))
 	if err != nil {
 		writeRecordError(c, err)
 		return
@@ -306,6 +317,8 @@ func writeRecordError(c *gin.Context, err error) {
 	case errors.Is(err, recordservice.ErrRecordNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 	case errors.Is(err, recordservice.ErrRecordInvalidTransition):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case errors.Is(err, recordservice.ErrRoomUnavailable):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	case errors.Is(err, recordservice.ErrRevertWindowExpired),
 		errors.Is(err, recordservice.ErrRevertUnavailable),

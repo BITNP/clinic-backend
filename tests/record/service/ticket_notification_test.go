@@ -326,6 +326,35 @@ func TestTicketTransitionsNotifySupportedStatuses(t *testing.T) {
 	}
 }
 
+func TestConfirmToRoomNotifiesSelectedRoom(t *testing.T) {
+	db := setupAdminRecordTestDB(t)
+	source := seedActionRoom(t, db)
+	destination := roommodel.ClinicRoom{Name: "Destination Room", Address: "Destination Address", Enabled: true}
+	if err := db.Create(&destination).Error; err != nil {
+		t.Fatal(err)
+	}
+	record := seedActionRecord(t, db, recordmodel.RecordStatusPending, source.ID)
+	seedTicketNotificationServiceDate(t, db, destination.ID, &record)
+	notifier := &fakeTicketStatusNotifier{}
+	svc := recordservice.NewAdminRecordService(testutil.RawDB(t, db))
+	svc.SetTicketStatusNotifier(notifier)
+
+	view, err := svc.MarkConfirmedToRoom(context.Background(), record.ID, &destination.ID, 7)
+	if err != nil {
+		t.Fatalf("MarkConfirmedToRoom() error = %v", err)
+	}
+	if view.Campus != destination.Name {
+		t.Fatalf("view campus = %q, want %q", view.Campus, destination.Name)
+	}
+	if len(notifier.notifications) != 1 {
+		t.Fatalf("notifications = %d, want 1", len(notifier.notifications))
+	}
+	got := notifier.notifications[0]
+	if got.RoomName != destination.Name || got.RoomAddress != destination.Address {
+		t.Fatalf("notification room = %q, %q; want %q, %q", got.RoomName, got.RoomAddress, destination.Name, destination.Address)
+	}
+}
+
 func TestTicketTransitionSkipsUnsupportedStatus(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)

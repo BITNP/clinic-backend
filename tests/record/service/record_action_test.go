@@ -150,6 +150,30 @@ func TestRevertConfirmRestoresPending(t *testing.T) {
 	}
 }
 
+func TestRevertConfirmRestoresOriginalRoom(t *testing.T) {
+	db := setupAdminRecordTestDB(t)
+	source := seedActionRoom(t, db)
+	destination := roommodel.ClinicRoom{Name: "B", Address: "B address", Enabled: true}
+	if err := db.Create(&destination).Error; err != nil {
+		t.Fatal(err)
+	}
+	rec := seedActionRecord(t, db, recordmodel.RecordStatusPending, source.ID)
+	svc := newActionRecordService(t, db, newFakeActionStore())
+
+	if _, err := svc.MarkConfirmedToRoom(context.Background(), rec.ID, &destination.ID, 7); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if got := reloadActionRecord(t, db, rec.ID); got.RoomID != destination.ID {
+		t.Fatalf("confirmed room = %d, want %d", got.RoomID, destination.ID)
+	}
+	if _, err := svc.Revert(context.Background(), 7, rec.ID); err != nil {
+		t.Fatalf("revert: %v", err)
+	}
+	if got := reloadActionRecord(t, db, rec.ID); got.RoomID != source.ID {
+		t.Fatalf("reverted room = %d, want %d", got.RoomID, source.ID)
+	}
+}
+
 func TestRevertRejectRemovesRejection(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)

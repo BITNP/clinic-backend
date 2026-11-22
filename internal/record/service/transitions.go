@@ -11,6 +11,8 @@ import (
 	recordmodel "clinic-backend/internal/record/model"
 )
 
+var ErrRoomUnavailable = errors.New("selected room is unavailable")
+
 type transitionSpec struct {
 	verb               string
 	action             RecordAction
@@ -117,15 +119,53 @@ func anyStatus(allowed ...recordmodel.RecordStatus) func(recordmodel.RecordStatu
 }
 
 func (s *AdminRecordService) MarkConfirmed(ctx context.Context, id uint, approverID uint) (AdminRecordView, error) {
+	return s.MarkConfirmedToRoom(ctx, id, nil, approverID)
+}
+
+// MarkConfirmedToRoom confirms a pending record and can atomically move it to
+// the enabled room selected by the acting staff member.
+func (s *AdminRecordService) MarkConfirmedToRoom(
+	ctx context.Context,
+	id uint,
+	roomID *uint,
+	approverID uint,
+) (AdminRecordView, error) {
 	return s.runTransition(ctx, id, transitionSpec{
 		verb:    "confirm",
 		action:  RecordActionConfirm,
 		actorID: int(approverID),
 		allowed: onlyStatus(recordmodel.RecordStatusPending),
 		update: func(tx *sql.Tx, record recordmodel.ClinicRecord, _ time.Time) error {
+			if roomID != nil {
+				if err := validateEnabledRoomTx(tx, *roomID); err != nil {
+					return err
+				}
+				if _, err := tx.Exec(
+					"UPDATE clinic_record SET status = $1, approver_id = $2, room = $3, action_seq = action_seq + 1 WHERE id = $4",
+					recordmodel.RecordStatusConfirmed, approverID, *roomID, record.ID,
+				); err != nil {
+					return err
+				}
+				return nil
+			}
 			return setRecordStatusTx(tx, record.ID, recordmodel.RecordStatusConfirmed, &approverID, true)
 		},
 	})
+}
+
+func validateEnabledRoomTx(tx *sql.Tx, roomID uint) error {
+	var selectedID uint
+	err := tx.QueryRow(
+		"SELECT id FROM clinic_room WHERE id = $1 AND enabled = TRUE",
+		roomID,
+	).Scan(&selectedID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrRoomUnavailable
+	}
+	if err != nil {
+		return fmt.Errorf("validate room %d: %w", roomID, err)
+	}
+	return nil
 }
 
 func (s *AdminRecordService) MarkArrived(ctx context.Context, actorID int, id uint) (AdminRecordView, error) {

@@ -38,6 +38,7 @@ type WorkerSnapshot struct {
 // corresponding side-table row did not exist.
 type RecordSnapshot struct {
 	Status         recordmodel.RecordStatus `json:"status"`
+	RoomID         uint                     `json:"room_id,omitempty"`
 	ApproverID     *uint                    `json:"approver_id"`
 	ArriveTime     *time.Time               `json:"arrive_time,omitempty"`
 	Worker         *WorkerSnapshot          `json:"worker,omitempty"`
