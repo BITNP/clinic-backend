@@ -236,8 +236,6 @@ afterward.
 | `DINGTALK_NOTIFICATION_TITLE` | `电脑诊所工单状态更新` | admin | DingTalk notification title. |
 | `DINGTALK_NOTIFICATION_HEADER` | `网络开拓者协会` | admin | Value rendered as `{{.HEDR}}`. |
 | `DINGTALK_NOTIFICATION_QQ_ACCOUNT` | empty | admin | Appeal QQ rendered as `{{.QQAC}}`. |
-| `DINGTALK_NOTIFICATION_TRANSFER_ROOM` | empty | admin | Transfer room rendered as `{{.TRRO}}`. |
-| `DINGTALK_NOTIFICATION_TRANSFER_ADDRESS` | empty | admin | Transfer address rendered as `{{.TRLO}}`. |
 | `DINGTALK_TEMPLATE_CONFIRMED` | built-in approval example | admin | Template for `confirmed`. |
 | `DINGTALK_TEMPLATE_REJECTED` | built-in rejection example | admin | Template for `rejected`. |
 | `DINGTALK_TEMPLATE_REFERRED` | built-in referral example | admin | Template for `referred`. |
@@ -265,8 +263,8 @@ Available template fields:
 | `ID` | Record id prefixed with `#`. |
 | `ROOM` | Booked room name. |
 | `LOCA` | Booked room address. |
-| `TRRO` | `DINGTALK_NOTIFICATION_TRANSFER_ROOM`. |
-| `TRLO` | `DINGTALK_NOTIFICATION_TRANSFER_ADDRESS`. |
+| `TRRO` | Confirmed room name selected by the acting staff member in `调整场地`. |
+| `TRLO` | Confirmed room address resolved from the selected room. |
 | `REAS` | Rejection or referral reason. |
 | `QQAC` | `DINGTALK_NOTIFICATION_QQ_ACCOUNT`. |
 
@@ -274,8 +272,6 @@ Template example:
 
 ```env
 DINGTALK_NOTIFICATION_QQ_ACCOUNT=123456789
-DINGTALK_NOTIFICATION_TRANSFER_ROOM=求是社区
-DINGTALK_NOTIFICATION_TRANSFER_ADDRESS=疏桐园D地下室D116
 DINGTALK_TEMPLATE_CONFIRMED=【{{.HEDR}}】工单{{.ID}}已通过，请于{{.DATE}}前往{{.ROOM}}。\n地址：{{.LOCA}}
 ```
 

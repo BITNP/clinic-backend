@@ -875,8 +875,7 @@ The backend seeds and reserves `SYNC_POLL_INTERVAL`, `STAFF_VERSION`,
 `DINGTALK_REMINDER_LEAD_TIME`, `DINGTALK_REMINDER_POLL_INTERVAL`,
 `DINGTALK_REDIRECT_ENABLED`, `DINGTALK_REDIRECT_RECEIVER`,
 `DINGTALK_NOTIFICATION_TITLE`, `DINGTALK_NOTIFICATION_HEADER`,
-`DINGTALK_NOTIFICATION_QQ_ACCOUNT`, `DINGTALK_NOTIFICATION_TRANSFER_ROOM`,
-`DINGTALK_NOTIFICATION_TRANSFER_ADDRESS`, `DINGTALK_TEMPLATE_CONFIRMED`,
+`DINGTALK_NOTIFICATION_QQ_ACCOUNT`, `DINGTALK_TEMPLATE_CONFIRMED`,
 `DINGTALK_TEMPLATE_REJECTED`, `DINGTALK_TEMPLATE_REFERRED`,
 `DINGTALK_TEMPLATE_NO_SHOW`, and `DINGTALK_TEMPLATE_REMINDER`. Their types,
 required flags, write-only flags, and role levels are fixed and their values
@@ -1486,23 +1485,31 @@ curl -X DELETE "$BASE/api/admin/records/7/photos/1" \
 ### `POST /api/admin/records/{id}/confirm`
 
 **Description:** Approves a pending record (`pending` → `confirmed`). Admin only.
-Sets `approver_id` and sends a best-effort DingTalk notification to the record's
-`user` id. The message-center delivery status is checked after submission;
-notification failures are logged and do not roll back the transition. The send
-is skipped when the `DINGTALK_NOTIFY_ENABLED` config item is false.
+When `room_id` is supplied, the record is moved to that enabled room in the same
+transaction. Sets `approver_id` and sends a best-effort DingTalk notification to
+the record's `user` id using the confirmed room's name and address. The
+message-center delivery status is checked after submission; notification
+failures are logged and do not roll back the transition. The send is skipped
+when the `DINGTALK_NOTIFY_ENABLED` config item is false.
 
-**Request:** No body.
+**Request body** — optional
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `room_id` | integer | no | Enabled room selected by `调整场地`; when omitted the record keeps its current room. |
 
 **Response `200 OK`** — admin record view.
 
-**Error responses:** `400` (invalid id or invalid transition), `401`, `403`,
-`404`.
+**Error responses:** `400` (invalid id, invalid transition, or unavailable
+room), `401`, `403`, `404`.
 
 **curl**
 
 ```bash
 curl -X POST "$BASE/api/admin/records/1/confirm" \
-  -b cookies.txt -H "X-CSRF-Token: $CSRF"
+  -b cookies.txt -H "X-CSRF-Token: $CSRF" \
+  -H 'Content-Type: application/json' \
+  -d '{"room_id":2}'
 ```
 
 ### `POST /api/admin/records/{id}/reject`
