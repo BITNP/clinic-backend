@@ -97,8 +97,6 @@ func TestDingTalkTicketNotifierFormatsStatusMessages(t *testing.T) {
 		Title:             "状态通知",
 		Header:            "测试协会",
 		QQAccount:         "123456",
-		TransferRoom:      "转诊诊室",
-		TransferAddress:   "转诊地址",
 		ConfirmedTemplate: allFields,
 		RejectedTemplate:  allFields,
 		ReferredTemplate:  allFields,
@@ -157,7 +155,7 @@ func TestDingTalkTicketNotifierFormatsStatusMessages(t *testing.T) {
 			if request.Receivers != "ding-user-42" {
 				t.Errorf("Receivers = %q, want ding-user-42", request.Receivers)
 			}
-			wantContent := "测试协会|2026-11-20的18:30-21:00|#42|徐特立图书馆|徐特立图书馆三楼311G研讨室|转诊诊室|转诊地址|" +
+			wantContent := "测试协会|2026-11-20的18:30-21:00|#42|徐特立图书馆|徐特立图书馆三楼311G研讨室|徐特立图书馆|徐特立图书馆三楼311G研讨室|" +
 				tt.reason + "|123456"
 			if request.Title != "状态通知" || request.Content != wantContent {
 				t.Errorf("message = %q / %q", request.Title, request.Content)

@@ -49,8 +49,6 @@ type DingTalkTicketNotifierConfig struct {
 	Title             string
 	Header            string
 	QQAccount         string
-	TransferRoom      string
-	TransferAddress   string
 	ConfirmedTemplate string
 	RejectedTemplate  string
 	ReferredTemplate  string
@@ -66,8 +64,6 @@ type DingTalkTicketNotifier struct {
 	title            string
 	header           string
 	qqAccount        string
-	transferRoom     string
-	transferAddress  string
 	statusTemplates  map[recordmodel.RecordStatus]*template.Template
 	reminderTemplate *template.Template
 }
@@ -113,13 +109,11 @@ func NewDingTalkTicketNotifier(
 	}
 
 	return &DingTalkTicketNotifier{
-		sender:          sender,
-		location:        location,
-		title:           title,
-		header:          header,
-		qqAccount:       strings.TrimSpace(cfg.QQAccount),
-		transferRoom:    strings.TrimSpace(cfg.TransferRoom),
-		transferAddress: strings.TrimSpace(cfg.TransferAddress),
+		sender:    sender,
+		location:  location,
+		title:     title,
+		header:    header,
+		qqAccount: strings.TrimSpace(cfg.QQAccount),
 		statusTemplates: map[recordmodel.RecordStatus]*template.Template{
 			recordmodel.RecordStatusConfirmed: confirmTemplate,
 			recordmodel.RecordStatusRejected:  rejectedTemplate,
@@ -210,9 +204,9 @@ func (n *DingTalkTicketNotifier) render(tmpl *template.Template, notification Ti
 		DATE: fmt.Sprintf("%s的%s-%s", start.Format("2006-01-02"), start.Format("15:04"), end.Format("15:04")),
 		ID:   fmt.Sprintf("#%d", notification.RecordID),
 		ROOM: notification.RoomName,
-		TRRO: n.transferRoom,
+		TRRO: notification.RoomName,
 		LOCA: notification.RoomAddress,
-		TRLO: n.transferAddress,
+		TRLO: notification.RoomAddress,
 		REAS: strings.TrimSpace(notification.Reason),
 		QQAC: n.qqAccount,
 	}

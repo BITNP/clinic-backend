@@ -22,8 +22,6 @@ type DingTalkNotificationConfig struct {
 	Title             string
 	Header            string
 	QQAccount         string
-	TransferRoom      string
-	TransferAddress   string
 	ConfirmedTemplate string
 	RejectedTemplate  string
 	ReferredTemplate  string
@@ -99,8 +97,6 @@ func LoadDingTalkConfig(getenv func(string) string) (DingTalkConfig, error) {
 			Title:             dingTalkStringSetting(getenv, "DINGTALK_NOTIFICATION_TITLE", configservice.DefaultDingTalkNotificationTitle),
 			Header:            dingTalkStringSetting(getenv, "DINGTALK_NOTIFICATION_HEADER", configservice.DefaultDingTalkNotificationHeader),
 			QQAccount:         strings.TrimSpace(getenv("DINGTALK_NOTIFICATION_QQ_ACCOUNT")),
-			TransferRoom:      strings.TrimSpace(getenv("DINGTALK_NOTIFICATION_TRANSFER_ROOM")),
-			TransferAddress:   strings.TrimSpace(getenv("DINGTALK_NOTIFICATION_TRANSFER_ADDRESS")),
 			ConfirmedTemplate: dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_CONFIRMED", configservice.DefaultDingTalkConfirmedTemplate),
 			RejectedTemplate:  dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_REJECTED", configservice.DefaultDingTalkRejectedTemplate),
 			ReferredTemplate:  dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_REFERRED", configservice.DefaultDingTalkReferredTemplate),
@@ -135,8 +131,6 @@ func LoadDingTalkConfigFromRuntime(settings configservice.RuntimeSettings) (Ding
 			Title:             strings.TrimSpace(dingTalk.NotificationTitle),
 			Header:            strings.TrimSpace(dingTalk.NotificationHeader),
 			QQAccount:         strings.TrimSpace(dingTalk.QQAccount),
-			TransferRoom:      strings.TrimSpace(dingTalk.TransferRoom),
-			TransferAddress:   strings.TrimSpace(dingTalk.TransferAddress),
 			ConfirmedTemplate: dingTalk.ConfirmedTemplate,
 			RejectedTemplate:  dingTalk.RejectedTemplate,
 			ReferredTemplate:  dingTalk.ReferredTemplate,
@@ -194,8 +188,6 @@ func dingTalkTicketNotifierConfig(cfg DingTalkConfig) recordservice.DingTalkTick
 		Title:             cfg.Notification.Title,
 		Header:            cfg.Notification.Header,
 		QQAccount:         cfg.Notification.QQAccount,
-		TransferRoom:      cfg.Notification.TransferRoom,
-		TransferAddress:   cfg.Notification.TransferAddress,
 		ConfirmedTemplate: cfg.Notification.ConfirmedTemplate,
 		RejectedTemplate:  cfg.Notification.RejectedTemplate,
 		ReferredTemplate:  cfg.Notification.ReferredTemplate,

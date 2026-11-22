@@ -56,8 +56,6 @@ func TestLoadDingTalkConfigNotificationOverrides(t *testing.T) {
 	values["DINGTALK_NOTIFICATION_TITLE"] = "自定义标题"
 	values["DINGTALK_NOTIFICATION_HEADER"] = "自定义协会"
 	values["DINGTALK_NOTIFICATION_QQ_ACCOUNT"] = "123456"
-	values["DINGTALK_NOTIFICATION_TRANSFER_ROOM"] = "转诊室"
-	values["DINGTALK_NOTIFICATION_TRANSFER_ADDRESS"] = "转诊地址"
 	values["DINGTALK_TEMPLATE_CONFIRMED"] = "确认 {{.ROOM}}"
 	values["DINGTALK_TEMPLATE_REJECTED"] = "驳回 {{.REAS}}"
 	values["DINGTALK_TEMPLATE_REFERRED"] = "转诊 {{.TRRO}}"
@@ -72,7 +70,6 @@ func TestLoadDingTalkConfigNotificationOverrides(t *testing.T) {
 	}
 	got := cfg.Notification
 	if got.Title != "自定义标题" || got.Header != "自定义协会" || got.QQAccount != "123456" ||
-		got.TransferRoom != "转诊室" || got.TransferAddress != "转诊地址" ||
 		got.ConfirmedTemplate != "确认 {{.ROOM}}" || got.RejectedTemplate != "驳回 {{.REAS}}" ||
 		got.ReferredTemplate != "转诊 {{.TRRO}}" || got.NoShowTemplate != "未到 {{.QQAC}}" ||
 		got.ReminderTemplate != "提醒 {{.DATE}}" {
@@ -200,8 +197,6 @@ func TestLoadDingTalkConfigFromRuntime(t *testing.T) {
 			NotificationTitle:    "自定义标题",
 			NotificationHeader:   "自定义协会",
 			QQAccount:            "123456",
-			TransferRoom:         "转诊室",
-			TransferAddress:      "转诊地址",
 			ConfirmedTemplate:    "确认 {{.ROOM}}",
 			RejectedTemplate:     "驳回 {{.REAS}}",
 			ReferredTemplate:     "转诊 {{.TRRO}}",
