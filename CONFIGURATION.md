@@ -141,10 +141,25 @@ DingTalk id when a ticket becomes `confirmed`, `rejected`, `referred`, or
 | `DINGTALK_TIMEOUT` | `10s` | Per-request HTTP timeout; must be positive. |
 | `DINGTALK_REMINDER_LEAD_TIME` | `30m` | How long before the service start a confirmed ticket becomes eligible for its guest reminder. |
 | `DINGTALK_REMINDER_POLL_INTERVAL` | `1m` | How often the worker discovers and delivers due reminder jobs. |
+| `DINGTALK_REDIRECT_ENABLED` | `false` | Routes every DingTalk message to `DINGTALK_REDIRECT_RECEIVER` instead of its requested recipients. |
+| `DINGTALK_REDIRECT_RECEIVER` | empty | The single DingTalk account id used when `DINGTALK_REDIRECT_ENABLED=true`; required in that case. |
 
 The delivery settings are required only when `DINGTALK_NOTIFY_ENABLED=true`.
 Leaving it `false` means ticket transitions and cleanup remain unchanged while
 all DingTalk sends and status checks are skipped.
+
+For development or notifications testing, enable the receiver override to keep
+real guests and staff from receiving messages:
+
+```env
+DINGTALK_REDIRECT_ENABLED=true
+DINGTALK_REDIRECT_RECEIVER=development-dingtalk-user-id
+```
+
+The override replaces the message-center payload's `receivers` value for all
+DingTalk messages. Message content, templates, credentials, and delivery-status
+checks are unchanged. Startup fails if the override is enabled without exactly
+one receiver.
 
 Notification text is configurable with Go templates. Leave a template setting
 empty to use its built-in default. Use `\n` for a line break.

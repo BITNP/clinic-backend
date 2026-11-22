@@ -200,7 +200,9 @@ in `CONFIGURATION.md`. Ticket notifications are disabled by default; set
 text and organization-specific fields are configurable through the
 `DINGTALK_TEMPLATE_*` and `DINGTALK_NOTIFICATION_*` settings. Confirmed tickets
 also receive a persisted pre-shift reminder 30 minutes before their service
-window by default.
+window by default. For notification testing, enable `DINGTALK_REDIRECT_ENABLED`
+and set `DINGTALK_REDIRECT_RECEIVER` to route every DingTalk message to one
+development account.
 
 The image tags in the commands above come from `.env`; see
 [CONFIGURATION.md](CONFIGURATION.md#production-stack-docker-composeprodyml) for
