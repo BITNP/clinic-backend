@@ -877,9 +877,10 @@ The backend seeds and reserves `SYNC_POLL_INTERVAL`, `STAFF_VERSION`,
 `DINGTALK_NOTIFICATION_TITLE`, `DINGTALK_NOTIFICATION_HEADER`,
 `DINGTALK_NOTIFICATION_QQ_ACCOUNT`, `DINGTALK_TEMPLATE_CONFIRMED`,
 `DINGTALK_TEMPLATE_REJECTED`, `DINGTALK_TEMPLATE_REFERRED`,
-`DINGTALK_TEMPLATE_NO_SHOW`, and `DINGTALK_TEMPLATE_REMINDER`. Their types,
-required flags, write-only flags, and role levels are fixed and their values
-receive key-specific validation. `TAGGER_LLM_API_KEY`,
+`DINGTALK_TEMPLATE_TRANSFER`, `DINGTALK_TEMPLATE_NO_SHOW`, and
+`DINGTALK_TEMPLATE_REMINDER`. Their types, required flags, write-only flags,
+and role levels are fixed and their values receive key-specific validation.
+`TAGGER_LLM_API_KEY`,
 `TAGGER_LLM_BASE_URL`, `TAGGER_LLM_MODEL`, `TAGGER_AGENT_POOL_SIZE`,
 `TAGGER_CONTEXT_TOKENS`, `TAGGER_TIMEOUT`, `MESSAGE_GATEWAY_URL`,
 `MESSAGE_GATEWAY_ACCOUNT`, `MESSAGE_GATEWAY_ACCOUNT_TOKEN`, and
@@ -1487,10 +1488,12 @@ curl -X DELETE "$BASE/api/admin/records/7/photos/1" \
 **Description:** Approves a pending record (`pending` → `confirmed`). Admin only.
 When `room_id` is supplied, the record is moved to that enabled room in the same
 transaction. Sets `approver_id` and sends a best-effort DingTalk notification to
-the record's `user` id using the confirmed room's name and address. The
-message-center delivery status is checked after submission; notification
-failures are logged and do not roll back the transition. The send is skipped
-when the `DINGTALK_NOTIFY_ENABLED` config item is false.
+the record's `user` id. If `room_id` differs from the current room, the
+`DINGTALK_TEMPLATE_TRANSFER` template is sent with title `工单转诊`; otherwise the
+regular confirmed template is used. The message-center delivery status is
+checked after submission; notification failures are logged and do not roll back
+the transition. The send is skipped when the `DINGTALK_NOTIFY_ENABLED` config
+item is false.
 
 **Request body** — optional
 

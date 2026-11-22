@@ -239,6 +239,7 @@ afterward.
 | `DINGTALK_TEMPLATE_CONFIRMED` | built-in approval example | admin | Template for `confirmed`. |
 | `DINGTALK_TEMPLATE_REJECTED` | built-in rejection example | admin | Template for `rejected`. |
 | `DINGTALK_TEMPLATE_REFERRED` | built-in referral example | admin | Template for `referred`. |
+| `DINGTALK_TEMPLATE_TRANSFER` | built-in transfer example | admin | Template sent when confirmation changes the room. The DingTalk title is `工单转诊`. |
 | `DINGTALK_TEMPLATE_NO_SHOW` | built-in no-show example | admin | Template for `no_show`. |
 | `DINGTALK_TEMPLATE_REMINDER` | built-in reminder example | admin | Confirmed-ticket pre-shift reminder. |
 
@@ -273,6 +274,7 @@ Template example:
 ```env
 DINGTALK_NOTIFICATION_QQ_ACCOUNT=123456789
 DINGTALK_TEMPLATE_CONFIRMED=【{{.HEDR}}】工单{{.ID}}已通过，请于{{.DATE}}前往{{.ROOM}}。\n地址：{{.LOCA}}
+DINGTALK_TEMPLATE_TRANSFER=【{{.HEDR}}】您于{{.DATE}}的预约被转送至{{.TRRO}}，请在预约时间前往{{.TRRO}}。诊室地址为{{.TRLO}}。\n感谢您对网协工作的理解！
 ```
 
 When notifications are enabled, the backend scans at
