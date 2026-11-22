@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"clinic-backend/internal/app"
+	configservice "clinic-backend/internal/config/service"
 )
 
 func validDingTalkEnv() map[string]string {
@@ -180,5 +181,76 @@ func TestLoadDingTalkConfigRejectsInvalidValues(t *testing.T) {
 				t.Fatalf("error = %v, want containing %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestLoadDingTalkConfigFromRuntime(t *testing.T) {
+	settings := configservice.RuntimeSettings{
+		DingTalk: configservice.DingTalkRuntimeSettings{
+			Enabled:              true,
+			BaseURL:              "https://message-center.example",
+			AppCode:              "clinic",
+			AppKey:               "app-key",
+			AppSecret:            "app-secret",
+			Timeout:              3 * time.Second,
+			ReminderLeadTime:     45 * time.Minute,
+			ReminderPollInterval: 30 * time.Second,
+			RedirectEnabled:      true,
+			RedirectReceiver:     "dev-user",
+			NotificationTitle:    "自定义标题",
+			NotificationHeader:   "自定义协会",
+			QQAccount:            "123456",
+			TransferRoom:         "转诊室",
+			TransferAddress:      "转诊地址",
+			ConfirmedTemplate:    "确认 {{.ROOM}}",
+			RejectedTemplate:     "驳回 {{.REAS}}",
+			ReferredTemplate:     "转诊 {{.TRRO}}",
+			NoShowTemplate:       "未到 {{.QQAC}}",
+			ReminderTemplate:     "提醒 {{.DATE}}",
+		},
+	}
+
+	cfg, err := app.LoadDingTalkConfigFromRuntime(settings)
+	if err != nil {
+		t.Fatalf("LoadDingTalkConfigFromRuntime() error = %v", err)
+	}
+	if !cfg.Enabled || cfg.BaseURL != settings.DingTalk.BaseURL || cfg.AppSecret != settings.DingTalk.AppSecret {
+		t.Errorf("delivery config = %+v", cfg)
+	}
+	if !cfg.RedirectEnabled || cfg.RedirectReceiver != "dev-user" {
+		t.Errorf("redirect config = %+v", cfg)
+	}
+	if cfg.Timeout != 3*time.Second || cfg.Reminder.LeadTime != 45*time.Minute || cfg.Reminder.PollInterval != 30*time.Second {
+		t.Errorf("duration config = %+v", cfg)
+	}
+	if cfg.Notification.Title != "自定义标题" || cfg.Notification.ReminderTemplate != "提醒 {{.DATE}}" {
+		t.Errorf("notification config = %+v", cfg.Notification)
+	}
+}
+
+func TestLoadDingTalkConfigFromRuntimeValidatesDependencies(t *testing.T) {
+	settings := configservice.RuntimeSettings{
+		DingTalk: configservice.DingTalkRuntimeSettings{
+			Enabled:              true,
+			Timeout:              10 * time.Second,
+			ReminderLeadTime:     30 * time.Minute,
+			ReminderPollInterval: time.Minute,
+			NotificationTitle:    configservice.DefaultDingTalkNotificationTitle,
+			NotificationHeader:   configservice.DefaultDingTalkNotificationHeader,
+			ConfirmedTemplate:    "{{.ROOM}}",
+			RejectedTemplate:     "{{.REAS}}",
+			ReferredTemplate:     "{{.TRRO}}",
+			NoShowTemplate:       "{{.QQAC}}",
+			ReminderTemplate:     "{{.DATE}}",
+		},
+	}
+	if _, err := app.LoadDingTalkConfigFromRuntime(settings); err == nil || !strings.Contains(err.Error(), "base URL is required") {
+		t.Fatalf("error = %v, want missing base URL", err)
+	}
+
+	settings.DingTalk.Enabled = false
+	settings.DingTalk.RedirectEnabled = true
+	if _, err := app.LoadDingTalkConfigFromRuntime(settings); err == nil || !strings.Contains(err.Error(), "DINGTALK_REDIRECT_RECEIVER is required") {
+		t.Fatalf("error = %v, want missing redirect receiver", err)
 	}
 }

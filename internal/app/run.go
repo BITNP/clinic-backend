@@ -22,7 +22,6 @@ import (
 	"clinic-backend/internal/legacy"
 	"clinic-backend/internal/message"
 	"clinic-backend/internal/message/napcat"
-	notificationclient "clinic-backend/internal/notification/client"
 	recordhandler "clinic-backend/internal/record/handler"
 	recordservice "clinic-backend/internal/record/service"
 	roomhandler "clinic-backend/internal/room/handler"
@@ -47,50 +46,7 @@ func Run() {
 		log.Fatalf("storage configuration: %v", err)
 	}
 
-	dingtalkCfg, err := LoadDingTalkConfig(os.Getenv)
-	if err != nil {
-		log.Fatalf("dingtalk configuration: %v", err)
-	}
 	serviceDateLoc := envLocation("CLINIC_TIMEZONE", time.FixedZone("UTC+8", 8*60*60))
-	var dingtalkClient *notificationclient.DingTalkClient
-	var ticketNotifier *recordservice.DingTalkTicketNotifier
-	if dingtalkCfg.Enabled {
-		dingtalkClient, err = notificationclient.NewDingTalkClient(notificationclient.Config{
-			BaseURL:          dingtalkCfg.BaseURL,
-			AppCode:          dingtalkCfg.AppCode,
-			AppKey:           dingtalkCfg.AppKey,
-			AppSecret:        dingtalkCfg.AppSecret,
-			Timeout:          dingtalkCfg.Timeout,
-			ReceiverOverride: dingtalkCfg.RedirectReceiver,
-		})
-		if err != nil {
-			log.Fatalf("dingtalk client: %v", err)
-		}
-		ticketNotifier, err = recordservice.NewDingTalkTicketNotifier(
-			dingtalkClient,
-			serviceDateLoc,
-			recordservice.DingTalkTicketNotifierConfig{
-				Title:             dingtalkCfg.Notification.Title,
-				Header:            dingtalkCfg.Notification.Header,
-				QQAccount:         dingtalkCfg.Notification.QQAccount,
-				TransferRoom:      dingtalkCfg.Notification.TransferRoom,
-				TransferAddress:   dingtalkCfg.Notification.TransferAddress,
-				ConfirmedTemplate: dingtalkCfg.Notification.ConfirmedTemplate,
-				RejectedTemplate:  dingtalkCfg.Notification.RejectedTemplate,
-				ReferredTemplate:  dingtalkCfg.Notification.ReferredTemplate,
-				NoShowTemplate:    dingtalkCfg.Notification.NoShowTemplate,
-				ReminderTemplate:  dingtalkCfg.Notification.ReminderTemplate,
-			},
-		)
-		if err != nil {
-			log.Fatalf("dingtalk notification templates: %v", err)
-		}
-		if dingtalkCfg.RedirectEnabled {
-			log.Println("dingtalk notifications redirected to the configured receiver")
-		}
-	} else {
-		log.Println("dingtalk ticket notifications disabled")
-	}
 
 	msgCfg, err := LoadMessageConfig(os.Getenv)
 	if err != nil {
@@ -127,6 +83,11 @@ func Run() {
 		log.Fatalf("load runtime configuration: %v", err)
 	}
 	runtimeSettings := configSvc.Current()
+	dingtalkRuntime := newDingTalkRuntimeManager(serviceDateLoc)
+	if err := dingtalkRuntime.Initialize(runtimeSettings); err != nil {
+		closeDatabase(db)
+		log.Fatalf("initialize dingtalk runtime: %v", err)
+	}
 
 	photoCfg, err := LoadPhotoConfig(runtimeSettings.RecordPhotoMaxCount, runtimeSettings.RecordPhotoMaxSizeBytes)
 	if err != nil {
@@ -205,9 +166,15 @@ func Run() {
 		if _, err := LoadServiceDateReminderConfig(settings); err != nil {
 			return err
 		}
-		return taggerRuntime.Prepare(settings)
+		if err := taggerRuntime.Prepare(settings); err != nil {
+			return err
+		}
+		return dingtalkRuntime.Prepare(settings)
 	})
-	configSvc.SetRuntimeApplyHook(taggerRuntime.Activate)
+	configSvc.SetRuntimeApplyHook(func(settings configservice.RuntimeSettings) {
+		taggerRuntime.Activate(settings)
+		dingtalkRuntime.Activate(settings)
+	})
 
 	sqlDB, err := db.DB()
 	if err != nil {
@@ -246,9 +213,7 @@ func Run() {
 	)
 	recordActionSvc.SetWindowGetter(func() time.Duration { return configSvc.Current().RecordActionWindow })
 	adminRecordSvc.SetRecordActionService(recordActionSvc)
-	if ticketNotifier != nil {
-		adminRecordSvc.SetTicketStatusNotifier(ticketNotifier)
-	}
+	adminRecordSvc.SetTicketStatusNotifier(dingtalkRuntime)
 	adminRecordH := recordhandler.NewAdminRecordHandler(adminRecordSvc)
 
 	workScheduleSvc := schedulingservice.NewWorkScheduleService(rawDB)
@@ -379,26 +344,35 @@ func Run() {
 	}
 
 	var dingtalkReminderDone <-chan struct{}
-	if ticketNotifier != nil {
+	{
+		cfg := dingtalkRuntime.Config()
 		discovery := &recordservice.TicketReminderDiscovery{
 			DB:       rawDB,
-			LeadTime: dingtalkCfg.Reminder.LeadTime,
+			LeadTime: cfg.Reminder.LeadTime,
 		}
 		delivery := &recordservice.TicketReminderDelivery{
 			DB:       rawDB,
-			Notifier: ticketNotifier,
+			Notifier: dingtalkRuntime,
 			Location: serviceDateLoc,
 		}
 		worker := &recordservice.TicketReminderWorker{
 			Discovery:       discovery,
 			Delivery:        delivery,
-			PollInterval:    dingtalkCfg.Reminder.PollInterval,
-			DeliveryTimeout: 3*dingtalkCfg.Timeout + 5*time.Second,
+			PollInterval:    cfg.Reminder.PollInterval,
+			DeliveryTimeout: 3*cfg.Timeout + 5*time.Second,
+			Config: func() recordservice.TicketReminderWorkerConfig {
+				current := dingtalkRuntime.Config()
+				return recordservice.TicketReminderWorkerConfig{
+					Enabled:         current.Enabled,
+					LeadTime:        current.Reminder.LeadTime,
+					PollInterval:    current.Reminder.PollInterval,
+					DeliveryTimeout: 3*current.Timeout + 5*time.Second,
+				}
+			},
 		}
 		done := make(chan struct{})
 		dingtalkReminderDone = done
 		go func() { defer close(done); worker.Run(ctx) }()
-		log.Printf("dingtalk ticket reminders enabled (lead time %s, poll interval %s)", dingtalkCfg.Reminder.LeadTime, dingtalkCfg.Reminder.PollInterval)
 	}
 
 	if napcatClient != nil {

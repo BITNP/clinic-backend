@@ -5,21 +5,15 @@ import (
 	"strings"
 	"time"
 
+	configservice "clinic-backend/internal/config/service"
 	notificationclient "clinic-backend/internal/notification/client"
+	recordservice "clinic-backend/internal/record/service"
 )
 
 const (
 	defaultDingTalkTimeout              = 10 * time.Second
 	defaultDingTalkReminderLeadTime     = 30 * time.Minute
 	defaultDingTalkReminderPollInterval = time.Minute
-
-	defaultDingTalkNotificationTitle  = "电脑诊所工单状态更新"
-	defaultDingTalkNotificationHeader = "网络开拓者协会"
-	defaultDingTalkConfirmedTemplate  = "【{{.HEDR}}】您的预约已通过，请于{{.DATE}}前往{{.ROOM}}诊室。诊室地址为{{.LOCA}}。若因故无法按时前往，请在电脑义诊平台删除预约。\n感谢您对网协工作的理解！"
-	defaultDingTalkRejectedTemplate   = "【{{.HEDR}}】您于{{.DATE}}的预约被驳回，驳回原因为：\n{{.REAS}}\n感谢您对网协工作的理解！"
-	defaultDingTalkReferredTemplate   = "【{{.HEDR}}】您于{{.DATE}}的预约建议联系售后进行维修，详细情况说明：\n{{.REAS}}\n感谢您对网协工作的理解！"
-	defaultDingTalkNoShowTemplate     = "【{{.HEDR}}】由于您未在值班时间前往诊所，您于{{.DATE}}的预约已关闭。未到诊所会导致您后两天无法预约。若您并未未到诊所，请联系{{.QQAC}}进行申诉。\n感谢您对网协工作的理解！"
-	defaultDingTalkReminderTemplate   = "【{{.HEDR}}】您预约的位于{{.ROOM}}的值班即将开始，请在{{.DATE}}前往{{.ROOM}}诊室。诊所地址为{{.LOCA}}。"
 )
 
 // DingTalkNotificationConfig contains the configurable guest notification
@@ -102,33 +96,106 @@ func LoadDingTalkConfig(getenv func(string) string) (DingTalkConfig, error) {
 		RedirectEnabled:  redirectEnabled,
 		RedirectReceiver: redirectReceiver,
 		Notification: DingTalkNotificationConfig{
-			Title:             dingTalkStringSetting(getenv, "DINGTALK_NOTIFICATION_TITLE", defaultDingTalkNotificationTitle),
-			Header:            dingTalkStringSetting(getenv, "DINGTALK_NOTIFICATION_HEADER", defaultDingTalkNotificationHeader),
+			Title:             dingTalkStringSetting(getenv, "DINGTALK_NOTIFICATION_TITLE", configservice.DefaultDingTalkNotificationTitle),
+			Header:            dingTalkStringSetting(getenv, "DINGTALK_NOTIFICATION_HEADER", configservice.DefaultDingTalkNotificationHeader),
 			QQAccount:         strings.TrimSpace(getenv("DINGTALK_NOTIFICATION_QQ_ACCOUNT")),
 			TransferRoom:      strings.TrimSpace(getenv("DINGTALK_NOTIFICATION_TRANSFER_ROOM")),
 			TransferAddress:   strings.TrimSpace(getenv("DINGTALK_NOTIFICATION_TRANSFER_ADDRESS")),
-			ConfirmedTemplate: dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_CONFIRMED", defaultDingTalkConfirmedTemplate),
-			RejectedTemplate:  dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_REJECTED", defaultDingTalkRejectedTemplate),
-			ReferredTemplate:  dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_REFERRED", defaultDingTalkReferredTemplate),
-			NoShowTemplate:    dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_NO_SHOW", defaultDingTalkNoShowTemplate),
-			ReminderTemplate:  dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_REMINDER", defaultDingTalkReminderTemplate),
+			ConfirmedTemplate: dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_CONFIRMED", configservice.DefaultDingTalkConfirmedTemplate),
+			RejectedTemplate:  dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_REJECTED", configservice.DefaultDingTalkRejectedTemplate),
+			ReferredTemplate:  dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_REFERRED", configservice.DefaultDingTalkReferredTemplate),
+			NoShowTemplate:    dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_NO_SHOW", configservice.DefaultDingTalkNoShowTemplate),
+			ReminderTemplate:  dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_REMINDER", configservice.DefaultDingTalkReminderTemplate),
 		},
 		Reminder: DingTalkReminderConfig{
 			LeadTime:     reminderLeadTime,
 			PollInterval: reminderPollInterval,
 		},
 	}
-	if _, err := notificationclient.NewDingTalkClient(notificationclient.Config{
-		BaseURL:          cfg.BaseURL,
-		AppCode:          cfg.AppCode,
-		AppKey:           cfg.AppKey,
-		AppSecret:        cfg.AppSecret,
-		Timeout:          cfg.Timeout,
-		ReceiverOverride: cfg.RedirectReceiver,
-	}); err != nil {
+	if err := validateDingTalkConfig(cfg); err != nil {
 		return DingTalkConfig{}, err
 	}
 	return cfg, nil
+}
+
+// LoadDingTalkConfigFromRuntime converts database-managed settings without
+// reading process environment variables.
+func LoadDingTalkConfigFromRuntime(settings configservice.RuntimeSettings) (DingTalkConfig, error) {
+	dingTalk := settings.DingTalk
+	cfg := DingTalkConfig{
+		Enabled:          dingTalk.Enabled,
+		BaseURL:          strings.TrimSpace(dingTalk.BaseURL),
+		AppCode:          strings.TrimSpace(dingTalk.AppCode),
+		AppKey:           strings.TrimSpace(dingTalk.AppKey),
+		AppSecret:        strings.TrimSpace(dingTalk.AppSecret),
+		Timeout:          dingTalk.Timeout,
+		RedirectEnabled:  dingTalk.RedirectEnabled,
+		RedirectReceiver: strings.TrimSpace(dingTalk.RedirectReceiver),
+		Notification: DingTalkNotificationConfig{
+			Title:             strings.TrimSpace(dingTalk.NotificationTitle),
+			Header:            strings.TrimSpace(dingTalk.NotificationHeader),
+			QQAccount:         strings.TrimSpace(dingTalk.QQAccount),
+			TransferRoom:      strings.TrimSpace(dingTalk.TransferRoom),
+			TransferAddress:   strings.TrimSpace(dingTalk.TransferAddress),
+			ConfirmedTemplate: dingTalk.ConfirmedTemplate,
+			RejectedTemplate:  dingTalk.RejectedTemplate,
+			ReferredTemplate:  dingTalk.ReferredTemplate,
+			NoShowTemplate:    dingTalk.NoShowTemplate,
+			ReminderTemplate:  dingTalk.ReminderTemplate,
+		},
+		Reminder: DingTalkReminderConfig{
+			LeadTime:     dingTalk.ReminderLeadTime,
+			PollInterval: dingTalk.ReminderPollInterval,
+		},
+	}
+	if err := validateDingTalkConfig(cfg); err != nil {
+		return DingTalkConfig{}, err
+	}
+	return cfg, nil
+}
+
+func validateDingTalkConfig(cfg DingTalkConfig) error {
+	if cfg.RedirectEnabled && strings.TrimSpace(cfg.RedirectReceiver) == "" {
+		return fmt.Errorf("DINGTALK_REDIRECT_RECEIVER is required when DINGTALK_REDIRECT_ENABLED is true")
+	}
+	if cfg.Enabled {
+		if _, err := notificationclient.NewDingTalkClient(notificationclient.Config{
+			BaseURL:          cfg.BaseURL,
+			AppCode:          cfg.AppCode,
+			AppKey:           cfg.AppKey,
+			AppSecret:        cfg.AppSecret,
+			Timeout:          cfg.Timeout,
+			ReceiverOverride: dingTalkReceiverOverride(cfg),
+		}); err != nil {
+			return err
+		}
+	}
+	if _, err := recordservice.NewDingTalkTicketNotifier(nil, time.UTC, dingTalkTicketNotifierConfig(cfg)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func dingTalkReceiverOverride(cfg DingTalkConfig) string {
+	if !cfg.RedirectEnabled {
+		return ""
+	}
+	return strings.TrimSpace(cfg.RedirectReceiver)
+}
+
+func dingTalkTicketNotifierConfig(cfg DingTalkConfig) recordservice.DingTalkTicketNotifierConfig {
+	return recordservice.DingTalkTicketNotifierConfig{
+		Title:             cfg.Notification.Title,
+		Header:            cfg.Notification.Header,
+		QQAccount:         cfg.Notification.QQAccount,
+		TransferRoom:      cfg.Notification.TransferRoom,
+		TransferAddress:   cfg.Notification.TransferAddress,
+		ConfirmedTemplate: cfg.Notification.ConfirmedTemplate,
+		RejectedTemplate:  cfg.Notification.RejectedTemplate,
+		ReferredTemplate:  cfg.Notification.ReferredTemplate,
+		NoShowTemplate:    cfg.Notification.NoShowTemplate,
+		ReminderTemplate:  cfg.Notification.ReminderTemplate,
+	}
 }
 
 func dingTalkStringSetting(getenv func(string) string, key, fallback string) string {

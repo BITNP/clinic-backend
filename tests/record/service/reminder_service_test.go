@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -287,5 +288,65 @@ func TestTicketReminderWorkerRunsOnStartup(t *testing.T) {
 	}
 	if len(notifier.reminders) != 1 {
 		t.Fatalf("reminders = %d, want 1", len(notifier.reminders))
+	}
+}
+
+func TestTicketReminderWorkerReadsRuntimeConfig(t *testing.T) {
+	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	db := setupAdminRecordTestDB(t)
+	seedReminderFixture(t, db, now, 20*time.Minute, recordmodel.RecordStatusConfirmed)
+	rawDB := testutil.RawDB(t, db)
+	notifier := &fakeTicketStatusNotifier{}
+	var enabled atomic.Bool
+	worker := &recordservice.TicketReminderWorker{
+		Discovery: &recordservice.TicketReminderDiscovery{DB: rawDB},
+		Delivery:  &recordservice.TicketReminderDelivery{DB: rawDB, Notifier: notifier, Location: time.UTC},
+		Config: func() recordservice.TicketReminderWorkerConfig {
+			return recordservice.TicketReminderWorkerConfig{
+				Enabled:         enabled.Load(),
+				LeadTime:        30 * time.Minute,
+				PollInterval:    10 * time.Millisecond,
+				DeliveryTimeout: time.Second,
+			}
+		},
+		Now: func() time.Time { return now },
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		worker.Run(ctx)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	var count int64
+	if err := db.Model(&recordmodel.ClinicRecordDingTalkReminder{}).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("reminders queued while disabled = %d, want 0", count)
+	}
+
+	enabled.Store(true)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		var stored recordmodel.ClinicRecordDingTalkReminder
+		err := db.First(&stored).Error
+		if err == nil && stored.Status == "sent" {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			<-done
+			t.Fatalf("worker did not resume after enable; last error: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not stop after cancellation")
 	}
 }

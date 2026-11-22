@@ -12,10 +12,20 @@ const (
 	reminderBatchSize        = 20
 )
 
+// TicketReminderWorkerConfig is the active reminder schedule read once per
+// worker cycle.
+type TicketReminderWorkerConfig struct {
+	Enabled         bool
+	LeadTime        time.Duration
+	PollInterval    time.Duration
+	DeliveryTimeout time.Duration
+}
+
 // TicketReminderWorker periodically discovers and delivers guest reminders.
 type TicketReminderWorker struct {
 	Discovery       *TicketReminderDiscovery
 	Delivery        *TicketReminderDelivery
+	Config          func() TicketReminderWorkerConfig
 	PollInterval    time.Duration
 	DeliveryTimeout time.Duration
 	Now             func() time.Time
@@ -23,29 +33,45 @@ type TicketReminderWorker struct {
 
 // Run processes reminders until ctx is canceled.
 func (w *TicketReminderWorker) Run(ctx context.Context) {
-	interval := w.PollInterval
-	if interval <= 0 {
-		interval = time.Minute
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
 	for {
-		w.runOnce(ctx)
+		config := w.currentConfig()
+		if config.Enabled {
+			w.runOnce(ctx, config)
+		}
+		interval := config.PollInterval
+		if interval <= 0 {
+			interval = time.Minute
+		}
+		timer := time.NewTimer(interval)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
 	}
 }
 
-func (w *TicketReminderWorker) runOnce(ctx context.Context) {
+func (w *TicketReminderWorker) currentConfig() TicketReminderWorkerConfig {
+	if w.Config != nil {
+		return w.Config()
+	}
+	return TicketReminderWorkerConfig{
+		Enabled:         true,
+		PollInterval:    w.PollInterval,
+		DeliveryTimeout: w.DeliveryTimeout,
+	}
+}
+
+func (w *TicketReminderWorker) runOnce(ctx context.Context, config TicketReminderWorkerConfig) {
 	now := time.Now
 	if w.Now != nil {
 		now = w.Now
 	}
 
+	if config.LeadTime > 0 {
+		w.Discovery.LeadTime = config.LeadTime
+	}
 	discoveryCtx, cancelDiscovery := context.WithTimeout(ctx, reminderDiscoveryTimeout)
 	created, err := w.Discovery.Discover(discoveryCtx, now())
 	cancelDiscovery()
@@ -72,7 +98,7 @@ func (w *TicketReminderWorker) runOnce(ctx context.Context) {
 			return
 		}
 
-		timeout := w.DeliveryTimeout
+		timeout := config.DeliveryTimeout
 		if timeout <= 0 {
 			timeout = reminderDeliveryTimeout
 		}
