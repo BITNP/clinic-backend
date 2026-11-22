@@ -12,6 +12,7 @@ import (
 
 	"clinic-backend/internal/calendar"
 	"clinic-backend/internal/database"
+	"clinic-backend/internal/journal"
 	recordmodel "clinic-backend/internal/record/model"
 	schedulingmodel "clinic-backend/internal/scheduling/model"
 )
@@ -28,6 +29,7 @@ type TicketReminderDelivery struct {
 	DB       *database.DB
 	Notifier TicketStatusNotifier
 	Location *time.Location
+	Journal  *journal.Service
 }
 
 // Claim leases one due reminder for this worker.
@@ -71,10 +73,36 @@ func (d *TicketReminderDelivery) Claim(ctx context.Context, now time.Time) (*rec
 			); err != nil {
 				return fmt.Errorf("cancel exhausted reminder %d: %w", job.ID, err)
 			}
+			if d.Journal != nil {
+				operationID, err := journal.NewOperationID()
+				if err != nil {
+					return fmt.Errorf("prepare exhausted reminder journal: %w", err)
+				}
+				if _, err := journal.InsertTx(ctx, tx, journal.EventInput{
+					OccurredAt:      now,
+					ActorType:       journal.ActorSystem,
+					ActorID:         "dingtalk_reminder_worker",
+					Action:          "notification.failed",
+					EntityType:      "record",
+					EntityID:        fmt.Sprint(job.RecordID),
+					OperationID:     operationID,
+					CausedByEventID: job.RequestedEventID,
+					Details: map[string]any{
+						"version":     1,
+						"reminder_id": job.ID,
+						"channel":     "dingtalk",
+						"attempt":     job.Attempts,
+						"reason":      "retry_limit_reached",
+					},
+				}); err != nil {
+					return err
+				}
+			}
 			job.ID = 0
 			return nil
 		}
 
+		previousStatus := job.Status
 		lease := now.Add(ticketReminderLease)
 		if _, err := tx.Exec(
 			`UPDATE clinic_record_dingtalk_reminder
@@ -87,6 +115,45 @@ func (d *TicketReminderDelivery) Claim(ctx context.Context, now time.Time) (*rec
 			job.ID,
 		); err != nil {
 			return fmt.Errorf("claim reminder %d: %w", job.ID, err)
+		}
+		if d.Journal != nil {
+			operationID, err := journal.NewOperationID()
+			if err != nil {
+				return fmt.Errorf("prepare dingtalk reminder attempt journal: %w", err)
+			}
+			reason := "scheduled"
+			if previousStatus == reminderStatusSending {
+				reason = "lease_expired"
+			}
+			eventID, err := journal.InsertTx(ctx, tx, journal.EventInput{
+				OccurredAt:      now,
+				ActorType:       journal.ActorSystem,
+				ActorID:         "dingtalk_reminder_worker",
+				Action:          "notification.attempt_started",
+				EntityType:      "record",
+				EntityID:        fmt.Sprint(job.RecordID),
+				OperationID:     operationID,
+				CausedByEventID: job.RequestedEventID,
+				Details: map[string]any{
+					"version":     1,
+					"reminder_id": job.ID,
+					"channel":     "dingtalk",
+					"attempt":     job.Attempts + 1,
+					"reason":      reason,
+				},
+			})
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(
+				ctx,
+				"UPDATE clinic_record_dingtalk_reminder SET attempt_event_id = $1 WHERE id = $2",
+				eventID,
+				job.ID,
+			); err != nil {
+				return fmt.Errorf("link reminder %d attempt event: %w", job.ID, err)
+			}
+			job.AttemptEventID = &eventID
 		}
 		job.Status = reminderStatusSending
 		job.LeaseUntil = &lease
@@ -113,6 +180,17 @@ func (d *TicketReminderDelivery) Deliver(
 	now time.Time,
 ) error {
 	now = now.UTC()
+	cancelJob := func(reason string) error {
+		return d.finish(
+			ctx,
+			job,
+			reminderStatusCancelled,
+			time.Time{},
+			"",
+			"notification.cancelled",
+			map[string]any{"reason": reason},
+		)
+	}
 	var record recordmodel.ClinicRecord
 	var date schedulingmodel.ClinicServiceDate
 	var roomName, roomAddress string
@@ -144,10 +222,10 @@ func (d *TicketReminderDelivery) Deliver(
 		&roomAddress,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return d.finish(ctx, job, reminderStatusCancelled, time.Time{}, "")
+		return cancelJob("record_or_service_date_missing")
 	}
 	if err != nil {
-		return d.retry(ctx, job, now, time.Time{}, fmt.Errorf("load reminder ticket: %w", err))
+		return d.retry(ctx, job, now, time.Time{}, fmt.Errorf("load reminder ticket: %w", err), "reminder_context_unavailable")
 	}
 	if roomID.Valid {
 		id := uint(roomID.Int64)
@@ -157,15 +235,21 @@ func (d *TicketReminderDelivery) Deliver(
 	if loc == nil {
 		loc = calendar.DefaultServiceDateLocation()
 	}
-	if record.Status != recordmodel.RecordStatusConfirmed ||
-		date.RoomID == nil || *date.RoomID != record.RoomID ||
-		!calendar.DateInLocation(date.Date, loc).Equal(calendar.DateInLocation(record.AppointmentTime, loc)) ||
-		!now.Before(date.StartTime) ||
-		strings.TrimSpace(record.User) == "" {
-		return d.finish(ctx, job, reminderStatusCancelled, time.Time{}, "")
+	if record.Status != recordmodel.RecordStatusConfirmed {
+		return cancelJob("record_no_longer_confirmed")
+	}
+	if date.RoomID == nil || *date.RoomID != record.RoomID ||
+		!calendar.DateInLocation(date.Date, loc).Equal(calendar.DateInLocation(record.AppointmentTime, loc)) {
+		return cancelJob("service_date_changed")
+	}
+	if !now.Before(date.StartTime) {
+		return cancelJob("service_already_started")
+	}
+	if strings.TrimSpace(record.User) == "" {
+		return cancelJob("recipient_address_missing")
 	}
 	if d.Notifier == nil {
-		return d.retry(ctx, job, now, date.StartTime, fmt.Errorf("ticket reminder notifier is not configured"))
+		return d.retry(ctx, job, now, date.StartTime, fmt.Errorf("dingtalk notifier unavailable"), "notifier_unavailable")
 	}
 	err = d.Notifier.NotifyReminder(ctx, TicketStatusNotification{
 		RecordID:     record.ID,
@@ -177,9 +261,21 @@ func (d *TicketReminderDelivery) Deliver(
 		ServiceEnd:   date.EndTime,
 	})
 	if err != nil {
-		return d.retry(ctx, job, now, date.StartTime, err)
+		return d.retry(ctx, job, now, date.StartTime, err, "dingtalk_delivery_failed")
 	}
-	return d.finish(ctx, job, reminderStatusSent, now, "")
+	return d.finish(
+		ctx,
+		job,
+		reminderStatusSent,
+		now,
+		"",
+		"notification.sent",
+		map[string]any{
+			"channel":      "dingtalk",
+			"recipient":    map[string]any{"type": "customer"},
+			"confirmation": "message_center_send_success",
+		},
+	)
 }
 
 func (d *TicketReminderDelivery) retry(
@@ -188,6 +284,7 @@ func (d *TicketReminderDelivery) retry(
 	now time.Time,
 	serviceStart time.Time,
 	cause error,
+	errorCode string,
 ) error {
 	delay := time.Minute
 	for n := 1; n < job.Attempts && delay < ticketReminderMaxBackoff; n++ {
@@ -198,11 +295,26 @@ func (d *TicketReminderDelivery) retry(
 	}
 	next := now.Add(delay)
 	status := reminderStatusPending
-	if job.Attempts >= maxTicketReminderAttempts ||
-		(!serviceStart.IsZero() && !next.Before(serviceStart)) {
+	eventAction := "notification.retry_scheduled"
+	reason := "gateway_delivery_failed"
+	if job.Attempts >= maxTicketReminderAttempts {
 		status = reminderStatusCancelled
+		eventAction = "notification.failed"
+		reason = "retry_limit_reached"
+	} else if !serviceStart.IsZero() && !next.Before(serviceStart) {
+		status = reminderStatusCancelled
+		eventAction = "notification.failed"
+		reason = "retry_deadline_reached"
 	}
-	if err := d.finish(ctx, job, status, next, cause.Error()); err != nil {
+	details := map[string]any{
+		"channel": "dingtalk",
+		"reason":  reason,
+		"error":   map[string]any{"code": errorCode, "message": "The DingTalk reminder delivery did not complete."},
+	}
+	if status == reminderStatusPending {
+		details["next_attempt_at"] = next.UTC().Format(time.RFC3339Nano)
+	}
+	if err := d.finish(ctx, job, status, next, cause.Error(), eventAction, details); err != nil {
 		return err
 	}
 	return cause
@@ -214,6 +326,8 @@ func (d *TicketReminderDelivery) finish(
 	status string,
 	nextAttemptAt time.Time,
 	lastError string,
+	eventAction string,
+	eventDetails map[string]any,
 ) error {
 	sets := []string{
 		"status = $1",
@@ -240,18 +354,45 @@ func (d *TicketReminderDelivery) finish(
 			idPos+1,
 			idPos+2,
 		)
-	result, err := d.DB.ExecContext(ctx, query, args...)
-	if err != nil {
-		return fmt.Errorf("finish reminder %d: %w", job.ID, err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("check reminder %d update: %w", job.ID, err)
-	}
-	if affected != 1 {
-		return fmt.Errorf("reminder %d claim expired", job.ID)
-	}
-	return nil
+	return database.WithTx(ctx, d.DB.DB, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, query, args...)
+		if err != nil {
+			return fmt.Errorf("finish reminder %d: %w", job.ID, err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("check reminder %d update: %w", job.ID, err)
+		}
+		if affected != 1 {
+			return fmt.Errorf("reminder %d claim expired", job.ID)
+		}
+		if d.Journal == nil || eventAction == "" {
+			return nil
+		}
+		operationID, err := journal.NewOperationID()
+		if err != nil {
+			return fmt.Errorf("prepare dingtalk reminder outcome journal: %w", err)
+		}
+		details := make(map[string]any, len(eventDetails)+4)
+		details["version"] = 1
+		details["reminder_id"] = job.ID
+		details["attempt"] = job.Attempts
+		for key, value := range eventDetails {
+			details[key] = value
+		}
+		_, err = journal.InsertTx(ctx, tx, journal.EventInput{
+			OccurredAt:      time.Now().UTC(),
+			ActorType:       journal.ActorSystem,
+			ActorID:         "dingtalk_reminder_worker",
+			Action:          eventAction,
+			EntityType:      "record",
+			EntityID:        fmt.Sprint(job.RecordID),
+			OperationID:     operationID,
+			CausedByEventID: job.AttemptEventID,
+			Details:         details,
+		})
+		return err
+	})
 }
 
 func newTicketReminderClaimToken() (string, error) {

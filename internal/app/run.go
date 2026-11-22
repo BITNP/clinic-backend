@@ -358,11 +358,13 @@ func Run() {
 		discovery := &recordservice.TicketReminderDiscovery{
 			DB:       rawDB,
 			LeadTime: cfg.Reminder.LeadTime,
+			Journal:  journalSvc,
 		}
 		delivery := &recordservice.TicketReminderDelivery{
 			DB:       rawDB,
 			Notifier: dingtalkRuntime,
 			Location: serviceDateLoc,
+			Journal:  journalSvc,
 		}
 		worker := &recordservice.TicketReminderWorker{
 			Discovery:       discovery,

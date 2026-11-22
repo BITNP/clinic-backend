@@ -28,7 +28,7 @@ const recordDeviceColumns = "record_id, laptop_model, password"
 const recordWorkerColumns = "record_id, worker, worker_desc, finish_time"
 const recordRejectionColumns = "record_id, reject_reason"
 const recordReferralColumns = "record_id, referral_reason"
-const recordDingTalkReminderColumns = "id, record_id, service_date_id, status, attempts, next_attempt_at, lease_until, claim_token, sent_at, last_error, created_at, updated_at"
+const recordDingTalkReminderColumns = "id, record_id, service_date_id, status, attempts, next_attempt_at, lease_until, claim_token, requested_event_id, attempt_event_id, sent_at, last_error, created_at, updated_at"
 const recordArrivalColumns = "record_id, arrive_time"
 const recordPhotoColumns = "id, record_id, object_key, content_type, size, position, created_at"
 const serviceDateColumns = "id, capacity, room_id, date, start_time, end_time, title"
@@ -127,6 +127,8 @@ func scanRecordDingTalkReminder(row rowScanner) (recordmodel.ClinicRecordDingTal
 		&reminder.NextAttemptAt,
 		&leaseUntil,
 		&reminder.ClaimToken,
+		&reminder.RequestedEventID,
+		&reminder.AttemptEventID,
 		&sentAt,
 		&reminder.LastError,
 		&createdAt,
