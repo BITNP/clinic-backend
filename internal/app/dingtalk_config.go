@@ -155,8 +155,14 @@ func LoadDingTalkConfigFromRuntime(settings configservice.RuntimeSettings) (Ding
 }
 
 func validateDingTalkConfig(cfg DingTalkConfig) error {
-	if cfg.RedirectEnabled && strings.TrimSpace(cfg.RedirectReceiver) == "" {
-		return fmt.Errorf("DINGTALK_REDIRECT_RECEIVER is required when DINGTALK_REDIRECT_ENABLED is true")
+	if cfg.RedirectEnabled {
+		receiver := strings.TrimSpace(cfg.RedirectReceiver)
+		if receiver == "" {
+			return fmt.Errorf("DINGTALK_REDIRECT_RECEIVER is required when DINGTALK_REDIRECT_ENABLED is true")
+		}
+		if strings.ContainsAny(receiver, ",，") {
+			return fmt.Errorf("DINGTALK_REDIRECT_RECEIVER must contain exactly one receiver")
+		}
 	}
 	if cfg.Enabled {
 		if _, err := notificationclient.NewDingTalkClient(notificationclient.Config{

@@ -150,7 +150,7 @@ func TestLoadDingTalkConfigRejectsMultipleRedirectReceivers(t *testing.T) {
 	values["DINGTALK_REDIRECT_RECEIVER"] = "dev-user,other-user"
 
 	_, err := app.LoadDingTalkConfig(envMap(values))
-	if err == nil || !strings.Contains(err.Error(), "exactly one receiver is required") {
+	if err == nil || !strings.Contains(err.Error(), "exactly one receiver") {
 		t.Fatalf("error = %v, want single receiver validation", err)
 	}
 }
@@ -252,5 +252,10 @@ func TestLoadDingTalkConfigFromRuntimeValidatesDependencies(t *testing.T) {
 	settings.DingTalk.RedirectEnabled = true
 	if _, err := app.LoadDingTalkConfigFromRuntime(settings); err == nil || !strings.Contains(err.Error(), "DINGTALK_REDIRECT_RECEIVER is required") {
 		t.Fatalf("error = %v, want missing redirect receiver", err)
+	}
+
+	settings.DingTalk.RedirectReceiver = "first,second"
+	if _, err := app.LoadDingTalkConfigFromRuntime(settings); err == nil || !strings.Contains(err.Error(), "exactly one receiver") {
+		t.Fatalf("error = %v, want single redirect receiver", err)
 	}
 }
