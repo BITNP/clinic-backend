@@ -10,6 +10,7 @@ import (
 	authmodel "clinic-backend/internal/auth/model"
 	configmodel "clinic-backend/internal/config/model"
 	databasepkg "clinic-backend/internal/database"
+	journalmodel "clinic-backend/internal/journal/model"
 	recordmodel "clinic-backend/internal/record/model"
 	roommodel "clinic-backend/internal/room/model"
 	schedulingmodel "clinic-backend/internal/scheduling/model"
@@ -63,6 +64,7 @@ func openDatabase() (*gorm.DB, *databasepkg.DB) {
 		&announcement.ClinicAnnouncement{},
 		&configmodel.ClinicConfigGroup{},
 		&configmodel.ClinicConfigItem{},
+		&journalmodel.Event{},
 		&schedulingmodel.ClinicServiceDate{},
 		&schedulingmodel.ServiceDateReminder{},
 		&roommodel.ClinicCampus{},
