@@ -869,22 +869,37 @@ The backend seeds and reserves `SYNC_POLL_INTERVAL`, `STAFF_VERSION`,
 `MESSAGE_GATEWAY_URL`, `MESSAGE_GATEWAY_ACCOUNT`,
 `MESSAGE_GATEWAY_ACCOUNT_TOKEN`, `MESSAGE_GATEWAY_TIMEOUT`,
 `TAGGER_LLM_API_KEY`, `TAGGER_LLM_BASE_URL`, `TAGGER_LLM_MODEL`,
-`TAGGER_AGENT_POOL_SIZE`, `TAGGER_CONTEXT_TOKENS`, and `TAGGER_TIMEOUT`. Their
-types, required flags, write-only flags, and role levels are fixed and their
-values receive key-specific validation. `TAGGER_LLM_API_KEY`,
+`TAGGER_AGENT_POOL_SIZE`, `TAGGER_CONTEXT_TOKENS`, `TAGGER_TIMEOUT`,
+`DINGTALK_NOTIFY_ENABLED`, `DINGTALK_BASE_URL`, `DINGTALK_APP_CODE`,
+`DINGTALK_APP_KEY`, `DINGTALK_APP_SECRET`, `DINGTALK_TIMEOUT`,
+`DINGTALK_REMINDER_LEAD_TIME`, `DINGTALK_REMINDER_POLL_INTERVAL`,
+`DINGTALK_REDIRECT_ENABLED`, `DINGTALK_REDIRECT_RECEIVER`,
+`DINGTALK_NOTIFICATION_TITLE`, `DINGTALK_NOTIFICATION_HEADER`,
+`DINGTALK_NOTIFICATION_QQ_ACCOUNT`, `DINGTALK_NOTIFICATION_TRANSFER_ROOM`,
+`DINGTALK_NOTIFICATION_TRANSFER_ADDRESS`, `DINGTALK_TEMPLATE_CONFIRMED`,
+`DINGTALK_TEMPLATE_REJECTED`, `DINGTALK_TEMPLATE_REFERRED`,
+`DINGTALK_TEMPLATE_NO_SHOW`, and `DINGTALK_TEMPLATE_REMINDER`. Their types,
+required flags, write-only flags, and role levels are fixed and their values
+receive key-specific validation. `TAGGER_LLM_API_KEY`,
 `TAGGER_LLM_BASE_URL`, `TAGGER_LLM_MODEL`, `TAGGER_AGENT_POOL_SIZE`,
 `TAGGER_CONTEXT_TOKENS`, `TAGGER_TIMEOUT`, `MESSAGE_GATEWAY_URL`,
 `MESSAGE_GATEWAY_ACCOUNT`, `MESSAGE_GATEWAY_ACCOUNT_TOKEN`, and
-`MESSAGE_GATEWAY_TIMEOUT` are `superadmin` items; the remaining built-ins are
-`admin` items. Initial values come from the external
+`MESSAGE_GATEWAY_TIMEOUT` are `superadmin` items. DingTalk enablement,
+credentials, transport, redirect, and polling items are also `superadmin`;
+notification content, lead time, organization fields, and templates are
+`admin` items. The remaining built-ins are `admin` items. Initial values come
+from the external
 `runtime_settings.json` file beside `.env`; environment variables with these
 names may only initialize a missing item during migration and are ignored once
-the row exists. `TAGGER_LLM_API_KEY` and `MESSAGE_GATEWAY_ACCOUNT_TOKEN` are
-optional and write-only: their values are never returned by the API. All
-successful saves apply without restarting the backend; tagger changes
-atomically replace the active pool generation, and reminder delivery reads the
-new gateway settings on its next send. The reminder template supports
-`Date`, `StartTime`, `Room`, `PendingCount`, and `LeadTime`.
+the row exists. `TAGGER_LLM_API_KEY`, `MESSAGE_GATEWAY_ACCOUNT_TOKEN`, and
+`DINGTALK_APP_SECRET` are optional and write-only: their values are never
+returned by the API. All successful saves apply without restarting the backend;
+tagger changes atomically replace the active pool generation, DingTalk changes
+atomically replace the prepared message-center client, and reminder delivery
+reads new gateway settings on its next send. The service-date reminder template
+supports `Date`, `StartTime`, `Room`, `PendingCount`, and `LeadTime`. DingTalk
+reminder scheduling reads its current lead time and polling interval at the next
+worker cycle.
 
 ### `GET /api/admin/config`
 
@@ -1162,14 +1177,16 @@ whose appointment date has passed are closed automatically. `pending` and
 `confirmed` records become `no_show`; `arrived` and `in_progress` records become
 `completed`. An existing arrival timestamp is preserved. Automatic `no_show`
 transitions send the same best-effort DingTalk notification described below
-when `DINGTALK_NOTIFY_ENABLED=true`.
+when the `DINGTALK_NOTIFY_ENABLED` config item is true.
 
 DingTalk message text is rendered from configurable templates. The available
 fields are `HEDR`, `DATE`, `ID`, `ROOM`, `LOCA`, `TRRO`, `TRLO`, `REAS`, and
-`QQAC`; see `CONFIGURATION.md` for their sources and configuration variables.
+`QQAC`; see `CONFIGURATION.md` for their source config items.
 When DingTalk notifications are enabled, confirmed tickets receive a persisted
 pre-shift reminder when their service window enters the configured lead-time
-window (`DINGTALK_REMINDER_LEAD_TIME`, default `30m`).
+window (`DINGTALK_REMINDER_LEAD_TIME`, default `30m`). Disabling
+`DINGTALK_NOTIFY_ENABLED` stops new discovery and sends; pending reminders
+resume after it is re-enabled.
 
 Admin record view:
 
@@ -1472,7 +1489,7 @@ curl -X DELETE "$BASE/api/admin/records/7/photos/1" \
 Sets `approver_id` and sends a best-effort DingTalk notification to the record's
 `user` id. The message-center delivery status is checked after submission;
 notification failures are logged and do not roll back the transition. The send
-is skipped when `DINGTALK_NOTIFY_ENABLED=false`.
+is skipped when the `DINGTALK_NOTIFY_ENABLED` config item is false.
 
 **Request:** No body.
 
@@ -1494,7 +1511,8 @@ curl -X POST "$BASE/api/admin/records/1/confirm" \
 Stores the rejection reason and sends a best-effort DingTalk notification to the
 record's `user` id. The message-center delivery status is checked after
 submission; notification failures are logged and do not roll back the
-transition. The send is skipped when `DINGTALK_NOTIFY_ENABLED=false`.
+transition. The send is skipped when the `DINGTALK_NOTIFY_ENABLED` config item
+is false.
 
 **Request body**
 
@@ -1578,7 +1596,7 @@ Stores the referral reason. A JSON object body is required; `reason` may be
 omitted or empty. Sends a best-effort DingTalk notification to the record's
 `user` id. The message-center delivery status is checked after submission;
 notification failures are logged and do not roll back the transition. The send
-is skipped when `DINGTALK_NOTIFY_ENABLED=false`.
+is skipped when the `DINGTALK_NOTIFY_ENABLED` config item is false.
 
 **Request body**
 
@@ -1605,7 +1623,8 @@ curl -X POST "$BASE/api/admin/records/1/refer" \
 `no_show`). Staff or admin. Sends a best-effort DingTalk notification to the
 record's `user` id. The message-center delivery status is checked after
 submission; notification failures are logged and do not roll back the
-transition. The send is skipped when `DINGTALK_NOTIFY_ENABLED=false`.
+transition. The send is skipped when the `DINGTALK_NOTIFY_ENABLED` config item
+is false.
 
 **Request:** No body.
 

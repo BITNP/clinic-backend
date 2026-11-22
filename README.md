@@ -202,15 +202,14 @@ Ticket status messages use the separate V2 DingTalk message-center client and
 do not pass through the QQ message gateway. The backend sends to the record's
 `user` DingTalk id when a ticket becomes `confirmed`, `rejected`, `referred`, or
 `no_show`, then verifies the per-platform delivery status. Its
-`DINGTALK_BASE_URL`, `DINGTALK_APP_CODE`, and credential settings are documented
-in `CONFIGURATION.md`. Ticket notifications are disabled by default; set
-`DINGTALK_NOTIFY_ENABLED=true` after configuring the message center. Notification
-text and organization-specific fields are configurable through the
-`DINGTALK_TEMPLATE_*` and `DINGTALK_NOTIFICATION_*` settings. Confirmed tickets
-also receive a persisted pre-shift reminder 30 minutes before their service
-window by default. For notification testing, enable `DINGTALK_REDIRECT_ENABLED`
-and set `DINGTALK_REDIRECT_RECEIVER` to route every DingTalk message to one
-development account.
+DingTalk delivery, switch, redirect, and template settings are database-managed
+config items under the `dingtalk` group. Environment variables with the same
+names only seed missing items during migration. Changes apply without a
+restart: status notifications use the new client on the next message, while
+reminder scheduling changes take effect at the next worker cycle. Confirmed
+tickets also receive a persisted pre-shift reminder 30 minutes before their
+service window by default. See `CONFIGURATION.md` for the complete item list
+and permissions.
 
 The image tags in the commands above come from `.env`; see
 [CONFIGURATION.md](CONFIGURATION.md#production-stack-docker-composeprodyml) for

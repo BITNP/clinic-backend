@@ -320,13 +320,6 @@ start_cas() {
 # --- 3. fake DingTalk --------------------------------------------------------
 
 start_fake_dingtalk() {
-	case "${DINGTALK_NOTIFY_ENABLED:-false}" in
-	0 | f | F | false | FALSE | False)
-		log "DingTalk ticket notifications disabled"
-		return
-		;;
-	esac
-
 	local local_url=http://127.0.0.1:$DINGTALK_PORT
 	export DINGTALK_BASE_URL=${DINGTALK_BASE_URL:-$local_url}
 	DINGTALK_BASE_URL=${DINGTALK_BASE_URL%/}

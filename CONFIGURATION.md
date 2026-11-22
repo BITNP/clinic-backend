@@ -216,53 +216,45 @@ DingTalk notifications use the V2 message-center API through the reusable
 `internal/notification/client` package. This path is independent of the QQ
 `message-gateway` path. The backend uses it to notify the record's `user`
 DingTalk id when a ticket becomes `confirmed`, `rejected`, `referred`, or
-`no_show`. Notifications are disabled by default:
+`no_show`. The settings are seeded as reserved config items in the
+`dingtalk` group. Environment variables with the same names can initialize a
+missing item during the first upgrade, but the database value is authoritative
+afterward.
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `DINGTALK_NOTIFY_ENABLED` | `false` | Enables ticket status notifications. When `false`, the DingTalk delivery settings below are ignored. |
-| `DINGTALK_BASE_URL` | — (required) | Message-center business base URL. HTTP and HTTPS are supported. |
-| `DINGTALK_APP_CODE` | — (required) | Authorized message-center application code, sent as `msg-center-app-code`. |
-| `DINGTALK_APP_KEY` | — (required) | Open-platform application key used by the token API. |
-| `DINGTALK_APP_SECRET` | — (required) | Open-platform application secret used by the token API. |
-| `DINGTALK_TIMEOUT` | `10s` | Per-request HTTP timeout; must be positive. |
-| `DINGTALK_REMINDER_LEAD_TIME` | `30m` | How long before the service start a confirmed ticket becomes eligible for its guest reminder. |
-| `DINGTALK_REMINDER_POLL_INTERVAL` | `1m` | How often the worker discovers and delivers due reminder jobs. |
-| `DINGTALK_REDIRECT_ENABLED` | `false` | Routes every DingTalk message to `DINGTALK_REDIRECT_RECEIVER` instead of its requested recipients. |
-| `DINGTALK_REDIRECT_RECEIVER` | empty | The single DingTalk account id used when `DINGTALK_REDIRECT_ENABLED=true`; required in that case. |
+| Config item | Default | Access | Description |
+| --- | --- | --- | --- |
+| `DINGTALK_NOTIFY_ENABLED` | `false` | superadmin | Enables status notifications and reminder discovery. |
+| `DINGTALK_BASE_URL` | empty | superadmin | Message-center business base URL; required when notifications are enabled. |
+| `DINGTALK_APP_CODE` | empty | superadmin | Authorized message-center application code. |
+| `DINGTALK_APP_KEY` | empty | superadmin | Open-platform application key. |
+| `DINGTALK_APP_SECRET` | empty | superadmin | Open-platform application secret. Write-only; never returned by the API. |
+| `DINGTALK_TIMEOUT` | `10s` | superadmin | Per-request HTTP timeout. |
+| `DINGTALK_REDIRECT_ENABLED` | `false` | superadmin | Replaces every message's recipients with `DINGTALK_REDIRECT_RECEIVER`. |
+| `DINGTALK_REDIRECT_RECEIVER` | empty | superadmin | The single DingTalk account id used while redirection is enabled. |
+| `DINGTALK_REMINDER_LEAD_TIME` | `30m` | admin | How long before the service starts a confirmed ticket becomes eligible for a reminder. |
+| `DINGTALK_REMINDER_POLL_INTERVAL` | `1m` | superadmin | Worker polling interval for reminder discovery and delivery. |
+| `DINGTALK_NOTIFICATION_TITLE` | `电脑诊所工单状态更新` | admin | DingTalk notification title. |
+| `DINGTALK_NOTIFICATION_HEADER` | `网络开拓者协会` | admin | Value rendered as `{{.HEDR}}`. |
+| `DINGTALK_NOTIFICATION_QQ_ACCOUNT` | empty | admin | Appeal QQ rendered as `{{.QQAC}}`. |
+| `DINGTALK_NOTIFICATION_TRANSFER_ROOM` | empty | admin | Transfer room rendered as `{{.TRRO}}`. |
+| `DINGTALK_NOTIFICATION_TRANSFER_ADDRESS` | empty | admin | Transfer address rendered as `{{.TRLO}}`. |
+| `DINGTALK_TEMPLATE_CONFIRMED` | built-in approval example | admin | Template for `confirmed`. |
+| `DINGTALK_TEMPLATE_REJECTED` | built-in rejection example | admin | Template for `rejected`. |
+| `DINGTALK_TEMPLATE_REFERRED` | built-in referral example | admin | Template for `referred`. |
+| `DINGTALK_TEMPLATE_NO_SHOW` | built-in no-show example | admin | Template for `no_show`. |
+| `DINGTALK_TEMPLATE_REMINDER` | built-in reminder example | admin | Confirmed-ticket pre-shift reminder. |
 
-The delivery settings are required only when `DINGTALK_NOTIFY_ENABLED=true`.
-Leaving it `false` means ticket transitions and cleanup remain unchanged while
-all DingTalk sends and status checks are skipped.
+Enabling notifications requires a valid base URL, app code, app key, and app
+secret. Enabling redirection additionally requires exactly one receiver.
+Invalid or incomplete candidates are rejected before the active configuration
+changes. Message-center and redirect changes apply to the next status message
+without restarting the backend.
 
-For development or notifications testing, enable the receiver override to keep
-real guests and staff from receiving messages:
-
-```env
-DINGTALK_REDIRECT_ENABLED=true
-DINGTALK_REDIRECT_RECEIVER=development-dingtalk-user-id
-```
-
-The override replaces the message-center payload's `receivers` value for all
-DingTalk messages. Message content, templates, credentials, and delivery-status
-checks are unchanged. Startup fails if the override is enabled without exactly
-one receiver.
-
-Notification text is configurable with Go templates. Leave a template setting
-empty to use its built-in default. Use `\n` for a line break.
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `DINGTALK_NOTIFICATION_TITLE` | `电脑诊所工单状态更新` | DingTalk notification title. |
-| `DINGTALK_NOTIFICATION_HEADER` | `网络开拓者协会` | Value rendered as `{{.HEDR}}`. |
-| `DINGTALK_NOTIFICATION_QQ_ACCOUNT` | empty | Appeal QQ rendered as `{{.QQAC}}`. |
-| `DINGTALK_NOTIFICATION_TRANSFER_ROOM` | empty | Transfer room rendered as `{{.TRRO}}`. |
-| `DINGTALK_NOTIFICATION_TRANSFER_ADDRESS` | empty | Transfer address rendered as `{{.TRLO}}`. |
-| `DINGTALK_TEMPLATE_CONFIRMED` | built-in approval example | Template for `confirmed`. |
-| `DINGTALK_TEMPLATE_REJECTED` | built-in rejection example | Template for `rejected`. |
-| `DINGTALK_TEMPLATE_REFERRED` | built-in referral example | Template for `referred`. |
-| `DINGTALK_TEMPLATE_NO_SHOW` | built-in no-show example | Template for `no_show`. |
-| `DINGTALK_TEMPLATE_REMINDER` | built-in reminder example | Template for confirmed-ticket pre-shift reminders. |
+While `DINGTALK_NOTIFY_ENABLED=false`, status messages are skipped and the
+reminder worker does not discover or send reminders. Persisted pending
+reminders remain queued and resume after notifications are re-enabled.
+Reminder timing and polling changes apply at the worker's next scheduling
+cycle.
 
 Available template fields:
 
@@ -278,7 +270,7 @@ Available template fields:
 | `REAS` | Rejection or referral reason. |
 | `QQAC` | `DINGTALK_NOTIFICATION_QQ_ACCOUNT`. |
 
-Example override:
+Template example:
 
 ```env
 DINGTALK_NOTIFICATION_QQ_ACCOUNT=123456789
@@ -305,7 +297,9 @@ the ticket state remains committed if sending or status verification fails, and
 the failure is logged.
 
 For local development, `scripts/dev.sh` starts `fake/fake_dingtalk.go` on
-`:9998` when `DINGTALK_BASE_URL` is empty. To run it manually:
+`:9998` by default. Its environment defaults can seed a fresh database, while
+an existing installation follows the database-managed DingTalk items. Use
+`--no-dingtalk` to skip the fake. To run it manually:
 
 ```bash
 go run fake/fake_dingtalk.go
@@ -571,8 +565,9 @@ environment variables), and then starts:
 
 The fake DingTalk writes received requests directly to the terminal. If
 `DINGTALK_BASE_URL` points at another host, `dev.sh` uses that service instead
-of starting the fake. Use `--no-dingtalk` only when all `DINGTALK_*` settings
-already point at a reachable message center.
+of starting the fake. Because DingTalk runtime settings are database-managed,
+an existing installation may still target another message center. Use
+`--no-dingtalk` when the local fake is not needed.
 
 NapCat is external to the gateway stack. To use the optional sample, start it
 after the gateway network exists:

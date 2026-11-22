@@ -18,10 +18,10 @@ version: "3"
 # Usage on the server (only this file, .env, runtime_settings.json,
 # deploy/rustfs/ and the image tarball are needed):
 #   docker load -i clinic-images.tar
-#   cp .env.example .env            # then set real secrets:
+#   cp .env.example .env            # then set bootstrap/real secrets:
 #                                   #   CLINIC_API_KEY, APP_BASE_URL,
 #                                   #   CAS_SERVER_URL, CLINIC_DB_DSN,
-#                                   #   DINGTALK_*,
+#                                   #   DINGTALK_* (first-seed only),
 #                                   #   MAINTAINER_QQ_IDS, MESSAGE_GATEWAY_ACCOUNT_TOKEN,
 #                                   #   RUSTFS_*, S3_*, ...
 #   cp runtime_settings.example.json runtime_settings.json
