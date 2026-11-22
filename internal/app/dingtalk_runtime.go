@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -114,7 +115,7 @@ func (m *dingTalkRuntimeManager) Notify(ctx context.Context, notification record
 func (m *dingTalkRuntimeManager) NotifyReminder(ctx context.Context, notification recordservice.TicketStatusNotification) error {
 	state := m.active.Load()
 	if state == nil || !state.config.Enabled {
-		return nil
+		return fmt.Errorf("dingtalk reminder delivery is disabled")
 	}
 	return state.notifier.NotifyReminder(ctx, notification)
 }

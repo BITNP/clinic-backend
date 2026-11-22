@@ -66,6 +66,9 @@ func TestDingTalkRuntimeManagerActivatesOnlyPreparedSettings(t *testing.T) {
 	if err := manager.Notify(context.Background(), notification); err != nil {
 		t.Fatalf("disabled Notify() error = %v", err)
 	}
+	if err := manager.NotifyReminder(context.Background(), notification); err == nil {
+		t.Fatal("disabled NotifyReminder() error = nil, want retryable failure")
+	}
 	if sender.calls != 0 {
 		t.Fatalf("disabled sender calls = %d, want 0", sender.calls)
 	}
