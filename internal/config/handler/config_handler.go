@@ -231,6 +231,10 @@ func (h *ConfigHandler) UpdateItem(c *gin.Context) {
 	if !ok {
 		return
 	}
+	actorID := 0
+	if staff, ok := authhandler.ContextStaff(c); ok {
+		actorID = staff.ID
+	}
 
 	var req updateItemRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -238,7 +242,7 @@ func (h *ConfigHandler) UpdateItem(c *gin.Context) {
 		return
 	}
 
-	item, err := h.svc.UpdateItemFor(configActorRole(c), id, configservice.UpdateItemInput{
+	item, err := h.svc.UpdateItemForActor(configActorRole(c), actorID, id, configservice.UpdateItemInput{
 		Value:       req.Value,
 		ValueType:   req.ValueType,
 		DisplayName: req.DisplayName,

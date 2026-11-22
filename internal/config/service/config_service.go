@@ -15,6 +15,7 @@ import (
 
 	configmodel "clinic-backend/internal/config/model"
 	"clinic-backend/internal/database"
+	"clinic-backend/internal/journal"
 )
 
 var (
@@ -44,6 +45,7 @@ type ConfigService struct {
 	runtime         atomic.Pointer[RuntimeSettings]
 	validateRuntime func(RuntimeSettings) error
 	applyRuntime    func(RuntimeSettings)
+	journal         *journal.Service
 }
 
 func NewConfigService(db *database.DB) *ConfigService {
@@ -92,6 +94,13 @@ func (s *ConfigService) SetRuntimeApplyHook(apply func(RuntimeSettings)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.applyRuntime = apply
+}
+
+// SetJournalService enables transactional configuration history.
+func (s *ConfigService) SetJournalService(journalSvc *journal.Service) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.journal = journalSvc
 }
 
 // Current returns a private copy of the active runtime settings.
@@ -469,19 +478,35 @@ func (s *ConfigService) CreateItemFor(role configmodel.ConfigRoleLevel, in Creat
 }
 
 func (s *ConfigService) UpdateItem(id uint, in UpdateItemInput) (configmodel.ClinicConfigItem, error) {
-	return s.updateItem(id, in, nil)
+	return s.updateItem(id, in, nil, 0)
 }
 
 // UpdateItemFor updates an item when role may access both its current and
 // resulting role levels.
 func (s *ConfigService) UpdateItemFor(role configmodel.ConfigRoleLevel, id uint, in UpdateItemInput) (configmodel.ClinicConfigItem, error) {
+	return s.UpdateItemForActor(role, 0, id, in)
+}
+
+// UpdateItemForActor updates an item and records the authenticated actor in the
+// journal transaction.
+func (s *ConfigService) UpdateItemForActor(
+	role configmodel.ConfigRoleLevel,
+	actorID int,
+	id uint,
+	in UpdateItemInput,
+) (configmodel.ClinicConfigItem, error) {
 	if err := validateConfigActorRole(role); err != nil {
 		return configmodel.ClinicConfigItem{}, err
 	}
-	return s.updateItem(id, in, &role)
+	return s.updateItem(id, in, &role, actorID)
 }
 
-func (s *ConfigService) updateItem(id uint, in UpdateItemInput, actorRole *configmodel.ConfigRoleLevel) (configmodel.ClinicConfigItem, error) {
+func (s *ConfigService) updateItem(
+	id uint,
+	in UpdateItemInput,
+	actorRole *configmodel.ConfigRoleLevel,
+	actorID int,
+) (configmodel.ClinicConfigItem, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var candidate *RuntimeSettings
@@ -501,6 +526,7 @@ func (s *ConfigService) updateItem(id uint, in UpdateItemInput, actorRole *confi
 		if actorRole != nil && !configRoleCanAccessItem(*actorRole, item.RoleLevel) {
 			return ErrConfigItemNotFound
 		}
+		before := item
 
 		if in.Value != nil {
 			item.Value = *in.Value
@@ -628,6 +654,26 @@ func (s *ConfigService) updateItem(id uint, in UpdateItemInput, actorRole *confi
 				}
 			}
 			candidate = &settings
+		}
+		if s.journal != nil && actorID > 0 {
+			details, changed := configItemJournalDetails(before, item)
+			if changed {
+				operationID, err := journal.NewOperationID()
+				if err != nil {
+					return fmt.Errorf("prepare config journal operation: %w", err)
+				}
+				if _, err := journal.InsertTx(context.Background(), tx, journal.EventInput{
+					ActorType:   journal.ActorStaff,
+					ActorID:     strconv.Itoa(actorID),
+					Action:      "config_item.updated",
+					EntityType:  "config_item",
+					EntityID:    strconv.FormatUint(uint64(item.ID), 10),
+					OperationID: operationID,
+					Details:     details,
+				}); err != nil {
+					return err
+				}
+			}
 		}
 		return nil
 	})
