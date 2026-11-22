@@ -10,6 +10,7 @@ import (
 
 	"clinic-backend/internal/calendar"
 	"clinic-backend/internal/database"
+	"clinic-backend/internal/journal"
 	recordmodel "clinic-backend/internal/record/model"
 	taggingservice "clinic-backend/internal/tagging/service"
 )
@@ -27,6 +28,7 @@ type AdminRecordService struct {
 	tagSvc   *taggingservice.RecordTagService
 	actions  *RecordActionService
 	notifier TicketStatusNotifier
+	journal  *journal.Service
 }
 
 func NewAdminRecordService(db *database.DB) *AdminRecordService {
@@ -49,6 +51,11 @@ func (s *AdminRecordService) SetRecordActionService(actions *RecordActionService
 // successful ticket state transitions.
 func (s *AdminRecordService) SetTicketStatusNotifier(notifier TicketStatusNotifier) {
 	s.notifier = notifier
+}
+
+// SetJournalService enables durable, transactional record history.
+func (s *AdminRecordService) SetJournalService(journalSvc *journal.Service) {
+	s.journal = journalSvc
 }
 
 type ListAdminRecordFilter struct {
@@ -215,7 +222,15 @@ func (s *AdminRecordService) Update(ctx context.Context, actorID int, id uint, i
 	var record recordmodel.ClinicRecord
 	var view AdminRecordView
 	var entry RecordActionEntry
-	changed := in.WorkerDesc != nil
+	changed := false
+	var operationID string
+	if s.journal != nil {
+		var err error
+		operationID, err = journal.NewOperationID()
+		if err != nil {
+			return AdminRecordView{}, fmt.Errorf("prepare record update journal: %w", err)
+		}
+	}
 	err := database.WithTx(ctx, s.db.DB, func(tx *sql.Tx) error {
 		var err error
 		record, err = loadRecordForUpdate(ctx, tx, s.db.Driver, id)
@@ -233,7 +248,8 @@ func (s *AdminRecordService) Update(ctx context.Context, actorID int, id uint, i
 			return err
 		}
 
-		if in.WorkerDesc != nil {
+		if in.WorkerDesc != nil && (snap.Worker == nil || snap.Worker.WorkerDesc != *in.WorkerDesc) {
+			changed = true
 			token, err = newRecordActionToken()
 			if err != nil {
 				return err
@@ -269,16 +285,39 @@ func (s *AdminRecordService) Update(ctx context.Context, actorID int, id uint, i
 			return fmt.Errorf("reload record %d: %w", id, err)
 		}
 		if changed {
+			afterSnap, err := s.snapshotTx(tx, record)
+			if err != nil {
+				return err
+			}
+			var journalEventID uint64
+			if s.journal != nil {
+				now := time.Now().UTC()
+				journalEventID, err = journal.InsertTx(ctx, tx, journal.EventInput{
+					OccurredAt:  now,
+					ActorType:   journal.ActorStaff,
+					ActorID:     staffActorID(actorID),
+					Action:      recordEventAction(RecordActionUpdate),
+					EntityType:  "record",
+					EntityID:    recordEntityID(record.ID),
+					OperationID: operationID,
+					Details:     recordSnapshotDetails(snap, afterSnap),
+				})
+				if err != nil {
+					return err
+				}
+			}
 			entry = RecordActionEntry{
-				RecordID:    record.ID,
-				ActorID:     actorID,
-				Action:      RecordActionUpdate,
-				PrevSeq:     prevSeq,
-				ActionSeq:   record.ActionSeq,
-				CreatedAt:   time.Now().UTC(),
-				Prev:        snap,
-				ActionToken: token,
-				PrevToken:   prevToken,
+				RecordID:       record.ID,
+				ActorID:        actorID,
+				Action:         RecordActionUpdate,
+				PrevSeq:        prevSeq,
+				ActionSeq:      record.ActionSeq,
+				CreatedAt:      time.Now().UTC(),
+				Prev:           snap,
+				JournalEventID: journalEventID,
+				OperationID:    operationID,
+				ActionToken:    token,
+				PrevToken:      prevToken,
 			}
 		}
 		view, err = s.buildViewTx(tx, record)

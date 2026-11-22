@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"clinic-backend/internal/database"
+	"clinic-backend/internal/journal"
 	recordmodel "clinic-backend/internal/record/model"
 )
 
@@ -27,6 +28,14 @@ func (s *AdminRecordService) runTransition(ctx context.Context, id uint, spec tr
 	var record recordmodel.ClinicRecord
 	var view AdminRecordView
 	var entry RecordActionEntry
+	var operationID string
+	if s.journal != nil {
+		var err error
+		operationID, err = journal.NewOperationID()
+		if err != nil {
+			return AdminRecordView{}, fmt.Errorf("prepare record transition journal: %w", err)
+		}
+	}
 	err := database.WithTx(ctx, s.db.DB, func(tx *sql.Tx) error {
 		var err error
 		record, err = loadRecordForUpdate(ctx, tx, s.db.Driver, id)
@@ -60,16 +69,38 @@ func (s *AdminRecordService) runTransition(ctx context.Context, id uint, spec tr
 		if err != nil {
 			return fmt.Errorf("reload record %d: %w", id, err)
 		}
+		afterSnap, err := s.snapshotTx(tx, record)
+		if err != nil {
+			return err
+		}
+		var journalEventID uint64
+		if s.journal != nil {
+			journalEventID, err = journal.InsertTx(ctx, tx, journal.EventInput{
+				OccurredAt:  now,
+				ActorType:   journal.ActorStaff,
+				ActorID:     staffActorID(spec.actorID),
+				Action:      recordEventAction(spec.action),
+				EntityType:  "record",
+				EntityID:    recordEntityID(record.ID),
+				OperationID: operationID,
+				Details:     recordSnapshotDetails(snap, afterSnap),
+			})
+			if err != nil {
+				return err
+			}
+		}
 		entry = RecordActionEntry{
-			RecordID:    record.ID,
-			ActorID:     spec.actorID,
-			Action:      spec.action,
-			PrevSeq:     prevSeq,
-			ActionSeq:   record.ActionSeq,
-			CreatedAt:   now,
-			Prev:        snap,
-			ActionToken: token,
-			PrevToken:   prevToken,
+			RecordID:       record.ID,
+			ActorID:        spec.actorID,
+			Action:         spec.action,
+			PrevSeq:        prevSeq,
+			ActionSeq:      record.ActionSeq,
+			CreatedAt:      now,
+			Prev:           snap,
+			JournalEventID: journalEventID,
+			OperationID:    operationID,
+			ActionToken:    token,
+			PrevToken:      prevToken,
 		}
 		view, err = s.buildViewTx(tx, record)
 		return err

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"clinic-backend/internal/database"
+	"clinic-backend/internal/journal"
 	recordmodel "clinic-backend/internal/record/model"
 )
 
@@ -160,6 +161,14 @@ func (s *AdminRecordService) Revert(ctx context.Context, actorID int, id uint) (
 
 	var record recordmodel.ClinicRecord
 	var view AdminRecordView
+	var operationID string
+	if s.journal != nil {
+		var err error
+		operationID, err = journal.NewOperationID()
+		if err != nil {
+			return AdminRecordView{}, fmt.Errorf("prepare record revert journal: %w", err)
+		}
+	}
 	err = database.WithTx(ctx, s.db.DB, func(tx *sql.Tx) error {
 		var err error
 		record, err = loadRecordForUpdate(ctx, tx, s.db.Driver, id)
@@ -172,12 +181,41 @@ func (s *AdminRecordService) Revert(ctx context.Context, actorID int, id uint) (
 		if record.ActionSeq != entry.ActionSeq || record.ActionToken != entry.ActionToken {
 			return fmt.Errorf("revert record %d: %w", id, ErrRevertSuperseded)
 		}
+		beforeSnap, err := s.snapshotTx(tx, record)
+		if err != nil {
+			return err
+		}
 		if err := s.restoreSnapshotTx(tx, &record, entry.Prev, entry.PrevSeq, entry.PrevToken); err != nil {
 			return err
 		}
 		record, err = loadRecord(tx, id)
 		if err != nil {
 			return fmt.Errorf("reload record %d after revert: %w", id, err)
+		}
+		if s.journal != nil {
+			afterSnap, err := s.snapshotTx(tx, record)
+			if err != nil {
+				return err
+			}
+			changes := recordSnapshotChanges(beforeSnap, afterSnap)
+			if _, err := journal.InsertTx(ctx, tx, journal.EventInput{
+				OccurredAt:  now,
+				ActorType:   journal.ActorStaff,
+				ActorID:     staffActorID(actorID),
+				Action:      "record.reverted",
+				EntityType:  "record",
+				EntityID:    recordEntityID(record.ID),
+				OperationID: operationID,
+				Details: map[string]any{
+					"version":            1,
+					"reverted_event_id":  entry.JournalEventID,
+					"reverted_action":    recordEventAction(entry.Action),
+					"reverted_operation": entry.OperationID,
+					"changes":            changes,
+				},
+			}); err != nil {
+				return err
+			}
 		}
 		view, err = s.buildViewTx(tx, record)
 		return err

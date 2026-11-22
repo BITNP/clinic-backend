@@ -58,6 +58,10 @@ type RecordActionEntry struct {
 	ActionSeq uint           `json:"action_seq"`
 	CreatedAt time.Time      `json:"created_at"`
 	Prev      RecordSnapshot `json:"prev"`
+	// JournalEventID links the Redis undo entry to the durable journal event.
+	JournalEventID uint64 `json:"journal_event_id,omitempty"`
+	// OperationID groups this action with any related journal events.
+	OperationID string `json:"operation_id,omitempty"`
 	// Empty tokens preserve compatibility with journal entries written before
 	// action tokens were introduced.
 	ActionToken string `json:"action_token,omitempty"`
