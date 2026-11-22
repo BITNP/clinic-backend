@@ -54,8 +54,6 @@ const (
 	runtimeSettingDingTalkTitle             = "DINGTALK_NOTIFICATION_TITLE"
 	runtimeSettingDingTalkHeader            = "DINGTALK_NOTIFICATION_HEADER"
 	runtimeSettingDingTalkQQAccount         = "DINGTALK_NOTIFICATION_QQ_ACCOUNT"
-	runtimeSettingDingTalkTransferRoom      = "DINGTALK_NOTIFICATION_TRANSFER_ROOM"
-	runtimeSettingDingTalkTransferAddress   = "DINGTALK_NOTIFICATION_TRANSFER_ADDRESS"
 	runtimeSettingDingTalkConfirmedTemplate = "DINGTALK_TEMPLATE_CONFIRMED"
 	runtimeSettingDingTalkRejectedTemplate  = "DINGTALK_TEMPLATE_REJECTED"
 	runtimeSettingDingTalkReferredTemplate  = "DINGTALK_TEMPLATE_REFERRED"
@@ -137,8 +135,6 @@ var runtimeSettingExpectedTypes = map[string]configmodel.ConfigValueType{
 	runtimeSettingDingTalkTitle:             configmodel.ConfigValueTypeString,
 	runtimeSettingDingTalkHeader:            configmodel.ConfigValueTypeString,
 	runtimeSettingDingTalkQQAccount:         configmodel.ConfigValueTypeString,
-	runtimeSettingDingTalkTransferRoom:      configmodel.ConfigValueTypeString,
-	runtimeSettingDingTalkTransferAddress:   configmodel.ConfigValueTypeString,
 	runtimeSettingDingTalkConfirmedTemplate: configmodel.ConfigValueTypeString,
 	runtimeSettingDingTalkRejectedTemplate:  configmodel.ConfigValueTypeString,
 	runtimeSettingDingTalkReferredTemplate:  configmodel.ConfigValueTypeString,
@@ -319,8 +315,6 @@ type DingTalkRuntimeSettings struct {
 	NotificationTitle    string
 	NotificationHeader   string
 	QQAccount            string
-	TransferRoom         string
-	TransferAddress      string
 	ConfirmedTemplate    string
 	RejectedTemplate     string
 	ReferredTemplate     string
@@ -566,10 +560,6 @@ func loadRuntimeSettings(q interface{ QueryRow(string, ...any) *sql.Row }) (Runt
 			settings.DingTalk.NotificationHeader = normalized
 		case runtimeSettingDingTalkQQAccount:
 			settings.DingTalk.QQAccount = normalized
-		case runtimeSettingDingTalkTransferRoom:
-			settings.DingTalk.TransferRoom = normalized
-		case runtimeSettingDingTalkTransferAddress:
-			settings.DingTalk.TransferAddress = normalized
 		case runtimeSettingDingTalkConfirmedTemplate:
 			settings.DingTalk.ConfirmedTemplate = normalized
 		case runtimeSettingDingTalkRejectedTemplate:
@@ -819,9 +809,7 @@ func validateRuntimeSettingValue(name, raw string) (string, error) {
 		}
 		return value, nil
 	case runtimeSettingDingTalkHeader,
-		runtimeSettingDingTalkQQAccount,
-		runtimeSettingDingTalkTransferRoom,
-		runtimeSettingDingTalkTransferAddress:
+		runtimeSettingDingTalkQQAccount:
 		return value, nil
 	case runtimeSettingDingTalkConfirmedTemplate,
 		runtimeSettingDingTalkRejectedTemplate,
@@ -854,9 +842,7 @@ func runtimeSettingIsOptional(name string) bool {
 		runtimeSettingDingTalkAppKey,
 		runtimeSettingDingTalkAppSecret,
 		runtimeSettingDingTalkRedirectReceiver,
-		runtimeSettingDingTalkQQAccount,
-		runtimeSettingDingTalkTransferRoom,
-		runtimeSettingDingTalkTransferAddress:
+		runtimeSettingDingTalkQQAccount:
 		return true
 	default:
 		return false

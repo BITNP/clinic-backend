@@ -271,8 +271,8 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	if err := db.Model(&configmodel.ClinicConfigItem{}).Count(&itemCount).Error; err != nil {
 		t.Fatalf("count items: %v", err)
 	}
-	if groupCount != 4 || itemCount != 38 {
-		t.Errorf("seeded counts = %d groups, %d items; want 4 and 38", groupCount, itemCount)
+	if groupCount != 4 || itemCount != 36 {
+		t.Errorf("seeded counts = %d groups, %d items; want 4 and 36", groupCount, itemCount)
 	}
 
 	var taggerKey configmodel.ClinicConfigItem

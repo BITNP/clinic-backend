@@ -558,8 +558,8 @@ func TestConfigHandler_SuperAdminOnlyRuntimeSettings(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &catalog); err != nil {
 		t.Fatalf("decode admin catalog: %v", err)
 	}
-	if len(catalog.Items) != 19 {
-		t.Errorf("admin catalog item count = %d, want 19", len(catalog.Items))
+	if len(catalog.Items) != 17 {
+		t.Errorf("admin catalog item count = %d, want 17", len(catalog.Items))
 	}
 	for _, item := range catalog.Items {
 		if _, restricted := superAdminOnly[item.Name]; restricted {
@@ -591,8 +591,8 @@ func TestConfigHandler_SuperAdminOnlyRuntimeSettings(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &catalog); err != nil {
 		t.Fatalf("decode superadmin catalog: %v", err)
 	}
-	if len(catalog.Items) != 38 {
-		t.Errorf("superadmin catalog item count = %d, want 38", len(catalog.Items))
+	if len(catalog.Items) != 36 {
+		t.Errorf("superadmin catalog item count = %d, want 36", len(catalog.Items))
 	}
 }
 
