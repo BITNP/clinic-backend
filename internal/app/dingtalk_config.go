@@ -25,6 +25,7 @@ type DingTalkNotificationConfig struct {
 	ConfirmedTemplate string
 	RejectedTemplate  string
 	ReferredTemplate  string
+	TransferTemplate  string
 	NoShowTemplate    string
 	ReminderTemplate  string
 }
@@ -100,6 +101,7 @@ func LoadDingTalkConfig(getenv func(string) string) (DingTalkConfig, error) {
 			ConfirmedTemplate: dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_CONFIRMED", configservice.DefaultDingTalkConfirmedTemplate),
 			RejectedTemplate:  dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_REJECTED", configservice.DefaultDingTalkRejectedTemplate),
 			ReferredTemplate:  dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_REFERRED", configservice.DefaultDingTalkReferredTemplate),
+			TransferTemplate:  dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_TRANSFER", configservice.DefaultDingTalkTransferTemplate),
 			NoShowTemplate:    dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_NO_SHOW", configservice.DefaultDingTalkNoShowTemplate),
 			ReminderTemplate:  dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_REMINDER", configservice.DefaultDingTalkReminderTemplate),
 		},
@@ -134,6 +136,7 @@ func LoadDingTalkConfigFromRuntime(settings configservice.RuntimeSettings) (Ding
 			ConfirmedTemplate: dingTalk.ConfirmedTemplate,
 			RejectedTemplate:  dingTalk.RejectedTemplate,
 			ReferredTemplate:  dingTalk.ReferredTemplate,
+			TransferTemplate:  dingTalk.TransferTemplate,
 			NoShowTemplate:    dingTalk.NoShowTemplate,
 			ReminderTemplate:  dingTalk.ReminderTemplate,
 		},
@@ -191,6 +194,8 @@ func dingTalkTicketNotifierConfig(cfg DingTalkConfig) recordservice.DingTalkTick
 		ConfirmedTemplate: cfg.Notification.ConfirmedTemplate,
 		RejectedTemplate:  cfg.Notification.RejectedTemplate,
 		ReferredTemplate:  cfg.Notification.ReferredTemplate,
+		TransferTitle:     configservice.DefaultDingTalkTransferTitle,
+		TransferTemplate:  cfg.Notification.TransferTemplate,
 		NoShowTemplate:    cfg.Notification.NoShowTemplate,
 		ReminderTemplate:  cfg.Notification.ReminderTemplate,
 	}

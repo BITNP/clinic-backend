@@ -24,6 +24,7 @@ type TicketStatusNotification struct {
 	Reason       string
 	RoomName     string
 	RoomAddress  string
+	RoomTransfer bool
 	ServiceStart time.Time
 	ServiceEnd   time.Time
 }
@@ -52,6 +53,8 @@ type DingTalkTicketNotifierConfig struct {
 	ConfirmedTemplate string
 	RejectedTemplate  string
 	ReferredTemplate  string
+	TransferTitle     string
+	TransferTemplate  string
 	NoShowTemplate    string
 	ReminderTemplate  string
 }
@@ -64,6 +67,8 @@ type DingTalkTicketNotifier struct {
 	title            string
 	header           string
 	qqAccount        string
+	transferTitle    string
+	transferTemplate *template.Template
 	statusTemplates  map[recordmodel.RecordStatus]*template.Template
 	reminderTemplate *template.Template
 }
@@ -99,6 +104,10 @@ func NewDingTalkTicketNotifier(
 	if err != nil {
 		return nil, err
 	}
+	transferTemplate, err := parseTicketNotificationTemplate("transfer", cfg.TransferTemplate)
+	if err != nil {
+		return nil, err
+	}
 	noShowTemplate, err := parseTicketNotificationTemplate("no_show", cfg.NoShowTemplate)
 	if err != nil {
 		return nil, err
@@ -109,11 +118,13 @@ func NewDingTalkTicketNotifier(
 	}
 
 	return &DingTalkTicketNotifier{
-		sender:    sender,
-		location:  location,
-		title:     title,
-		header:    header,
-		qqAccount: strings.TrimSpace(cfg.QQAccount),
+		sender:           sender,
+		location:         location,
+		title:            title,
+		header:           header,
+		qqAccount:        strings.TrimSpace(cfg.QQAccount),
+		transferTitle:    strings.TrimSpace(cfg.TransferTitle),
+		transferTemplate: transferTemplate,
 		statusTemplates: map[recordmodel.RecordStatus]*template.Template{
 			recordmodel.RecordStatusConfirmed: confirmTemplate,
 			recordmodel.RecordStatusRejected:  rejectedTemplate,
@@ -130,6 +141,12 @@ func (n *DingTalkTicketNotifier) Notify(ctx context.Context, notification Ticket
 	if n == nil || n.sender == nil {
 		return fmt.Errorf("ticket notification: dingtalk sender is not configured")
 	}
+	if notification.RoomTransfer {
+		if n.transferTitle == "" {
+			return fmt.Errorf("ticket notification: transfer title is required")
+		}
+		return n.send(ctx, n.transferTemplate, n.transferTitle, notification)
+	}
 	if !isNotifiableTicketStatus(notification.Status) {
 		return nil
 	}
@@ -137,7 +154,7 @@ func (n *DingTalkTicketNotifier) Notify(ctx context.Context, notification Ticket
 	if !ok {
 		return nil
 	}
-	return n.send(ctx, tmpl, notification)
+	return n.send(ctx, tmpl, n.title, notification)
 }
 
 // NotifyReminder sends the configured pre-shift reminder for a ticket.
@@ -145,12 +162,13 @@ func (n *DingTalkTicketNotifier) NotifyReminder(ctx context.Context, notificatio
 	if n == nil || n.sender == nil {
 		return fmt.Errorf("ticket reminder: dingtalk sender is not configured")
 	}
-	return n.send(ctx, n.reminderTemplate, notification)
+	return n.send(ctx, n.reminderTemplate, n.title, notification)
 }
 
 func (n *DingTalkTicketNotifier) send(
 	ctx context.Context,
 	tmpl *template.Template,
+	title string,
 	notification TicketStatusNotification,
 ) error {
 	if strings.TrimSpace(notification.User) == "" {
@@ -162,7 +180,7 @@ func (n *DingTalkTicketNotifier) send(
 	}
 	if _, _, err := n.sender.SendAndCheckStatus(ctx, notificationclient.SendRequest{
 		Receivers:   notification.User,
-		Title:       n.title,
+		Title:       title,
 		Content:     content,
 		MessageType: "text",
 		Level:       "normal",
@@ -252,6 +270,7 @@ func (s *AdminRecordService) notifyTicketStatusChange(
 	ctx context.Context,
 	record recordmodel.ClinicRecord,
 	reason string,
+	roomTransfer bool,
 ) {
 	if s.notifier == nil || !isNotifiableTicketStatus(record.Status) {
 		return
@@ -268,6 +287,7 @@ func (s *AdminRecordService) notifyTicketStatusChange(
 		Reason:       reason,
 		RoomName:     details.RoomName,
 		RoomAddress:  details.RoomAddress,
+		RoomTransfer: roomTransfer,
 		ServiceStart: details.ServiceStart,
 		ServiceEnd:   details.ServiceEnd,
 	}); err != nil {

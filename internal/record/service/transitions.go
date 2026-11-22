@@ -14,12 +14,13 @@ import (
 var ErrRoomUnavailable = errors.New("selected room is unavailable")
 
 type transitionSpec struct {
-	verb               string
-	action             RecordAction
-	actorID            int
-	notificationReason string
-	allowed            func(recordmodel.RecordStatus) bool
-	update             func(*sql.Tx, recordmodel.ClinicRecord, time.Time) error
+	verb                 string
+	action               RecordAction
+	actorID              int
+	notificationReason   string
+	notificationTransfer *bool
+	allowed              func(recordmodel.RecordStatus) bool
+	update               func(*sql.Tx, recordmodel.ClinicRecord, time.Time) error
 }
 
 func (s *AdminRecordService) runTransition(ctx context.Context, id uint, spec transitionSpec) (AdminRecordView, error) {
@@ -77,7 +78,8 @@ func (s *AdminRecordService) runTransition(ctx context.Context, id uint, spec tr
 		return AdminRecordView{}, err
 	}
 	s.recordAction(ctx, entry)
-	s.notifyTicketStatusChange(ctx, record, spec.notificationReason)
+	roomTransfer := spec.notificationTransfer != nil && *spec.notificationTransfer
+	s.notifyTicketStatusChange(ctx, record, spec.notificationReason, roomTransfer)
 	if err := s.applyRevertibleOne(ctx, spec.actorID, record, &view); err != nil {
 		return AdminRecordView{}, err
 	}
@@ -130,13 +132,16 @@ func (s *AdminRecordService) MarkConfirmedToRoom(
 	roomID *uint,
 	approverID uint,
 ) (AdminRecordView, error) {
+	roomTransfer := false
 	return s.runTransition(ctx, id, transitionSpec{
-		verb:    "confirm",
-		action:  RecordActionConfirm,
-		actorID: int(approverID),
-		allowed: onlyStatus(recordmodel.RecordStatusPending),
+		verb:                 "confirm",
+		action:               RecordActionConfirm,
+		actorID:              int(approverID),
+		notificationTransfer: &roomTransfer,
+		allowed:              onlyStatus(recordmodel.RecordStatusPending),
 		update: func(tx *sql.Tx, record recordmodel.ClinicRecord, _ time.Time) error {
 			if roomID != nil {
+				roomTransfer = *roomID != record.RoomID
 				if err := validateEnabledRoomTx(tx, *roomID); err != nil {
 					return err
 				}

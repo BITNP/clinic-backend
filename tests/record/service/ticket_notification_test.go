@@ -100,13 +100,16 @@ func TestDingTalkTicketNotifierFormatsStatusMessages(t *testing.T) {
 		ConfirmedTemplate: allFields,
 		RejectedTemplate:  allFields,
 		ReferredTemplate:  allFields,
+		TransferTitle:     "工单转诊",
+		TransferTemplate:  allFields,
 		NoShowTemplate:    allFields,
 		ReminderTemplate:  "{{.ROOM}}",
 	}
 	tests := []struct {
-		name   string
-		status recordmodel.RecordStatus
-		reason string
+		name     string
+		status   recordmodel.RecordStatus
+		reason   string
+		transfer bool
 	}{
 		{
 			name:   "confirmed",
@@ -126,6 +129,11 @@ func TestDingTalkTicketNotifierFormatsStatusMessages(t *testing.T) {
 			name:   "no show",
 			status: recordmodel.RecordStatusNoShow,
 		},
+		{
+			name:     "room transfer",
+			status:   recordmodel.RecordStatusConfirmed,
+			transfer: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -142,6 +150,7 @@ func TestDingTalkTicketNotifierFormatsStatusMessages(t *testing.T) {
 				Reason:       tt.reason,
 				RoomName:     "徐特立图书馆",
 				RoomAddress:  "徐特立图书馆三楼311G研讨室",
+				RoomTransfer: tt.transfer,
 				ServiceStart: start,
 				ServiceEnd:   end,
 			})
@@ -157,7 +166,11 @@ func TestDingTalkTicketNotifierFormatsStatusMessages(t *testing.T) {
 			}
 			wantContent := "测试协会|2026-11-20的18:30-21:00|#42|徐特立图书馆|徐特立图书馆三楼311G研讨室|徐特立图书馆|徐特立图书馆三楼311G研讨室|" +
 				tt.reason + "|123456"
-			if request.Title != "状态通知" || request.Content != wantContent {
+			wantTitle := "状态通知"
+			if tt.transfer {
+				wantTitle = "工单转诊"
+			}
+			if request.Title != wantTitle || request.Content != wantContent {
 				t.Errorf("message = %q / %q", request.Title, request.Content)
 			}
 			if request.MessageType != "text" || request.Level != "normal" {
@@ -174,6 +187,7 @@ func TestDingTalkTicketNotifierRejectsInvalidTemplate(t *testing.T) {
 		ConfirmedTemplate: "{{.UNKNOWN}}",
 		RejectedTemplate:  "rejected",
 		ReferredTemplate:  "referred",
+		TransferTemplate:  "transfer",
 		NoShowTemplate:    "no_show",
 		ReminderTemplate:  "reminder",
 	}
@@ -189,6 +203,7 @@ func TestDingTalkTicketNotifierDecodesEscapedNewlines(t *testing.T) {
 		ConfirmedTemplate: `第一行\n{{.ROOM}}`,
 		RejectedTemplate:  "rejected",
 		ReferredTemplate:  "referred",
+		TransferTemplate:  "transfer",
 		NoShowTemplate:    "no_show",
 		ReminderTemplate:  "reminder",
 	}
@@ -221,6 +236,7 @@ func TestDingTalkTicketNotifierSendsReminderTemplate(t *testing.T) {
 		ConfirmedTemplate: "confirmed",
 		RejectedTemplate:  "rejected",
 		ReferredTemplate:  "referred",
+		TransferTemplate:  "transfer",
 		NoShowTemplate:    "no_show",
 		ReminderTemplate:  "提醒：{{.DATE}} {{.ROOM}} {{.LOCA}}",
 	}
@@ -348,6 +364,9 @@ func TestConfirmToRoomNotifiesSelectedRoom(t *testing.T) {
 		t.Fatalf("notifications = %d, want 1", len(notifier.notifications))
 	}
 	got := notifier.notifications[0]
+	if !got.RoomTransfer {
+		t.Fatal("RoomTransfer = false, want true")
+	}
 	if got.RoomName != destination.Name || got.RoomAddress != destination.Address {
 		t.Fatalf("notification room = %q, %q; want %q, %q", got.RoomName, got.RoomAddress, destination.Name, destination.Address)
 	}
