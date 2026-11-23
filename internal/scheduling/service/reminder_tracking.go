@@ -166,7 +166,8 @@ func (d *ReminderDelivery) trackOutcome(
 	if status == "sent" {
 		sentAt = now.UTC()
 	}
-	return database.WithTx(ctx, d.DB.DB, func(tx *sql.Tx) error {
+	journaled := false
+	err := database.WithTx(ctx, d.DB.DB, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(
 			ctx,
 			`UPDATE clinic_service_date_reminder
@@ -217,6 +218,14 @@ func (d *ReminderDelivery) trackOutcome(
 			OperationID: operationID,
 			Details:     details,
 		})
+		journaled = err == nil
 		return err
 	})
+	if err != nil {
+		return err
+	}
+	if journaled {
+		bumpJournalSync(ctx, d.Journal, "reminder tracking")
+	}
+	return nil
 }

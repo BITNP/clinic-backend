@@ -16,6 +16,15 @@ import (
 	staffmodel "clinic-backend/internal/staff/model"
 )
 
+func bumpJournalSync(ctx context.Context, journalSvc *journal.Service, scope string) {
+	if journalSvc == nil {
+		return
+	}
+	if err := journalSvc.BumpSync(ctx); err != nil {
+		log.Printf("%s: bump journal sync counter failed: %v", scope, err)
+	}
+}
+
 // ReminderDiscovery finds pending tickets and their assigned administrators.
 type ReminderDiscovery struct {
 	DB              *database.DB
@@ -85,6 +94,7 @@ func (d *ReminderDiscovery) discover(ctx context.Context, now time.Time) error {
 					log.Printf("reminder: staff %d has no QQ number", admin.ID)
 					continue
 				}
+				journaled := false
 				if err := database.WithTx(ctx, d.DB.DB, func(tx *sql.Tx) error {
 					var reminderID uint
 					err := tx.QueryRowContext(
@@ -126,9 +136,13 @@ func (d *ReminderDiscovery) discover(ctx context.Context, now time.Time) error {
 					}); err != nil {
 						return err
 					}
+					journaled = true
 					return nil
 				}); err != nil {
 					return err
+				}
+				if journaled {
+					bumpJournalSync(ctx, d.Journal, "reminder discovery")
 				}
 			}
 		}

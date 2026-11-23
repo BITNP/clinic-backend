@@ -68,6 +68,7 @@ func (d *ReminderDelivery) Claim(ctx context.Context, now time.Time) (*schedulin
 	}
 	token := hex.EncodeToString(randomBytes[:])
 	var job schedulingmodel.ServiceDateReminder
+	journaled := false
 	err = database.WithTx(ctx, d.DB.DB, func(tx *sql.Tx) error {
 		query := "SELECT " + reminderColumns +
 			" FROM clinic_service_date_reminder" +
@@ -112,6 +113,7 @@ func (d *ReminderDelivery) Claim(ctx context.Context, now time.Time) (*schedulin
 				}); err != nil {
 					return err
 				}
+				journaled = true
 			}
 			job.ID = 0
 			return nil
@@ -159,6 +161,7 @@ func (d *ReminderDelivery) Claim(ctx context.Context, now time.Time) (*schedulin
 			}); err != nil {
 				return err
 			}
+			journaled = true
 		}
 		job.Status = "sending"
 		job.LeaseUntil = &lease
@@ -171,6 +174,9 @@ func (d *ReminderDelivery) Claim(ctx context.Context, now time.Time) (*schedulin
 	}
 	if err != nil {
 		return nil, fmt.Errorf("claim reminder: %w", err)
+	}
+	if journaled {
+		bumpJournalSync(ctx, d.Journal, "reminder claim")
 	}
 	if job.ID == 0 {
 		return nil, nil
@@ -220,7 +226,7 @@ func (d *ReminderDelivery) finish(
 	sets = append(sets, "claim_token = ''", "lease_until = NULL")
 	args = append(args, job.ID, "sending", job.ClaimToken)
 	whereStart := len(args) - 2
-	return database.WithTx(ctx, d.DB.DB, func(tx *sql.Tx) error {
+	err := database.WithTx(ctx, d.DB.DB, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(
 			ctx,
 			"UPDATE clinic_service_date_reminder SET "+strings.Join(sets, ", ")+
@@ -263,6 +269,13 @@ func (d *ReminderDelivery) finish(
 		})
 		return err
 	})
+	if err != nil {
+		return err
+	}
+	if eventAction != "" {
+		bumpJournalSync(ctx, d.Journal, "reminder outcome")
+	}
+	return nil
 }
 
 // Deliver rechecks eligibility and sends one claimed job.
