@@ -141,21 +141,30 @@ Chinese, e.g. `该日期诊所停止营业`). Request-body binding failures use
 
 ### `GET /healthz`
 
-**Description:** Liveness/readiness check. Public. Pings Redis on every call.
-Returns `503` when Redis is unreachable.
+**Description:** Liveness/readiness check. Public. Pings Redis on every call
+and returns `503` when Redis is unreachable. The response does not expose
+individual dependency status.
 
 **Request:** No body, no parameters.
 
 **Response `200 OK`**
 
+| Field | Type | Description |
+| --- | --- | --- |
+| `status` | string | Always `ok` when Redis is reachable. |
+
 ```json
-{ "status": "ok", "redis": "up" }
+{ "status": "ok" }
 ```
 
 **Response `503 Service Unavailable`**
 
+| Field | Type | Description |
+| --- | --- | --- |
+| `status` | string | Always `unavailable` when Redis is unreachable. |
+
 ```json
-{ "status": "unavailable", "redis": "down" }
+{ "status": "unavailable" }
 ```
 
 **curl**

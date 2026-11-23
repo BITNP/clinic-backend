@@ -36,16 +36,20 @@ func newRedisClient(ctx context.Context, cfg redisConfig) (*redis.Client, error)
 	return client, nil
 }
 
+type redisPinger interface {
+	Ping(context.Context) *redis.StatusCmd
+}
+
 // redisHealthHandler reports whether Redis is reachable. It is registered on
 // /healthz so the connection is exercised after startup as well.
-func redisHealthHandler(client *redis.Client) gin.HandlerFunc {
+func redisHealthHandler(client redisPinger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 		defer cancel()
 		if err := client.Ping(ctx).Err(); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable", "redis": "down"})
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"status": "ok", "redis": "up"})
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	}
 }
