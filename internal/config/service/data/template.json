@@ -376,7 +376,7 @@
     },
     {
       "name": "DINGTALK_TEMPLATE_REFERRED",
-      "display_name": "钉钉预约转诊模板",
+      "display_name": "钉钉预约返厂模板",
       "hint": "支持 HEDR、DATE、ID、ROOM、LOCA、TRRO、TRLO、REAS、QQAC；保存时校验语法。",
       "value_type": "string",
       "group": "dingtalk",
