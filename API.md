@@ -1162,7 +1162,10 @@ curl -X DELETE "$BASE/api/admin/config/items/10" \
 The journal is an append-only business history. Successful record staff
 actions, record undo operations, configuration item updates, and reminder
 notification lifecycle events are written in the same database transaction as
-their corresponding state change. Read operations are not journaled.
+their corresponding state change. Immediate record-status notification outcomes
+are written after the external provider verifies delivery and are linked to the
+already-committed record transition. Read operations and skipped notifications
+are not journaled.
 
 Journal entries are immutable. A record undo creates a new `record.reverted`
 event and does not modify the original event. Write-only and known secret
@@ -1353,6 +1356,14 @@ Admin record view:
 All record lifecycle and `worker_desc` mutations below bump the `record`
 counter and return the updated admin record view. Photo mutations also bump the
 counter but return photo objects.
+
+When an immediate DingTalk status notification is attempted, its verified
+outcome is appended to the business journal as `notification.sent` or
+`notification.failed`, linked to the corresponding record transition. Disabled
+or unsupported notifications produce no notification journal event. The journal
+stores the channel, template key, resulting record status, transfer flag,
+message-center message ID, and sanitized failure code; it does not store the
+rendered message body or recipient address.
 
 ### `GET /api/admin/records`
 
@@ -1622,9 +1633,9 @@ transaction. Sets `approver_id` and sends a best-effort DingTalk notification to
 the record's `user` id. If `room_id` differs from the current room, the
 `DINGTALK_TEMPLATE_TRANSFER` template is sent with title `工单转诊`; otherwise the
 regular confirmed template is used. The message-center delivery status is
-checked after submission; notification failures are logged and do not roll back
-the transition. The send is skipped when the `DINGTALK_NOTIFY_ENABLED` config
-item is false.
+checked after submission; notification failures are recorded in the journal and
+do not roll back the transition. The send is skipped when the
+`DINGTALK_NOTIFY_ENABLED` config item is false.
 
 **Request body** — optional
 
@@ -1651,9 +1662,9 @@ curl -X POST "$BASE/api/admin/records/1/confirm" \
 **Description:** Rejects a pending record (`pending` → `rejected`). Admin only.
 Stores the rejection reason and sends a best-effort DingTalk notification to the
 record's `user` id. The message-center delivery status is checked after
-submission; notification failures are logged and do not roll back the
-transition. The send is skipped when the `DINGTALK_NOTIFY_ENABLED` config item
-is false.
+submission; notification failures are recorded in the journal and do not roll
+back the transition. The send is skipped when the `DINGTALK_NOTIFY_ENABLED`
+config item is false.
 
 **Request body**
 
@@ -1736,8 +1747,9 @@ curl -X POST "$BASE/api/admin/records/1/complete" \
 Stores the referral reason. A JSON object body is required; `reason` may be
 omitted or empty. Sends a best-effort DingTalk notification to the record's
 `user` id. The message-center delivery status is checked after submission;
-notification failures are logged and do not roll back the transition. The send
-is skipped when the `DINGTALK_NOTIFY_ENABLED` config item is false.
+notification failures are recorded in the journal and do not roll back the
+transition. The send is skipped when the `DINGTALK_NOTIFY_ENABLED` config item
+is false.
 
 **Request body**
 
@@ -1763,9 +1775,9 @@ curl -X POST "$BASE/api/admin/records/1/refer" \
 **Description:** Marks a confirmed record as a no-show (`confirmed` →
 `no_show`). Staff or admin. Sends a best-effort DingTalk notification to the
 record's `user` id. The message-center delivery status is checked after
-submission; notification failures are logged and do not roll back the
-transition. The send is skipped when the `DINGTALK_NOTIFY_ENABLED` config item
-is false.
+submission; notification failures are recorded in the journal and do not roll
+back the transition. The send is skipped when the `DINGTALK_NOTIFY_ENABLED`
+config item is false.
 
 **Request:** No body.
 

@@ -101,7 +101,7 @@ func (s *AdminRecordService) CloseExpiredRecords(ctx context.Context, cutoff tim
 		return noShowCount, completedCount, err
 	}
 	for _, record := range noShowRecords {
-		s.notifyTicketStatusChange(ctx, record, "", false)
+		s.notifyTicketStatusChange(ctx, record, "", false, 0)
 	}
 	return
 }

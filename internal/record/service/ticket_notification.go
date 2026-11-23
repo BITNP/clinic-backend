@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"clinic-backend/internal/database"
+	"clinic-backend/internal/journal"
 	notificationclient "clinic-backend/internal/notification/client"
 	recordmodel "clinic-backend/internal/record/model"
 )
@@ -37,10 +38,16 @@ type TicketNotificationDelivery struct {
 	Skipped   bool
 }
 
+const ticketNotificationJournalTimeout = 5 * time.Second
+
 // TicketStatusNotifier delivers a ticket status change to the guest.
 type TicketStatusNotifier interface {
 	Notify(ctx context.Context, notification TicketStatusNotification) (TicketNotificationDelivery, error)
 	NotifyReminder(ctx context.Context, notification TicketStatusNotification) (TicketNotificationDelivery, error)
+}
+
+type ticketNotificationAvailability interface {
+	NotificationsEnabled() bool
 }
 
 // DingTalkStatusSender submits a DingTalk message and verifies its delivery
@@ -289,16 +296,28 @@ func (s *AdminRecordService) notifyTicketStatusChange(
 	record recordmodel.ClinicRecord,
 	reason string,
 	roomTransfer bool,
+	causedByEventID uint64,
 ) {
 	if s.notifier == nil || !isNotifiableTicketStatus(record.Status) {
+		return
+	}
+	if availability, ok := s.notifier.(ticketNotificationAvailability); ok &&
+		!availability.NotificationsEnabled() {
 		return
 	}
 	details, err := s.loadTicketNotificationDetails(ctx, record)
 	if err != nil {
 		log.Printf("record %d %s notification: %v", record.ID, record.Status, err)
+		s.journalTicketNotificationOutcome(
+			record,
+			roomTransfer,
+			causedByEventID,
+			TicketNotificationDelivery{},
+			"notification_context_unavailable",
+		)
 		return
 	}
-	if _, err := s.notifier.Notify(ctx, TicketStatusNotification{
+	delivery, err := s.notifier.Notify(ctx, TicketStatusNotification{
 		RecordID:     record.ID,
 		User:         record.User,
 		Status:       record.Status,
@@ -308,8 +327,105 @@ func (s *AdminRecordService) notifyTicketStatusChange(
 		RoomTransfer: roomTransfer,
 		ServiceStart: details.ServiceStart,
 		ServiceEnd:   details.ServiceEnd,
-	}); err != nil {
+	})
+	if err != nil {
 		log.Printf("record %d %s notification: %v", record.ID, record.Status, err)
+		s.journalTicketNotificationOutcome(
+			record,
+			roomTransfer,
+			causedByEventID,
+			TicketNotificationDelivery{},
+			"dingtalk_delivery_failed",
+		)
+		return
+	}
+	if delivery.Skipped {
+		return
+	}
+	s.journalTicketNotificationOutcome(record, roomTransfer, causedByEventID, delivery, "")
+}
+
+func (s *AdminRecordService) journalTicketNotificationOutcome(
+	record recordmodel.ClinicRecord,
+	roomTransfer bool,
+	causedByEventID uint64,
+	delivery TicketNotificationDelivery,
+	failureCode string,
+) {
+	if s.journal == nil {
+		return
+	}
+	operationID, err := journal.NewOperationID()
+	if err != nil {
+		log.Printf("record %d notification journal: %v", record.ID, err)
+		return
+	}
+	action := "notification.sent"
+	details := map[string]any{
+		"version":       1,
+		"kind":          "record_status",
+		"channel":       "dingtalk",
+		"recipient":     map[string]any{"type": "customer"},
+		"template_key":  ticketNotificationTemplateKey(record.Status, roomTransfer),
+		"record_status": string(record.Status),
+		"room_transfer": roomTransfer,
+	}
+	if failureCode == "" {
+		details["confirmation"] = "message_center_send_success"
+		if delivery.MessageID != "" {
+			details["message_center_msg_id"] = delivery.MessageID
+		}
+	} else {
+		action = "notification.failed"
+		details["reason"] = failureCode
+		details["error"] = map[string]any{
+			"code":    failureCode,
+			"message": "The DingTalk status notification did not complete.",
+		}
+	}
+	var cause *uint64
+	if causedByEventID != 0 {
+		id := causedByEventID
+		cause = &id
+	}
+	journalCtx, cancel := context.WithTimeout(context.Background(), ticketNotificationJournalTimeout)
+	defer cancel()
+	err = database.WithTx(journalCtx, s.db.DB, func(tx *sql.Tx) error {
+		_, err := journal.InsertTx(journalCtx, tx, journal.EventInput{
+			OccurredAt:      time.Now().UTC(),
+			ActorType:       journal.ActorSystem,
+			ActorID:         "dingtalk_notifier",
+			Action:          action,
+			EntityType:      "record",
+			EntityID:        recordEntityID(record.ID),
+			OperationID:     operationID,
+			CausedByEventID: cause,
+			Details:         details,
+		})
+		return err
+	})
+	if err != nil {
+		log.Printf("record %d notification journal: %v", record.ID, err)
+		return
+	}
+	bumpJournalSync(journalCtx, s.journal, "record notification outcome")
+}
+
+func ticketNotificationTemplateKey(status recordmodel.RecordStatus, roomTransfer bool) string {
+	if roomTransfer {
+		return "DINGTALK_TEMPLATE_TRANSFER"
+	}
+	switch status {
+	case recordmodel.RecordStatusConfirmed:
+		return "DINGTALK_TEMPLATE_CONFIRMED"
+	case recordmodel.RecordStatusRejected:
+		return "DINGTALK_TEMPLATE_REJECTED"
+	case recordmodel.RecordStatusReferred:
+		return "DINGTALK_TEMPLATE_REFERRED"
+	case recordmodel.RecordStatusNoShow:
+		return "DINGTALK_TEMPLATE_NO_SHOW"
+	default:
+		return ""
 	}
 }
 

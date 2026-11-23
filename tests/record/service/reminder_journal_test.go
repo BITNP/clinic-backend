@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -108,6 +109,13 @@ func TestDingTalkReminderJournalsRequestAttemptAndSent(t *testing.T) {
 	}
 	if events[2].CausedByEventID == nil || *events[2].CausedByEventID != attemptID {
 		t.Fatalf("sent cause = %v, want %d", events[2].CausedByEventID, attemptID)
+	}
+	var sentDetails map[string]any
+	if err := json.Unmarshal(events[2].Details, &sentDetails); err != nil {
+		t.Fatalf("decode sent details: %v", err)
+	}
+	if sentDetails["message_center_msg_id"] != "ticket-reminder-message-1" {
+		t.Fatalf("sent details = %+v", sentDetails)
 	}
 	var stored recordmodel.ClinicRecordDingTalkReminder
 	if err := db.First(&stored, job.ID).Error; err != nil {

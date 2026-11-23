@@ -29,6 +29,7 @@ func (s *AdminRecordService) runTransition(ctx context.Context, id uint, spec tr
 	var view AdminRecordView
 	var entry RecordActionEntry
 	var operationID string
+	var journalEventID uint64
 	if s.journal != nil {
 		var err error
 		operationID, err = journal.NewOperationID()
@@ -73,7 +74,6 @@ func (s *AdminRecordService) runTransition(ctx context.Context, id uint, spec tr
 		if err != nil {
 			return err
 		}
-		var journalEventID uint64
 		if s.journal != nil {
 			journalEventID, err = journal.InsertTx(ctx, tx, journal.EventInput{
 				OccurredAt:  now,
@@ -110,7 +110,7 @@ func (s *AdminRecordService) runTransition(ctx context.Context, id uint, spec tr
 	}
 	s.recordAction(ctx, entry)
 	roomTransfer := spec.notificationTransfer != nil && *spec.notificationTransfer
-	s.notifyTicketStatusChange(ctx, record, spec.notificationReason, roomTransfer)
+	s.notifyTicketStatusChange(ctx, record, spec.notificationReason, roomTransfer, journalEventID)
 	if err := s.applyRevertibleOne(ctx, spec.actorID, record, &view); err != nil {
 		return AdminRecordView{}, err
 	}

@@ -104,6 +104,13 @@ func (m *dingTalkRuntimeManager) Config() DingTalkConfig {
 	return state.config
 }
 
+// NotificationsEnabled reports whether immediate ticket notifications are
+// currently active.
+func (m *dingTalkRuntimeManager) NotificationsEnabled() bool {
+	state := m.active.Load()
+	return state != nil && state.config.Enabled
+}
+
 func (m *dingTalkRuntimeManager) Notify(
 	ctx context.Context,
 	notification recordservice.TicketStatusNotification,
