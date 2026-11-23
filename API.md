@@ -1225,7 +1225,7 @@ page/pageSize convention used by older list endpoints.
 | `from` | string | no | Inclusive lower `occurred_at` bound in RFC3339 format. |
 | `to` | string | no | Inclusive upper `occurred_at` bound in RFC3339 format. |
 | `cursor` | integer | no | Return events with IDs lower than this cursor. |
-| `limit` | integer | no | Page size from 1 to 100; defaults to 50. |
+| `limit` | integer | no | Page size from 1 to 100; defaults to 100. |
 
 **Response `200 OK`**
 
@@ -2262,8 +2262,10 @@ changes. Counters are best-effort: a Redis failure is logged and never fails the
 underlying write.
 
 Groups: `record`, `room`, `work_schedule`, `service_date`, `staff`,
-`announcement`, `config`. Successful configuration group and item writes bump
-`config`; reads and failed writes do not. The counter contains no settings values.
+`announcement`, `config`, `journal`. Successful record and configuration writes
+bump `journal` alongside their domain group. Background reminder journal writes
+bump `journal` directly. Reads and failed writes do not bump counters. The
+counter contains no settings or journal values.
 
 ### `GET /api/admin/sync`
 
@@ -2280,7 +2282,8 @@ the admin-prefixed path is retained for compatibility.
   "service_date": 9,
   "staff": 2,
   "announcement": 7,
-  "config": 1
+  "config": 1,
+  "journal": 18
 }
 ```
 

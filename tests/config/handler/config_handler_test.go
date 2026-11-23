@@ -79,6 +79,9 @@ func TestConfigRoutesBumpSyncOnlyOnSuccessfulWrites(t *testing.T) {
 		if err != nil || snapshot[changes.SyncGroupConfig] != want {
 			t.Fatalf("config counter = %d, want %d (error %v)", snapshot[changes.SyncGroupConfig], want, err)
 		}
+		if err != nil || snapshot[changes.SyncGroupJournal] != want {
+			t.Fatalf("journal counter = %d, want %d (error %v)", snapshot[changes.SyncGroupJournal], want, err)
+		}
 	}
 	check(0)
 	w := testutil.DoRequest(t, r, http.MethodPost, "/api/admin/config/groups", map[string]any{"name": "test", "display_name": "Test"})

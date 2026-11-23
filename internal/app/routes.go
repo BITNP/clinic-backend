@@ -167,7 +167,11 @@ func (h routeHandlers) router() *gin.Engine {
 	// ── Admin: Configuration ──────────────────────────────────────────────
 	// Configuration values are restricted to admins and superadmins.
 	config := r.Group("/api/admin/config")
-	config.Use(h.adminAuth, authhandler.RequireAdmin, changes.SyncBumpMiddleware(h.syncSvc, changes.SyncGroupConfig))
+	config.Use(
+		h.adminAuth,
+		authhandler.RequireAdmin,
+		changes.SyncBumpMiddleware(h.syncSvc, changes.SyncGroupConfig, changes.SyncGroupJournal),
+	)
 	{
 		config.GET("", h.configH.ListCatalog)
 
@@ -192,7 +196,11 @@ func (h routeHandlers) router() *gin.Engine {
 
 	// ── Admin: Records (staff can read and perform site operations) ───────
 	records := r.Group("/api/admin/records")
-	records.Use(h.adminAuth, authhandler.RequireStaff, changes.SyncBumpMiddleware(h.syncSvc, changes.SyncGroupRecord))
+	records.Use(
+		h.adminAuth,
+		authhandler.RequireStaff,
+		changes.SyncBumpMiddleware(h.syncSvc, changes.SyncGroupRecord, changes.SyncGroupJournal),
+	)
 	{
 		records.GET("", h.adminRecordH.List)
 		records.GET("/:id", h.adminRecordH.Get)
@@ -212,7 +220,11 @@ func (h routeHandlers) router() *gin.Engine {
 	}
 	// ── Admin: Records (admin only — approve / reject) ────────────────────
 	recordsAdmin := r.Group("/api/admin/records")
-	recordsAdmin.Use(h.adminAuth, authhandler.RequireAdmin, changes.SyncBumpMiddleware(h.syncSvc, changes.SyncGroupRecord))
+	recordsAdmin.Use(
+		h.adminAuth,
+		authhandler.RequireAdmin,
+		changes.SyncBumpMiddleware(h.syncSvc, changes.SyncGroupRecord, changes.SyncGroupJournal),
+	)
 	{
 		recordsAdmin.POST("/:id/confirm", h.adminRecordH.Confirm)
 		recordsAdmin.POST("/:id/reject", h.adminRecordH.Reject)

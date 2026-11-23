@@ -198,6 +198,38 @@ func TestJournalEntityKinds(t *testing.T) {
 	}
 }
 
+func TestJournalListDefaultsToOneHundredItems(t *testing.T) {
+	r, db := setupJournalRouter(t, authhandler.RoleAdmin)
+	now := time.Date(2026, 11, 22, 10, 0, 0, 0, time.UTC)
+	for i := 0; i < 51; i++ {
+		insertJournalEvent(
+			t,
+			db,
+			now.Add(time.Duration(i)*time.Second),
+			"record.updated",
+			"record",
+			strconv.Itoa(i+1),
+			"op-"+strconv.Itoa(i+1),
+		)
+	}
+
+	w := testutil.DoRequest(t, r, http.MethodGet, "/api/admin/journal", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list default journal page: %d %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Items []struct {
+			ID uint64 `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode default journal page: %v", err)
+	}
+	if len(response.Items) != 51 {
+		t.Fatalf("default journal page items = %d, want 51", len(response.Items))
+	}
+}
+
 func TestJournalListValidatesFiltersAndRequiresAdmin(t *testing.T) {
 	r, _ := setupJournalRouter(t, authhandler.RoleAdmin)
 	w := testutil.DoRequest(t, r, http.MethodGet, "/api/admin/journal?from=not-a-time", nil)

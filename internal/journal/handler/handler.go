@@ -57,7 +57,7 @@ func (h *Handler) List(c *gin.Context) {
 		return
 	}
 
-	limit, err := queryInt(c, "limit", 50)
+	limit, err := queryInt(c, "limit", 100)
 	if err != nil || limit < 1 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be a positive integer"})
 		return
