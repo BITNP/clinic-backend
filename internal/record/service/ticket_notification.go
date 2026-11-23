@@ -29,10 +29,18 @@ type TicketStatusNotification struct {
 	ServiceEnd   time.Time
 }
 
+// TicketNotificationDelivery describes a message accepted and verified by the
+// notification provider. Skipped is set when notifications are disabled or the
+// transition has no configured notification.
+type TicketNotificationDelivery struct {
+	MessageID string
+	Skipped   bool
+}
+
 // TicketStatusNotifier delivers a ticket status change to the guest.
 type TicketStatusNotifier interface {
-	Notify(ctx context.Context, notification TicketStatusNotification) error
-	NotifyReminder(ctx context.Context, notification TicketStatusNotification) error
+	Notify(ctx context.Context, notification TicketStatusNotification) (TicketNotificationDelivery, error)
+	NotifyReminder(ctx context.Context, notification TicketStatusNotification) (TicketNotificationDelivery, error)
 }
 
 // DingTalkStatusSender submits a DingTalk message and verifies its delivery
@@ -137,30 +145,36 @@ func NewDingTalkTicketNotifier(
 
 // Notify sends one verified DingTalk text message for a supported ticket
 // status change.
-func (n *DingTalkTicketNotifier) Notify(ctx context.Context, notification TicketStatusNotification) error {
+func (n *DingTalkTicketNotifier) Notify(
+	ctx context.Context,
+	notification TicketStatusNotification,
+) (TicketNotificationDelivery, error) {
 	if n == nil || n.sender == nil {
-		return fmt.Errorf("ticket notification: dingtalk sender is not configured")
+		return TicketNotificationDelivery{}, fmt.Errorf("ticket notification: dingtalk sender is not configured")
 	}
 	if notification.RoomTransfer {
 		if n.transferTitle == "" {
-			return fmt.Errorf("ticket notification: transfer title is required")
+			return TicketNotificationDelivery{}, fmt.Errorf("ticket notification: transfer title is required")
 		}
 		return n.send(ctx, n.transferTemplate, n.transferTitle, notification)
 	}
 	if !isNotifiableTicketStatus(notification.Status) {
-		return nil
+		return TicketNotificationDelivery{Skipped: true}, nil
 	}
 	tmpl, ok := n.statusTemplates[notification.Status]
 	if !ok {
-		return nil
+		return TicketNotificationDelivery{Skipped: true}, nil
 	}
 	return n.send(ctx, tmpl, n.title, notification)
 }
 
 // NotifyReminder sends the configured pre-shift reminder for a ticket.
-func (n *DingTalkTicketNotifier) NotifyReminder(ctx context.Context, notification TicketStatusNotification) error {
+func (n *DingTalkTicketNotifier) NotifyReminder(
+	ctx context.Context,
+	notification TicketStatusNotification,
+) (TicketNotificationDelivery, error) {
 	if n == nil || n.sender == nil {
-		return fmt.Errorf("ticket reminder: dingtalk sender is not configured")
+		return TicketNotificationDelivery{}, fmt.Errorf("ticket reminder: dingtalk sender is not configured")
 	}
 	return n.send(ctx, n.reminderTemplate, n.title, notification)
 }
@@ -170,24 +184,28 @@ func (n *DingTalkTicketNotifier) send(
 	tmpl *template.Template,
 	title string,
 	notification TicketStatusNotification,
-) error {
+) (TicketNotificationDelivery, error) {
 	if strings.TrimSpace(notification.User) == "" {
-		return fmt.Errorf("ticket notification for record %d: user id is required", notification.RecordID)
+		return TicketNotificationDelivery{}, fmt.Errorf(
+			"ticket notification for record %d: user id is required",
+			notification.RecordID,
+		)
 	}
 	content, err := n.render(tmpl, notification)
 	if err != nil {
-		return fmt.Errorf("ticket notification for record %d: %w", notification.RecordID, err)
+		return TicketNotificationDelivery{}, fmt.Errorf("ticket notification for record %d: %w", notification.RecordID, err)
 	}
-	if _, _, err := n.sender.SendAndCheckStatus(ctx, notificationclient.SendRequest{
+	sent, _, err := n.sender.SendAndCheckStatus(ctx, notificationclient.SendRequest{
 		Receivers:   notification.User,
 		Title:       title,
 		Content:     content,
 		MessageType: "text",
 		Level:       "normal",
-	}); err != nil {
-		return fmt.Errorf("ticket notification for record %d: %w", notification.RecordID, err)
+	})
+	if err != nil {
+		return TicketNotificationDelivery{}, fmt.Errorf("ticket notification for record %d: %w", notification.RecordID, err)
 	}
-	return nil
+	return TicketNotificationDelivery{MessageID: sent.MsgID}, nil
 }
 
 func isNotifiableTicketStatus(status recordmodel.RecordStatus) bool {
@@ -280,7 +298,7 @@ func (s *AdminRecordService) notifyTicketStatusChange(
 		log.Printf("record %d %s notification: %v", record.ID, record.Status, err)
 		return
 	}
-	if err := s.notifier.Notify(ctx, TicketStatusNotification{
+	if _, err := s.notifier.Notify(ctx, TicketStatusNotification{
 		RecordID:     record.ID,
 		User:         record.User,
 		Status:       record.Status,

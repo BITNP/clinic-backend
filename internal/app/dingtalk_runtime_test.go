@@ -64,10 +64,10 @@ func TestDingTalkRuntimeManagerActivatesOnlyPreparedSettings(t *testing.T) {
 		ServiceStart: time.Date(2026, 11, 23, 10, 0, 0, 0, time.UTC),
 		ServiceEnd:   time.Date(2026, 11, 23, 11, 0, 0, 0, time.UTC),
 	}
-	if err := manager.Notify(context.Background(), notification); err != nil {
+	if _, err := manager.Notify(context.Background(), notification); err != nil {
 		t.Fatalf("disabled Notify() error = %v", err)
 	}
-	if err := manager.NotifyReminder(context.Background(), notification); err == nil {
+	if _, err := manager.NotifyReminder(context.Background(), notification); err == nil {
 		t.Fatal("disabled NotifyReminder() error = nil, want retryable failure")
 	}
 	if sender.calls != 0 {
@@ -85,7 +85,7 @@ func TestDingTalkRuntimeManagerActivatesOnlyPreparedSettings(t *testing.T) {
 	if err := manager.Prepare(enabled); err != nil {
 		t.Fatalf("Prepare(enabled) error = %v", err)
 	}
-	if err := manager.Notify(context.Background(), notification); err != nil {
+	if _, err := manager.Notify(context.Background(), notification); err != nil {
 		t.Fatalf("Notify() before Activate error = %v", err)
 	}
 	if sender.calls != 0 {
@@ -96,8 +96,12 @@ func TestDingTalkRuntimeManagerActivatesOnlyPreparedSettings(t *testing.T) {
 	if clientConfig.ReceiverOverride != "dev-user" {
 		t.Errorf("receiver override = %q, want dev-user", clientConfig.ReceiverOverride)
 	}
-	if err := manager.Notify(context.Background(), notification); err != nil {
+	delivery, err := manager.Notify(context.Background(), notification)
+	if err != nil {
 		t.Fatalf("enabled Notify() error = %v", err)
+	}
+	if delivery.MessageID != "message-1" || delivery.Skipped {
+		t.Fatalf("delivery = %+v", delivery)
 	}
 	if sender.calls != 1 || len(sender.requests) != 1 {
 		t.Fatalf("sender calls = %d, requests = %d; want 1 and 1", sender.calls, len(sender.requests))
@@ -108,7 +112,7 @@ func TestDingTalkRuntimeManagerActivatesOnlyPreparedSettings(t *testing.T) {
 	if err := manager.Prepare(invalid); err == nil {
 		t.Fatal("Prepare(invalid) error = nil, want validation error")
 	}
-	if err := manager.Notify(context.Background(), notification); err != nil {
+	if _, err := manager.Notify(context.Background(), notification); err != nil {
 		t.Fatalf("Notify() after rejected Prepare error = %v", err)
 	}
 	if sender.calls != 2 {
@@ -121,7 +125,7 @@ func TestDingTalkRuntimeManagerActivatesOnlyPreparedSettings(t *testing.T) {
 		t.Fatalf("Prepare(disabled) error = %v", err)
 	}
 	manager.Activate(disabled)
-	if err := manager.Notify(context.Background(), notification); err != nil {
+	if _, err := manager.Notify(context.Background(), notification); err != nil {
 		t.Fatalf("Notify() after disable error = %v", err)
 	}
 	if sender.calls != 2 {

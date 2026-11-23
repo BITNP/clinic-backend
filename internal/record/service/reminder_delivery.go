@@ -257,7 +257,7 @@ func (d *TicketReminderDelivery) Deliver(
 	if d.Notifier == nil {
 		return d.retry(ctx, job, now, date.StartTime, fmt.Errorf("dingtalk notifier unavailable"), "notifier_unavailable")
 	}
-	err = d.Notifier.NotifyReminder(ctx, TicketStatusNotification{
+	delivery, err := d.Notifier.NotifyReminder(ctx, TicketStatusNotification{
 		RecordID:     record.ID,
 		User:         record.User,
 		Status:       record.Status,
@@ -269,6 +269,14 @@ func (d *TicketReminderDelivery) Deliver(
 	if err != nil {
 		return d.retry(ctx, job, now, date.StartTime, err, "dingtalk_delivery_failed")
 	}
+	details := map[string]any{
+		"channel":      "dingtalk",
+		"recipient":    map[string]any{"type": "customer"},
+		"confirmation": "message_center_send_success",
+	}
+	if delivery.MessageID != "" {
+		details["message_center_msg_id"] = delivery.MessageID
+	}
 	return d.finish(
 		ctx,
 		job,
@@ -276,11 +284,7 @@ func (d *TicketReminderDelivery) Deliver(
 		now,
 		"",
 		"notification.sent",
-		map[string]any{
-			"channel":      "dingtalk",
-			"recipient":    map[string]any{"type": "customer"},
-			"confirmation": "message_center_send_success",
-		},
+		details,
 	)
 }
 

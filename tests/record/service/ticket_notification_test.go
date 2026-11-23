@@ -45,14 +45,26 @@ type fakeTicketStatusNotifier struct {
 	err           error
 }
 
-func (f *fakeTicketStatusNotifier) Notify(_ context.Context, notification recordservice.TicketStatusNotification) error {
+func (f *fakeTicketStatusNotifier) Notify(
+	_ context.Context,
+	notification recordservice.TicketStatusNotification,
+) (recordservice.TicketNotificationDelivery, error) {
 	f.notifications = append(f.notifications, notification)
-	return f.err
+	if f.err != nil {
+		return recordservice.TicketNotificationDelivery{}, f.err
+	}
+	return recordservice.TicketNotificationDelivery{MessageID: "ticket-message-1"}, nil
 }
 
-func (f *fakeTicketStatusNotifier) NotifyReminder(_ context.Context, notification recordservice.TicketStatusNotification) error {
+func (f *fakeTicketStatusNotifier) NotifyReminder(
+	_ context.Context,
+	notification recordservice.TicketStatusNotification,
+) (recordservice.TicketNotificationDelivery, error) {
 	f.reminders = append(f.reminders, notification)
-	return f.err
+	if f.err != nil {
+		return recordservice.TicketNotificationDelivery{}, f.err
+	}
+	return recordservice.TicketNotificationDelivery{MessageID: "ticket-reminder-message-1"}, nil
 }
 
 func seedTicketNotificationServiceDate(
@@ -143,7 +155,7 @@ func TestDingTalkTicketNotifierFormatsStatusMessages(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewDingTalkTicketNotifier() error = %v", err)
 			}
-			err = notifier.Notify(context.Background(), recordservice.TicketStatusNotification{
+			delivery, err := notifier.Notify(context.Background(), recordservice.TicketStatusNotification{
 				RecordID:     42,
 				User:         "ding-user-42",
 				Status:       tt.status,
@@ -156,6 +168,9 @@ func TestDingTalkTicketNotifierFormatsStatusMessages(t *testing.T) {
 			})
 			if err != nil {
 				t.Fatalf("Notify() error = %v", err)
+			}
+			if delivery.MessageID != "message-1" || delivery.Skipped {
+				t.Fatalf("delivery = %+v", delivery)
 			}
 			if len(sender.requests) != 1 {
 				t.Fatalf("requests = %d, want 1", len(sender.requests))
@@ -212,7 +227,7 @@ func TestDingTalkTicketNotifierDecodesEscapedNewlines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDingTalkTicketNotifier() error = %v", err)
 	}
-	err = notifier.Notify(context.Background(), recordservice.TicketStatusNotification{
+	_, err = notifier.Notify(context.Background(), recordservice.TicketStatusNotification{
 		RecordID:     1,
 		User:         "ding-user",
 		Status:       recordmodel.RecordStatusConfirmed,
@@ -245,7 +260,7 @@ func TestDingTalkTicketNotifierSendsReminderTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDingTalkTicketNotifier() error = %v", err)
 	}
-	err = notifier.NotifyReminder(context.Background(), recordservice.TicketStatusNotification{
+	delivery, err := notifier.NotifyReminder(context.Background(), recordservice.TicketStatusNotification{
 		RecordID:     1,
 		User:         "ding-user",
 		RoomName:     "徐特立图书馆",
@@ -255,6 +270,9 @@ func TestDingTalkTicketNotifierSendsReminderTemplate(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("NotifyReminder() error = %v", err)
+	}
+	if delivery.MessageID != "message-1" || delivery.Skipped {
+		t.Fatalf("delivery = %+v", delivery)
 	}
 	if got := sender.requests[0].Content; got != "提醒：2026-11-20的18:30-21:00 徐特立图书馆 三楼311G" {
 		t.Errorf("Content = %q", got)

@@ -104,18 +104,24 @@ func (m *dingTalkRuntimeManager) Config() DingTalkConfig {
 	return state.config
 }
 
-func (m *dingTalkRuntimeManager) Notify(ctx context.Context, notification recordservice.TicketStatusNotification) error {
+func (m *dingTalkRuntimeManager) Notify(
+	ctx context.Context,
+	notification recordservice.TicketStatusNotification,
+) (recordservice.TicketNotificationDelivery, error) {
 	state := m.active.Load()
 	if state == nil || !state.config.Enabled {
-		return nil
+		return recordservice.TicketNotificationDelivery{Skipped: true}, nil
 	}
 	return state.notifier.Notify(ctx, notification)
 }
 
-func (m *dingTalkRuntimeManager) NotifyReminder(ctx context.Context, notification recordservice.TicketStatusNotification) error {
+func (m *dingTalkRuntimeManager) NotifyReminder(
+	ctx context.Context,
+	notification recordservice.TicketStatusNotification,
+) (recordservice.TicketNotificationDelivery, error) {
 	state := m.active.Load()
 	if state == nil || !state.config.Enabled {
-		return fmt.Errorf("dingtalk reminder delivery is disabled")
+		return recordservice.TicketNotificationDelivery{}, fmt.Errorf("dingtalk reminder delivery is disabled")
 	}
 	return state.notifier.NotifyReminder(ctx, notification)
 }
