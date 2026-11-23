@@ -123,7 +123,50 @@ type Page struct {
 	NextCursor *uint64
 }
 
+// EntityKind lists the actions recorded for one entity type.
+type EntityKind struct {
+	EntityType string   `json:"entity_type"`
+	Actions    []string `json:"actions"`
+}
+
 const MaxPageSize = 100
+
+// ListEntityKinds returns the entity and action vocabulary currently present
+// in the journal. The result is grouped by entity type and sorted for stable
+// filter options.
+func (s *Service) ListEntityKinds(ctx context.Context) ([]EntityKind, error) {
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT entity_type, action
+		 FROM clinic_journal_event
+		 GROUP BY entity_type, action
+		 ORDER BY entity_type ASC, action ASC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list journal entity kinds: %w", err)
+	}
+	defer rows.Close()
+
+	kinds := make([]EntityKind, 0)
+	for rows.Next() {
+		var entityType, action string
+		if err := rows.Scan(&entityType, &action); err != nil {
+			return nil, fmt.Errorf("scan journal entity kind: %w", err)
+		}
+		if len(kinds) == 0 || kinds[len(kinds)-1].EntityType != entityType {
+			kinds = append(kinds, EntityKind{
+				EntityType: entityType,
+				Actions:    make([]string, 0, 1),
+			})
+		}
+		last := &kinds[len(kinds)-1]
+		last.Actions = append(last.Actions, action)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list journal entity kinds: %w", err)
+	}
+	return kinds, nil
+}
 
 // List returns a stable newest-first page of journal events.
 func (s *Service) List(ctx context.Context, filter Filter) (Page, error) {

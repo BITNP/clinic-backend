@@ -45,7 +45,7 @@ func insertJournalEvent(
 	t *testing.T,
 	db *gorm.DB,
 	now time.Time,
-	action, entityID, operationID string,
+	action, entityType, entityID, operationID string,
 ) uint64 {
 	t.Helper()
 	rawDB := testutil.RawDB(t, db)
@@ -58,7 +58,7 @@ func insertJournalEvent(
 		ActorType:   journal.ActorStaff,
 		ActorID:     "42",
 		Action:      action,
-		EntityType:  "record",
+		EntityType:  entityType,
 		EntityID:    entityID,
 		OperationID: operationID,
 		Details:     map[string]any{"version": 1, "changes": map[string]any{}},
@@ -76,8 +76,8 @@ func insertJournalEvent(
 func TestJournalListFiltersAndPaginates(t *testing.T) {
 	r, db := setupJournalRouter(t, authhandler.RoleAdmin)
 	now := time.Date(2026, 11, 22, 10, 0, 0, 0, time.UTC)
-	firstID := insertJournalEvent(t, db, now, "record.confirmed", "123", "op-a")
-	secondID := insertJournalEvent(t, db, now.Add(time.Minute), "record.updated", "123", "op-b")
+	firstID := insertJournalEvent(t, db, now, "record.confirmed", "record", "123", "op-a")
+	secondID := insertJournalEvent(t, db, now.Add(time.Minute), "record.updated", "record", "123", "op-b")
 
 	w := testutil.DoRequest(t, r, http.MethodGet, "/api/admin/journal?entity_type=record&entity_id=123&limit=1", nil)
 	if w.Code != http.StatusOK {
@@ -153,6 +153,51 @@ func TestJournalListFiltersAndPaginates(t *testing.T) {
 	}
 }
 
+func TestJournalEntityKinds(t *testing.T) {
+	r, db := setupJournalRouter(t, authhandler.RoleAdmin)
+	now := time.Date(2026, 11, 22, 10, 0, 0, 0, time.UTC)
+	insertJournalEvent(t, db, now, "record.updated", "record", "123", "op-a")
+	insertJournalEvent(t, db, now.Add(time.Minute), "record.confirmed", "record", "123", "op-b")
+	insertJournalEvent(t, db, now.Add(2*time.Minute), "record.confirmed", "record", "124", "op-c")
+	insertJournalEvent(t, db, now.Add(3*time.Minute), "notification.requested", "service_date", "7", "op-d")
+
+	w := testutil.DoRequest(t, r, http.MethodGet, "/api/admin/journal/entity-kinds", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list entity kinds: %d %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Items []journal.EntityKind `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode entity kinds: %v", err)
+	}
+	want := []journal.EntityKind{
+		{
+			EntityType: "record",
+			Actions:    []string{"record.confirmed", "record.updated"},
+		},
+		{
+			EntityType: "service_date",
+			Actions:    []string{"notification.requested"},
+		},
+	}
+	if len(response.Items) != len(want) {
+		t.Fatalf("entity kinds = %+v, want %+v", response.Items, want)
+	}
+	for i := range want {
+		if response.Items[i].EntityType != want[i].EntityType ||
+			len(response.Items[i].Actions) != len(want[i].Actions) {
+			t.Fatalf("entity kind %d = %+v, want %+v", i, response.Items[i], want[i])
+		}
+		for j := range want[i].Actions {
+			if response.Items[i].Actions[j] != want[i].Actions[j] {
+				t.Fatalf("entity kind %d action %d = %q, want %q",
+					i, j, response.Items[i].Actions[j], want[i].Actions[j])
+			}
+		}
+	}
+}
+
 func TestJournalListValidatesFiltersAndRequiresAdmin(t *testing.T) {
 	r, _ := setupJournalRouter(t, authhandler.RoleAdmin)
 	w := testutil.DoRequest(t, r, http.MethodGet, "/api/admin/journal?from=not-a-time", nil)
@@ -168,5 +213,9 @@ func TestJournalListValidatesFiltersAndRequiresAdmin(t *testing.T) {
 	w = testutil.DoRequest(t, r, http.MethodGet, "/api/admin/journal", nil)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("staff access: %d %s", w.Code, w.Body.String())
+	}
+	w = testutil.DoRequest(t, r, http.MethodGet, "/api/admin/journal/entity-kinds", nil)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("staff entity kinds access: %d %s", w.Code, w.Body.String())
 	}
 }

@@ -24,6 +24,21 @@ type listResponse struct {
 	NextCursor *uint64 `json:"next_cursor"`
 }
 
+type entityKindsResponse struct {
+	Items []journal.EntityKind `json:"items"`
+}
+
+// ListEntityKinds returns the entity types and actions available to the
+// journal filters.
+func (h *Handler) ListEntityKinds(c *gin.Context) {
+	items, err := h.svc.ListEntityKinds(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, entityKindsResponse{Items: items})
+}
+
 // List returns filtered, newest-first journal events.
 func (h *Handler) List(c *gin.Context) {
 	filter := journal.Filter{

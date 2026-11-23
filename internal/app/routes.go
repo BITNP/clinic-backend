@@ -187,6 +187,7 @@ func (h routeHandlers) router() *gin.Engine {
 	journalRead.Use(h.adminAuth, authhandler.RequireAdmin)
 	{
 		journalRead.GET("", h.journalH.List)
+		journalRead.GET("/entity-kinds", h.journalH.ListEntityKinds)
 	}
 
 	// ── Admin: Records (staff can read and perform site operations) ───────

@@ -1168,6 +1168,45 @@ Journal entries are immutable. A record undo creates a new `record.reverted`
 event and does not modify the original event. Write-only and known secret
 configuration values are stored as `{"changed":true,"redacted":true}`.
 
+### `GET /api/admin/journal/entity-kinds`
+
+**Description:** Lists the entity types and actions currently present in the
+journal. Requires an admin or superadmin session or Keycloak token. Results are
+grouped by entity type and sorted by entity type and action. The arrays are
+empty when the journal has no events.
+
+**Response `200 OK`**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `items` | array | Entity types with their recorded actions. |
+| `items[].entity_type` | string | Stable entity category used by the `entity_type` filter. |
+| `items[].actions` | array of strings | Stable actions recorded for this entity type. |
+
+```json
+{
+  "items": [
+    {
+      "entity_type": "record",
+      "actions": ["record.confirmed", "record.updated"]
+    },
+    {
+      "entity_type": "service_date",
+      "actions": ["notification.requested", "notification.sent"]
+    }
+  ]
+}
+```
+
+**Error responses:** `401`, `403`, `500`.
+
+**curl**
+
+```bash
+curl "$BASE/api/admin/journal/entity-kinds" \
+  -b cookies.txt
+```
+
 ### `GET /api/admin/journal`
 
 **Description:** Lists journal events newest first. Requires an admin or
