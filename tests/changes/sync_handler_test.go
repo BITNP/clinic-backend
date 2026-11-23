@@ -35,7 +35,7 @@ func setupSyncHandlerRouter(t *testing.T) (*gin.Engine, *changes.SyncService) {
 	}
 
 	records := r.Group("/api/admin/records")
-	records.Use(changes.SyncBumpMiddleware(svc, changes.SyncGroupRecord))
+	records.Use(changes.SyncBumpMiddleware(svc, changes.SyncGroupRecord, changes.SyncGroupJournal))
 	{
 		records.GET("", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"items": []any{}}) })
 		records.POST("", func(c *gin.Context) { c.JSON(http.StatusCreated, gin.H{"ok": true}) })
@@ -135,6 +135,9 @@ func TestSyncHandler_MutatingRequestBumpsGroup(t *testing.T) {
 	if counters[string(changes.SyncGroupRecord)] != 1 {
 		t.Errorf("expected record=1, got %d", counters[string(changes.SyncGroupRecord)])
 	}
+	if counters[string(changes.SyncGroupJournal)] != 1 {
+		t.Errorf("expected journal=1, got %d", counters[string(changes.SyncGroupJournal)])
+	}
 }
 
 func TestSyncHandler_FailedRequestDoesNotBump(t *testing.T) {
@@ -149,6 +152,9 @@ func TestSyncHandler_FailedRequestDoesNotBump(t *testing.T) {
 	if counters[string(changes.SyncGroupRecord)] != 0 {
 		t.Errorf("expected record=0 after failure, got %d", counters[string(changes.SyncGroupRecord)])
 	}
+	if counters[string(changes.SyncGroupJournal)] != 0 {
+		t.Errorf("expected journal=0 after failure, got %d", counters[string(changes.SyncGroupJournal)])
+	}
 }
 
 func TestSyncHandler_ReadRequestDoesNotBump(t *testing.T) {
@@ -162,5 +168,8 @@ func TestSyncHandler_ReadRequestDoesNotBump(t *testing.T) {
 	counters := getSyncCounters(t, r)
 	if counters[string(changes.SyncGroupRecord)] != 0 {
 		t.Errorf("expected record=0 after read, got %d", counters[string(changes.SyncGroupRecord)])
+	}
+	if counters[string(changes.SyncGroupJournal)] != 0 {
+		t.Errorf("expected journal=0 after read, got %d", counters[string(changes.SyncGroupJournal)])
 	}
 }

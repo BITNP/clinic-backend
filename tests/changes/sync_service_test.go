@@ -44,6 +44,7 @@ var testSyncGroups = []changes.SyncGroup{
 	changes.SyncGroupStaff,
 	changes.SyncGroupAnnouncement,
 	changes.SyncGroupConfig,
+	changes.SyncGroupJournal,
 }
 
 func TestSyncService_Snapshot_DefaultsToZero(t *testing.T) {

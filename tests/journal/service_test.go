@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"clinic-backend/internal/changes"
 	"clinic-backend/internal/journal"
 	journalmodel "clinic-backend/internal/journal/model"
 	"clinic-backend/internal/testutil"
@@ -13,6 +14,26 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+type journalSyncStore struct {
+	counters map[string]int64
+}
+
+func (s *journalSyncStore) Incr(_ context.Context, key string) (int64, error) {
+	if s.counters == nil {
+		s.counters = map[string]int64{}
+	}
+	s.counters[key]++
+	return s.counters[key], nil
+}
+
+func (s *journalSyncStore) Get(_ context.Context, keys []string) (map[string]int64, error) {
+	out := make(map[string]int64, len(keys))
+	for _, key := range keys {
+		out[key] = s.counters[key]
+	}
+	return out, nil
+}
 
 func setupJournalDB(t *testing.T) *gorm.DB {
 	t.Helper()
@@ -24,6 +45,23 @@ func setupJournalDB(t *testing.T) *gorm.DB {
 		t.Fatalf("migrate journal: %v", err)
 	}
 	return db
+}
+
+func TestServiceBumpSync(t *testing.T) {
+	syncSvc := changes.NewSyncService(&journalSyncStore{})
+	svc := journal.NewService(testutil.RawDB(t, setupJournalDB(t)))
+	svc.SetSyncService(syncSvc)
+
+	if err := svc.BumpSync(context.Background()); err != nil {
+		t.Fatalf("bump journal sync: %v", err)
+	}
+	counters, err := syncSvc.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("snapshot sync counters: %v", err)
+	}
+	if counters[changes.SyncGroupJournal] != 1 {
+		t.Fatalf("journal counter = %d, want 1", counters[changes.SyncGroupJournal])
+	}
 }
 
 func TestInsertAndListEvents(t *testing.T) {

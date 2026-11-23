@@ -144,6 +144,7 @@ func Run() {
 	// Sync counters live in Redis so every backend replica shares them. Clients
 	// poll Snapshot and refresh when a value differs from their last-seen one.
 	syncSvc := changes.NewSyncService(changes.NewRedisStore(redisClient))
+	journalSvc.SetSyncService(syncSvc)
 	syncH := changes.NewSyncHandler(syncSvc, runtimeSettings.SyncPollInterval)
 	syncH.SetIntervalGetter(func() time.Duration { return configSvc.Current().SyncPollInterval })
 

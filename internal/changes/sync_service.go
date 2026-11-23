@@ -17,6 +17,7 @@ const (
 	SyncGroupStaff        SyncGroup = "staff"
 	SyncGroupAnnouncement SyncGroup = "announcement"
 	SyncGroupConfig       SyncGroup = "config"
+	SyncGroupJournal      SyncGroup = "journal"
 )
 
 // allSyncGroups lists every group reported by Snapshot. Keep this in one place
@@ -29,6 +30,7 @@ var allSyncGroups = []SyncGroup{
 	SyncGroupStaff,
 	SyncGroupAnnouncement,
 	SyncGroupConfig,
+	SyncGroupJournal,
 }
 
 // syncKeyPrefix namespaces the counters inside Redis.

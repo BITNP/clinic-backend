@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"clinic-backend/internal/changes"
 	"clinic-backend/internal/database"
 	journalmodel "clinic-backend/internal/journal/model"
 )
@@ -41,11 +42,28 @@ type EventInput struct {
 // Service owns journal reads. Inserts use InsertTx so business mutations and
 // their history commit or roll back together.
 type Service struct {
-	db *database.DB
+	db      *database.DB
+	syncSvc *changes.SyncService
 }
 
 func NewService(db *database.DB) *Service {
 	return &Service{db: db}
+}
+
+// SetSyncService wires the journal change counter used by background workers
+// that create journal events outside HTTP routes.
+func (s *Service) SetSyncService(syncSvc *changes.SyncService) {
+	s.syncSvc = syncSvc
+}
+
+// BumpSync publishes a journal change after a committed background operation.
+func (s *Service) BumpSync(ctx context.Context) error {
+	if s == nil || s.syncSvc == nil {
+		return nil
+	}
+	bumpCtx, cancel := context.WithTimeout(ctx, changes.SyncBumpTimeout)
+	defer cancel()
+	return s.syncSvc.Bump(bumpCtx, changes.SyncGroupJournal)
 }
 
 // NewOperationID returns an opaque identifier shared by related events.
@@ -171,7 +189,7 @@ func (s *Service) ListEntityKinds(ctx context.Context) ([]EntityKind, error) {
 // List returns a stable newest-first page of journal events.
 func (s *Service) List(ctx context.Context, filter Filter) (Page, error) {
 	if filter.Limit <= 0 {
-		filter.Limit = 50
+		filter.Limit = 100
 	}
 	if filter.Limit > MaxPageSize {
 		filter.Limit = MaxPageSize

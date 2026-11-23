@@ -15,10 +15,10 @@ import (
 // request goroutine alive after the response was already written.
 const SyncBumpTimeout = 2 * time.Second
 
-// SyncBumpMiddleware increments the counter for group after a successful
-// mutating request. It is best-effort: a counter failure is logged and never
-// changes the response, because the underlying data write already succeeded.
-func SyncBumpMiddleware(svc *SyncService, group SyncGroup) gin.HandlerFunc {
+// SyncBumpMiddleware increments each group's counter after a successful
+// mutating request. It is best-effort: counter failures are logged and never
+// change the response, because the underlying data write already succeeded.
+func SyncBumpMiddleware(svc *SyncService, groups ...SyncGroup) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Next()
 
@@ -34,8 +34,10 @@ func SyncBumpMiddleware(svc *SyncService, group SyncGroup) gin.HandlerFunc {
 		// after receiving the response, but the change still happened.
 		ctx, cancel := context.WithTimeout(context.Background(), SyncBumpTimeout)
 		defer cancel()
-		if err := svc.Bump(ctx, group); err != nil {
-			log.Printf("sync: bump %s failed: %v", group, err)
+		for _, group := range groups {
+			if err := svc.Bump(ctx, group); err != nil {
+				log.Printf("sync: bump %s failed: %v", group, err)
+			}
 		}
 	}
 }
