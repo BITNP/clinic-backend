@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"clinic-backend/internal/changes"
 	"clinic-backend/internal/journal"
 	journalmodel "clinic-backend/internal/journal/model"
 	recordmodel "clinic-backend/internal/record/model"
@@ -16,9 +17,29 @@ import (
 	"gorm.io/gorm"
 )
 
+type reminderSyncStore struct {
+	counters map[string]int64
+}
+
+func (s *reminderSyncStore) Incr(_ context.Context, key string) (int64, error) {
+	if s.counters == nil {
+		s.counters = map[string]int64{}
+	}
+	s.counters[key]++
+	return s.counters[key], nil
+}
+
+func (s *reminderSyncStore) Get(_ context.Context, keys []string) (map[string]int64, error) {
+	out := make(map[string]int64, len(keys))
+	for _, key := range keys {
+		out[key] = s.counters[key]
+	}
+	return out, nil
+}
+
 func setupDingTalkReminderJournal(
 	t *testing.T,
-) (*recordservice.TicketReminderDiscovery, *recordservice.TicketReminderDelivery, *gorm.DB) {
+) (*recordservice.TicketReminderDiscovery, *recordservice.TicketReminderDelivery, *gorm.DB, *changes.SyncService) {
 	t.Helper()
 	db := setupAdminRecordTestDB(t)
 	if err := db.AutoMigrate(&journalmodel.Event{}); err != nil {
@@ -26,6 +47,8 @@ func setupDingTalkReminderJournal(
 	}
 	rawDB := testutil.RawDB(t, db)
 	journalSvc := journal.NewService(rawDB)
+	syncSvc := changes.NewSyncService(&reminderSyncStore{})
+	journalSvc.SetSyncService(syncSvc)
 	return &recordservice.TicketReminderDiscovery{
 		DB:       rawDB,
 		LeadTime: 30 * time.Minute,
@@ -35,11 +58,11 @@ func setupDingTalkReminderJournal(
 		Notifier: &fakeTicketStatusNotifier{},
 		Location: time.UTC,
 		Journal:  journalSvc,
-	}, db
+	}, db, syncSvc
 }
 
 func TestDingTalkReminderJournalsRequestAttemptAndSent(t *testing.T) {
-	discovery, delivery, db := setupDingTalkReminderJournal(t)
+	discovery, delivery, db, syncSvc := setupDingTalkReminderJournal(t)
 	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
 	fixture := seedReminderFixture(t, db, now, 20*time.Minute, recordmodel.RecordStatusConfirmed)
 	if created, err := discovery.Discover(context.Background(), now); err != nil || created != 1 {
@@ -93,10 +116,17 @@ func TestDingTalkReminderJournalsRequestAttemptAndSent(t *testing.T) {
 	if stored.Status != "sent" || len(notifier.reminders) != 1 {
 		t.Fatalf("stored = %+v, notifications = %d", stored, len(notifier.reminders))
 	}
+	counters, err := syncSvc.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("snapshot journal sync: %v", err)
+	}
+	if counters[changes.SyncGroupJournal] != 3 {
+		t.Fatalf("journal sync counter = %d, want 3", counters[changes.SyncGroupJournal])
+	}
 }
 
 func TestDingTalkReminderJournalsRetryWithoutRawError(t *testing.T) {
-	discovery, delivery, db := setupDingTalkReminderJournal(t)
+	discovery, delivery, db, _ := setupDingTalkReminderJournal(t)
 	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
 	seedReminderFixture(t, db, now, 20*time.Minute, recordmodel.RecordStatusConfirmed)
 	if _, err := discovery.Discover(context.Background(), now); err != nil {
@@ -131,7 +161,7 @@ func TestDingTalkReminderJournalsRetryWithoutRawError(t *testing.T) {
 }
 
 func TestDingTalkReminderDiscoveryRollsBackWhenJournalFails(t *testing.T) {
-	discovery, _, db := setupDingTalkReminderJournal(t)
+	discovery, _, db, syncSvc := setupDingTalkReminderJournal(t)
 	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
 	fixture := seedReminderFixture(t, db, now, 20*time.Minute, recordmodel.RecordStatusConfirmed)
 	if err := db.Exec(`
@@ -154,5 +184,12 @@ func TestDingTalkReminderDiscoveryRollsBackWhenJournalFails(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("reminder rows = %d, want 0", count)
+	}
+	counters, err := syncSvc.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("snapshot journal sync: %v", err)
+	}
+	if counters[changes.SyncGroupJournal] != 0 {
+		t.Fatalf("journal sync counter = %d after rollback, want 0", counters[changes.SyncGroupJournal])
 	}
 }

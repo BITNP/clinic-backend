@@ -4,12 +4,22 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 
 	"clinic-backend/internal/database"
 	"clinic-backend/internal/journal"
 	recordmodel "clinic-backend/internal/record/model"
 )
+
+func bumpJournalSync(ctx context.Context, journalSvc *journal.Service, scope string) {
+	if journalSvc == nil {
+		return
+	}
+	if err := journalSvc.BumpSync(ctx); err != nil {
+		log.Printf("%s: bump journal sync counter failed: %v", scope, err)
+	}
+}
 
 const (
 	reminderStatusPending   = "pending"
@@ -129,6 +139,9 @@ func (d *TicketReminderDiscovery) Discover(ctx context.Context, now time.Time) (
 	})
 	if err != nil {
 		return 0, err
+	}
+	if created > 0 {
+		bumpJournalSync(ctx, d.Journal, "dingtalk reminder discovery")
 	}
 	return created, nil
 }

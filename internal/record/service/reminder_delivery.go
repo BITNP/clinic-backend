@@ -41,6 +41,7 @@ func (d *TicketReminderDelivery) Claim(ctx context.Context, now time.Time) (*rec
 	}
 
 	var job recordmodel.ClinicRecordDingTalkReminder
+	journaled := false
 	err = database.WithTx(ctx, d.DB.DB, func(tx *sql.Tx) error {
 		query := "SELECT " + recordDingTalkReminderColumns +
 			" FROM clinic_record_dingtalk_reminder" +
@@ -97,6 +98,7 @@ func (d *TicketReminderDelivery) Claim(ctx context.Context, now time.Time) (*rec
 				}); err != nil {
 					return err
 				}
+				journaled = true
 			}
 			job.ID = 0
 			return nil
@@ -145,6 +147,7 @@ func (d *TicketReminderDelivery) Claim(ctx context.Context, now time.Time) (*rec
 			if err != nil {
 				return err
 			}
+			journaled = true
 			if _, err := tx.ExecContext(
 				ctx,
 				"UPDATE clinic_record_dingtalk_reminder SET attempt_event_id = $1 WHERE id = $2",
@@ -166,6 +169,9 @@ func (d *TicketReminderDelivery) Claim(ctx context.Context, now time.Time) (*rec
 	}
 	if err != nil {
 		return nil, fmt.Errorf("claim dingtalk ticket reminder: %w", err)
+	}
+	if journaled {
+		bumpJournalSync(ctx, d.Journal, "dingtalk reminder claim")
 	}
 	if job.ID == 0 {
 		return nil, nil
@@ -354,7 +360,7 @@ func (d *TicketReminderDelivery) finish(
 			idPos+1,
 			idPos+2,
 		)
-	return database.WithTx(ctx, d.DB.DB, func(tx *sql.Tx) error {
+	err := database.WithTx(ctx, d.DB.DB, func(tx *sql.Tx) error {
 		result, err := tx.ExecContext(ctx, query, args...)
 		if err != nil {
 			return fmt.Errorf("finish reminder %d: %w", job.ID, err)
@@ -393,6 +399,13 @@ func (d *TicketReminderDelivery) finish(
 		})
 		return err
 	})
+	if err != nil {
+		return err
+	}
+	if eventAction != "" {
+		bumpJournalSync(ctx, d.Journal, "dingtalk reminder outcome")
+	}
+	return nil
 }
 
 func newTicketReminderClaimToken() (string, error) {
