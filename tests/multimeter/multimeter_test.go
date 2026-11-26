@@ -64,19 +64,19 @@ func TestDownloadClassifiesUserAgentAndReturnsLink(t *testing.T) {
 			name:         "linux defaults to gnu",
 			userAgent:    linuxChromeUA,
 			wantPlatform: multimeter.PlatformLinuxGNU,
-			wantKey:      "multimeter/latest/multimeter-x86_64-unknown-linux-gnu.tar.gz",
+			wantKey:      "multimeter/latest/multimeter-x86_64-unknown-linux-gnu",
 		},
 		{
 			name:         "linux musl marker",
 			userAgent:    "Mozilla/5.0 (X11; Linux x86_64; musl) AppleWebKit/537.36",
 			wantPlatform: multimeter.PlatformLinuxMusl,
-			wantKey:      "multimeter/latest/multimeter-x86_64-unknown-linux-musl.tar.gz",
+			wantKey:      "multimeter/latest/multimeter-x86_64-unknown-linux-musl",
 		},
 		{
 			name:         "alpine maps to musl",
 			userAgent:    "Mozilla/5.0 (X11; Alpine Linux x86_64) AppleWebKit/537.36",
 			wantPlatform: multimeter.PlatformLinuxMusl,
-			wantKey:      "multimeter/latest/multimeter-x86_64-unknown-linux-musl.tar.gz",
+			wantKey:      "multimeter/latest/multimeter-x86_64-unknown-linux-musl",
 		},
 		{
 			name:         "linux i386 has no executable",
@@ -142,7 +142,7 @@ func TestDownloadClassifiesUserAgentAndReturnsLink(t *testing.T) {
 			platformHint:     `"Linux"`,
 			architectureHint: `"x86"`,
 			wantPlatform:     multimeter.PlatformLinuxGNU,
-			wantKey:          "multimeter/latest/multimeter-x86_64-unknown-linux-gnu.tar.gz",
+			wantKey:          "multimeter/latest/multimeter-x86_64-unknown-linux-gnu",
 		},
 		{
 			name:             "linux arm has no executable",
@@ -358,7 +358,7 @@ func TestLoadMultimeterStorageServiceBucketOverride(t *testing.T) {
 		t.Fatalf("LoadMultimeterStorageService() error = %v", err)
 	}
 
-	signed, err := service.PresignGet(context.Background(), "multimeter/latest/multimeter-x86_64-unknown-linux-gnu.tar.gz")
+	signed, err := service.PresignGet(context.Background(), "multimeter/latest/multimeter-x86_64-unknown-linux-gnu")
 	if err != nil {
 		t.Fatalf("PresignGet() error = %v", err)
 	}
@@ -366,7 +366,7 @@ func TestLoadMultimeterStorageServiceBucketOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse signed URL: %v", err)
 	}
-	if want := "/other-executables/multimeter/latest/multimeter-x86_64-unknown-linux-gnu.tar.gz"; parsed.Path != want {
+	if want := "/other-executables/multimeter/latest/multimeter-x86_64-unknown-linux-gnu"; parsed.Path != want {
 		t.Fatalf("path = %q, want %q", parsed.Path, want)
 	}
 }

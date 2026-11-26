@@ -15,8 +15,8 @@ const (
 )
 
 var executableFiles = map[Platform]string{
-	PlatformLinuxGNU:   "multimeter-x86_64-unknown-linux-gnu.tar.gz",
-	PlatformLinuxMusl:  "multimeter-x86_64-unknown-linux-musl.tar.gz",
+	PlatformLinuxGNU:   "multimeter-x86_64-unknown-linux-gnu",
+	PlatformLinuxMusl:  "multimeter-x86_64-unknown-linux-musl",
 	PlatformWindowsX86: "multimeter-x86_64-pc-windows-msvc.exe",
 	PlatformWindowsARM: "multimeter-aarch64-pc-windows-msvc.exe",
 }

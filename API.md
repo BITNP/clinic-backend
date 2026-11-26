@@ -3048,8 +3048,8 @@ automatically with the architecture hint.
 
 | Classification | Returned `platform` | Selected object |
 | --- | --- | --- |
-| Linux x86_64 | `linux-gnu` | `multimeter-x86_64-unknown-linux-gnu.tar.gz` |
-| Linux x86_64 with `musl` or `alpine` UA marker | `linux-musl` | `multimeter-x86_64-unknown-linux-musl.tar.gz` |
+| Linux x86_64 | `linux-gnu` | `multimeter-x86_64-unknown-linux-gnu` |
+| Linux x86_64 with `musl` or `alpine` UA marker | `linux-musl` | `multimeter-x86_64-unknown-linux-musl` |
 | Windows x86_64 | `windows-x86` | `multimeter-x86_64-pc-windows-msvc.exe` |
 | Windows ARM64 | `windows-arm` | `multimeter-aarch64-pc-windows-msvc.exe` |
 | Other platforms or architectures | `mismatch` | None |
@@ -3061,6 +3061,11 @@ when present, except that an explicit 32-bit UA marker always forces
 architecture marker. ARM Linux, ChromeOS, Android, macOS, and other unsupported
 platforms are also classified as `mismatch`.
 
+Current Linux release assets are executable files rather than archives. The
+selected Windows x86_64 asset is the self-contained static-DXC build; the
+smaller `-no-static-dxc` variant is not selected automatically because GPU
+compute testing depends on a runtime shader compiler.
+
 **Response `200 OK`**
 
 | Field | Type | Description |
@@ -3071,7 +3076,7 @@ platforms are also classified as `mismatch`.
 ```json
 {
   "platform": "linux-gnu",
-  "downloadUrl": "https://s3.bitnp.net/clinic-executable/multimeter/latest/multimeter-x86_64-unknown-linux-gnu.tar.gz?X-Amz-Algorithm=..."
+  "downloadUrl": "https://s3.bitnp.net/clinic-executable/multimeter/latest/multimeter-x86_64-unknown-linux-gnu?X-Amz-Algorithm=..."
 }
 ```
 
