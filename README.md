@@ -226,8 +226,9 @@ documented in
 
 RustFS stores clinic photos in a private bucket (`clinic-photos` in production,
 `clinic-photos-dev` locally). The one-shot `rustfs-init` service creates the
-bucket, prefixes, bucket-scoped policy, and dedicated application user; the
-backend never uses the RustFS root account.
+bucket, prefixes, bucket-scoped policy, and dedicated application user. It also
+provisions the private Multimeter executable bucket and its read-only policy;
+the backend never uses the RustFS root account.
 
 See [CONFIGURATION.md](CONFIGURATION.md#bundled-rustfs-deployment) for bucket,
 endpoint, port, CORS, credential, and image-tag settings. See

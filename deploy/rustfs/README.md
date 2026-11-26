@@ -17,13 +17,22 @@ are bound to loopback ports on the host.
   prefixes;
 - creates/updates the `clinic-photo-app` IAM policy;
 - creates/updates the application IAM user from `S3_ACCESS_KEY_ID` /
-  `S3_SECRET_ACCESS_KEY`, and attaches only that policy.
+  `S3_SECRET_ACCESS_KEY`, and attaches that policy;
+- creates the private `clinic-executable` bucket and the
+  `multimeter/latest/` prefix marker;
+- creates/updates the read-only `clinic-multimeter-reader` policy;
+- attaches that policy to `MULTIMETER_S3_ACCESS_KEY_ID` when configured, or to
+  the photo application user otherwise.
 
 The policy allows the application user to list the photo bucket and read,
 write, and delete objects only under the reserved `temporary/` and `photos/`
 prefixes. It does not allow creating or deleting buckets, changing bucket
 policies, writing outside those prefixes, or accessing any other bucket. It
 never uses the RustFS root account.
+
+The Multimeter policy allows only bucket listing and object reads under
+`multimeter/latest/`. It does not allow uploads, deletes, or access to photo
+objects.
 
 The bucket is private. No anonymous access rule is created. `temporary/` is
 reserved for uploads that the backend still has to validate; `photos/` is for
@@ -51,6 +60,8 @@ Required for storage:
 | `RUSTFS_ACCESS_KEY` / `RUSTFS_SECRET_KEY` | RustFS root credentials. Used only by `rustfs-init` and break-glass administration. |
 | `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | Dedicated application credentials. The backend uses these. |
 | `S3_BUCKET` | Bucket name; production `clinic-photos`, local example `clinic-photos-dev`. |
+| `MULTIMETER_S3_BUCKET` | Executable bucket name; defaults to `clinic-executable`. |
+| `MULTIMETER_S3_ACCESS_KEY_ID` / `MULTIMETER_S3_SECRET_ACCESS_KEY` | Optional dedicated read credentials for executable downloads. If empty, the `S3_*` application user receives the read-only Multimeter policy. |
 | `S3_REGION` | Bucket/S3 region, default `us-east-1`. |
 | `S3_ENDPOINT` | Browser-facing endpoint used to sign upload/download URLs. Set this to the endpoint browsers will actually use, or leave the local development value if browser uploads are not exposed yet. |
 | `S3_INTERNAL_ENDPOINT` | Optional backend-only endpoint. Empty uses `S3_ENDPOINT`; Compose sets `http://rustfs:9000`, and a host-run backend can use `http://127.0.0.1:9000`. |
@@ -392,6 +403,7 @@ outside the server, and test a restore periodically.
 | --- | --- |
 | `permission denied` writing `/data` | Use the named `rustfsdata` volume. For a bind mount, `chown -R 10001:10001` the host directory. |
 | `403 SignatureDoesNotMatch` | The endpoint used to sign must match the URL being requested, including scheme, host, port, and query string. Check server clock skew. |
+| Download returns `AccessDenied` | Re-run `rustfs-init` and confirm `clinic-multimeter-reader` is attached to the configured Multimeter or photo application user. |
 | No CORS headers | The origin must exactly match `S3_CORS_ALLOWED_ORIGINS`; restart `rustfs` after changing `.env`; wildcards do not work with credentialed requests. |
 | Console not reachable | It is bound to `127.0.0.1`; use the SSH tunnel. |
 | `rustfs-init` failed | `docker compose ... logs rustfs-init`; verify root credentials and rerun the service. |

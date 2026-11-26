@@ -365,7 +365,7 @@ requests.
 | `S3_PUT_URL_TTL` | Presigned upload lifetime. Defaults to `5m`; must be positive. |
 | `S3_GET_URL_TTL` | Presigned download lifetime. Defaults to `10m`; must be positive. |
 | `MULTIMETER_S3_BUCKET` | Bucket containing multimeter executables. Defaults to `clinic-executable`; objects are read from `multimeter/latest/`. |
-| `MULTIMETER_S3_ACCESS_KEY_ID` / `MULTIMETER_S3_SECRET_ACCESS_KEY` | Optional read credentials for the executable bucket. When empty, `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` are used. |
+| `MULTIMETER_S3_ACCESS_KEY_ID` / `MULTIMETER_S3_SECRET_ACCESS_KEY` | Optional dedicated read credentials for the executable bucket. When empty, `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` are used and `rustfs-init` grants them read-only access to the executable prefix. |
 
 Local development:
 
@@ -402,12 +402,14 @@ always use `S3_ENDPOINT`; `S3_INTERNAL_ENDPOINT` only affects backend
 operations.
 
 The public `GET /api/downloads/stress-test-helper/download` endpoint signs
-`GetObject` URLs for `s3://clinic-executable/multimeter/latest/`. The configured
-executable credentials must allow `s3:GetObject` for that prefix. Dedicated
-`MULTIMETER_S3_*` credentials can be used when the photo application user is
-scoped only to `clinic-photos`; otherwise the normal `S3_*` credentials are
-reused. The executable bucket remains private, and returned URLs expire using
-`S3_GET_URL_TTL`.
+`GetObject` URLs for `s3://clinic-executable/multimeter/latest/`. Before
+signing, the backend performs `HeadObject` through `S3_INTERNAL_ENDPOINT` so a
+missing object or an IAM denial returns `503` instead of a broken download link.
+The configured executable credentials must allow `s3:GetObject` for that prefix.
+Dedicated `MULTIMETER_S3_*` credentials can be used when the photo application
+user is scoped only to `clinic-photos`; otherwise the normal `S3_*` credentials
+are reused. The executable bucket remains private, and returned URLs expire
+using `S3_GET_URL_TTL`.
 
 Configuration is validated at startup. The backend then calls `HeadBucket`
 through the backend operations endpoint with a 10-second deadline. Startup
@@ -427,8 +429,11 @@ bucket policy, and application credentials first.
 RustFS stores clinic photos in a private bucket (`clinic-photos` in production,
 `clinic-photos-dev` locally). The one-shot `rustfs-init` service creates the
 bucket, the `temporary/` and `photos/` prefixes, a bucket-scoped application
-policy, and a dedicated application user. The backend never uses the RustFS
-root account.
+policy, and a dedicated application user. It also creates the private
+`clinic-executable` bucket and a read-only `clinic-multimeter-reader` policy for
+the dedicated Multimeter credentials, or for the photo application user when
+dedicated credentials are not configured. The backend never uses the RustFS root
+account.
 
 | Variable | Default | Description |
 | --- | --- | --- |
