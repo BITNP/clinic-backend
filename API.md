@@ -24,7 +24,8 @@ KEY=$(printf '%s' "${CLINIC_API_KEY}${USERNAME}${DATE}" | md5sum | cut -d' ' -f1
 
 There are two independent authentication schemes. Every endpoint below states
 which one it uses; `/healthz`, `/login`, `/logout`,
-`GET /api/announcement/toc`, and the sync endpoints described below are public.
+`GET /api/multimeter/download`, `GET /api/announcement/toc`, and the sync
+endpoints described below are public.
 
 ### Staff, admin, and superadmin (session or Keycloak)
 
@@ -68,8 +69,8 @@ logout.
 ### API-key clients
 
 Customer-facing endpoints under `/api/` and `/api/wechat/` (except the public
-`/api/announcement/toc` and sync endpoints) use a signature shared with the
-DingTalk proxy:
+`/api/multimeter/download`, `/api/announcement/toc`, and sync endpoints) use a
+signature shared with the DingTalk proxy:
 
 ```http
 Date:      <RFC1123 timestamp, e.g. Mon, 02 Nov 2026 10:00:00 GMT>
@@ -3031,6 +3032,59 @@ expired, plus TOS).
 ```bash
 curl "$BASE/api/announcement/?username=$USERNAME" \
   -H "Date: $DATE" -H "X-API-KEY: $KEY"
+```
+
+### `GET /api/multimeter/download`
+
+**Description:** Selects the latest multimeter executable for the requester's
+platform and returns a short-lived S3 download URL. Public (no authentication).
+
+The backend prefers the `Sec-CH-UA-Platform` and `Sec-CH-UA-Arch` Client Hints
+and falls back to the `User-Agent` header. It responds with `Accept-CH` and
+`Critical-CH`; supporting Chromium browsers may repeat the request
+automatically with the architecture hint.
+
+| Classification | Returned `platform` | Selected object |
+| --- | --- | --- |
+| Linux x86/x64 | `linux-gnu` | `multimeter-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux x86/x64 with `musl` or `alpine` UA marker | `linux-musl` | `multimeter-x86_64-unknown-linux-musl.tar.gz` |
+| Windows x86/x64 | `windows-x86` | `multimeter-x86_64-pc-windows-msvc.exe` |
+| Windows ARM64 | `windows-arm` | `multimeter-aarch64-pc-windows-msvc.exe` |
+| Missing or unsupported platform | `mismatch` | None |
+
+Linux libc is not exposed by standard browser UA or Client Hints, so ordinary
+Linux requests default to GNU. A Windows architecture hint is authoritative;
+without one, the legacy UA is used and ordinary Windows requests default to
+x86.
+
+**Response `200 OK`**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `platform` | string | `linux-gnu`, `linux-musl`, `windows-x86`, `windows-arm`, or `mismatch`. |
+| `downloadUrl` | string \| null | Signed URL for the selected executable; `null` when `platform` is `mismatch`. The URL expires according to `S3_GET_URL_TTL` (default `10m`). |
+
+```json
+{
+  "platform": "linux-gnu",
+  "downloadUrl": "https://s3.bitnp.net/clinic-executable/multimeter/latest/multimeter-x86_64-unknown-linux-gnu.tar.gz?X-Amz-Algorithm=..."
+}
+```
+
+```json
+{
+  "platform": "mismatch",
+  "downloadUrl": null
+}
+```
+
+**Error responses:** `500` (download URL signing failed).
+
+**curl**
+
+```bash
+curl "$BASE/api/multimeter/download" \
+  -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
 ```
 
 ### `GET /api/announcement/toc` and `GET /api/announcement/toc/`

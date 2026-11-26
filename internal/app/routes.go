@@ -7,6 +7,7 @@ import (
 	confighandler "clinic-backend/internal/config/handler"
 	journalhandler "clinic-backend/internal/journal/handler"
 	"clinic-backend/internal/legacy"
+	"clinic-backend/internal/multimeter"
 	recordhandler "clinic-backend/internal/record/handler"
 	roomhandler "clinic-backend/internal/room/handler"
 	schedulinghandler "clinic-backend/internal/scheduling/handler"
@@ -30,6 +31,7 @@ type RouterConfig struct {
 	AdminRecordH  *recordhandler.AdminRecordHandler
 	TicketH       *recordhandler.TicketHandler
 	PhotoH        *recordhandler.PhotoHandler
+	MultimeterH   *multimeter.Handler
 	LegacyH       *legacy.LegacyHandler
 	CASHandler    *authhandler.CASAuthHandler
 	UserH         *authhandler.UserHandler
@@ -55,6 +57,7 @@ func NewRouter(cfg RouterConfig) *gin.Engine {
 		adminRecordH:  cfg.AdminRecordH,
 		ticketH:       cfg.TicketH,
 		photoH:        cfg.PhotoH,
+		multimeterH:   cfg.MultimeterH,
 		legacyH:       cfg.LegacyH,
 		casHandler:    cfg.CASHandler,
 		userH:         cfg.UserH,
@@ -79,6 +82,7 @@ type routeHandlers struct {
 	adminRecordH  *recordhandler.AdminRecordHandler
 	ticketH       *recordhandler.TicketHandler
 	photoH        *recordhandler.PhotoHandler
+	multimeterH   *multimeter.Handler
 	legacyH       *legacy.LegacyHandler
 	casHandler    *authhandler.CASAuthHandler
 	userH         *authhandler.UserHandler
@@ -96,6 +100,9 @@ func (h routeHandlers) router() *gin.Engine {
 
 	// ── Health ────────────────────────────────────────────────────────────
 	r.GET("/healthz", redisHealthHandler(h.redisClient))
+
+	// ── Multimeter downloads ──────────────────────────────────────────────
+	r.GET("/api/multimeter/download", h.multimeterH.Download)
 
 	// ── CAS login/logout ─────────────────────────────────────────────────
 	r.GET("/login", h.casHandler.Login)

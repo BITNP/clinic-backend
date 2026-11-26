@@ -24,6 +24,7 @@ import (
 	"clinic-backend/internal/legacy"
 	"clinic-backend/internal/message"
 	"clinic-backend/internal/message/napcat"
+	"clinic-backend/internal/multimeter"
 	recordhandler "clinic-backend/internal/record/handler"
 	recordservice "clinic-backend/internal/record/service"
 	roomhandler "clinic-backend/internal/room/handler"
@@ -46,6 +47,10 @@ func Run() {
 	storageSvc, err := LoadStorageService(os.Getenv)
 	if err != nil {
 		log.Fatalf("storage configuration: %v", err)
+	}
+	multimeterStorageSvc, err := LoadMultimeterStorageService(os.Getenv)
+	if err != nil {
+		log.Fatalf("multimeter storage configuration: %v", err)
 	}
 
 	serviceDateLoc := envLocation("CLINIC_TIMEZONE", time.FixedZone("UTC+8", 8*60*60))
@@ -188,6 +193,7 @@ func Run() {
 	}
 	announcementSvc := announcement.NewAnnouncementService(sqlDB)
 	announcementH := announcement.NewAnnouncementHandler(announcementSvc)
+	multimeterH := multimeter.NewHandler(multimeterStorageSvc)
 
 	serviceDateSvc := schedulingservice.NewServiceDateService(rawDB, serviceDateLoc)
 	serviceDateH := schedulinghandler.NewServiceDateHandler(serviceDateSvc)
@@ -302,6 +308,7 @@ func Run() {
 		SyncSvc:       syncSvc,
 		RedisClient:   redisClient,
 		PhotoH:        photoH,
+		MultimeterH:   multimeterH,
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
