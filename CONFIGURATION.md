@@ -364,6 +364,8 @@ requests.
 | `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | Dedicated application credentials. Never use root credentials. Required. |
 | `S3_PUT_URL_TTL` | Presigned upload lifetime. Defaults to `5m`; must be positive. |
 | `S3_GET_URL_TTL` | Presigned download lifetime. Defaults to `10m`; must be positive. |
+| `MULTIMETER_S3_BUCKET` | Bucket containing multimeter executables. Defaults to `clinic-executable`; objects are read from `multimeter/latest/`. |
+| `MULTIMETER_S3_ACCESS_KEY_ID` / `MULTIMETER_S3_SECRET_ACCESS_KEY` | Optional read credentials for the executable bucket. When empty, `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` are used. |
 
 Local development:
 
@@ -374,6 +376,9 @@ S3_BUCKET=clinic-photos-dev
 S3_REGION=us-east-1
 S3_ACCESS_KEY_ID=...
 S3_SECRET_ACCESS_KEY=...
+MULTIMETER_S3_BUCKET=clinic-executable
+MULTIMETER_S3_ACCESS_KEY_ID=...
+MULTIMETER_S3_SECRET_ACCESS_KEY=...
 ```
 
 Production:
@@ -395,6 +400,14 @@ backend can use `http://127.0.0.1:9000` explicitly if needed, but the default
 `http://localhost:9000` endpoint already works for local RustFS. Presigned URLs
 always use `S3_ENDPOINT`; `S3_INTERNAL_ENDPOINT` only affects backend
 operations.
+
+The public `GET /api/multimeter/download` endpoint signs `GetObject` URLs for
+`s3://clinic-executable/multimeter/latest/`. The configured executable
+credentials must allow `s3:GetObject` for that prefix. Dedicated
+`MULTIMETER_S3_*` credentials can be used when the photo application user is
+scoped only to `clinic-photos`; otherwise the normal `S3_*` credentials are
+reused. The executable bucket remains private, and returned URLs expire using
+`S3_GET_URL_TTL`.
 
 Configuration is validated at startup. The backend then calls `HeadBucket`
 through the backend operations endpoint with a 10-second deadline. Startup
