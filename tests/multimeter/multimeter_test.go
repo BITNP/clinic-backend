@@ -79,6 +79,28 @@ func TestDownloadClassifiesUserAgentAndReturnsLink(t *testing.T) {
 			wantKey:      "multimeter/latest/multimeter-x86_64-unknown-linux-musl.tar.gz",
 		},
 		{
+			name:         "linux i386 has no executable",
+			userAgent:    "Mozilla/5.0 (X11; Linux i386) AppleWebKit/537.36",
+			wantPlatform: multimeter.PlatformMismatch,
+		},
+		{
+			name:         "linux i686 has no executable",
+			userAgent:    "Mozilla/5.0 (X11; Linux i686) AppleWebKit/537.36",
+			wantPlatform: multimeter.PlatformMismatch,
+		},
+		{
+			name:             "linux i386 ignores an ambiguous client hint",
+			userAgent:        "Mozilla/5.0 (X11; Linux i386) AppleWebKit/537.36",
+			platformHint:     `"Linux"`,
+			architectureHint: `"x86"`,
+			wantPlatform:     multimeter.PlatformMismatch,
+		},
+		{
+			name:         "linux without a supported architecture marker",
+			userAgent:    "Mozilla/5.0 (X11; Linux) AppleWebKit/537.36",
+			wantPlatform: multimeter.PlatformMismatch,
+		},
+		{
 			name:         "windows x64",
 			userAgent:    windowsChromeUA,
 			wantPlatform: multimeter.PlatformWindowsX86,
@@ -89,6 +111,23 @@ func TestDownloadClassifiesUserAgentAndReturnsLink(t *testing.T) {
 			userAgent:    "Mozilla/5.0 (Windows NT 10.0; ARM64) AppleWebKit/537.36",
 			wantPlatform: multimeter.PlatformWindowsARM,
 			wantKey:      "multimeter/latest/multimeter-aarch64-pc-windows-msvc.exe",
+		},
+		{
+			name:         "windows 32-bit has no executable",
+			userAgent:    "Mozilla/5.0 (Windows NT 10.0; Win32; x86) AppleWebKit/537.36",
+			wantPlatform: multimeter.PlatformMismatch,
+		},
+		{
+			name:         "windows arm32 has no executable",
+			userAgent:    "Mozilla/5.0 (Windows NT 10.0; ARM) AppleWebKit/537.36",
+			wantPlatform: multimeter.PlatformMismatch,
+		},
+		{
+			name:             "windows arm32 ignores an ambiguous client hint",
+			userAgent:        "Mozilla/5.0 (Windows NT 10.0; ARM) AppleWebKit/537.36",
+			platformHint:     `"Windows"`,
+			architectureHint: `"arm"`,
+			wantPlatform:     multimeter.PlatformMismatch,
 		},
 		{
 			name:             "client hint overrides windows user agent architecture",
@@ -113,13 +152,47 @@ func TestDownloadClassifiesUserAgentAndReturnsLink(t *testing.T) {
 			wantPlatform:     multimeter.PlatformMismatch,
 		},
 		{
+			name:         "chromeos has no executable",
+			userAgent:    "Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36",
+			wantPlatform: multimeter.PlatformMismatch,
+		},
+		{
+			name:         "chromeos cannot override the platform with a hint",
+			userAgent:    "Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36",
+			platformHint: `"Linux"`,
+			wantPlatform: multimeter.PlatformMismatch,
+		},
+		{
 			name:         "android has no executable",
 			userAgent:    "Mozilla/5.0 (Linux; Android 14; Pixel 9) AppleWebKit/537.36",
 			wantPlatform: multimeter.PlatformMismatch,
 		},
 		{
+			name:         "android cannot override the platform with a hint",
+			userAgent:    "Mozilla/5.0 (Linux; Android 14; Pixel 9) AppleWebKit/537.36",
+			platformHint: `"Linux"`,
+			wantPlatform: multimeter.PlatformMismatch,
+		},
+		{
 			name:         "macos has no executable",
 			userAgent:    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+			wantPlatform: multimeter.PlatformMismatch,
+		},
+		{
+			name:         "x11 on freebsd is not linux",
+			userAgent:    "Mozilla/5.0 (X11; FreeBSD amd64) AppleWebKit/537.36",
+			wantPlatform: multimeter.PlatformMismatch,
+		},
+		{
+			name:         "linux hint cannot override windows user agent",
+			userAgent:    windowsChromeUA,
+			platformHint: `"Linux"`,
+			wantPlatform: multimeter.PlatformMismatch,
+		},
+		{
+			name:         "windows hint cannot override linux user agent",
+			userAgent:    linuxChromeUA,
+			platformHint: `"Windows"`,
 			wantPlatform: multimeter.PlatformMismatch,
 		},
 		{

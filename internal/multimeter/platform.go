@@ -32,9 +32,10 @@ func executableKey(platform Platform) (string, bool) {
 type architecture string
 
 const (
-	architectureUnknown architecture = ""
-	architectureX86     architecture = "x86"
-	architectureARM     architecture = "arm"
+	architectureUnknown     architecture = ""
+	architectureX86         architecture = "x86"
+	architectureARM         architecture = "arm"
+	architectureUnsupported architecture = "unsupported"
 )
 
 func classifyPlatform(userAgent, platformHint, architectureHint string) Platform {
@@ -42,10 +43,20 @@ func classifyPlatform(userAgent, platformHint, architectureHint string) Platform
 	platform := normalizedHint(platformHint)
 	archHint := normalizedHint(architectureHint)
 
+	if hasUnsupportedUserAgentMarker(ua) {
+		return PlatformMismatch
+	}
+
 	switch platform {
 	case "windows":
+		if hasLinuxMarker(ua) {
+			return PlatformMismatch
+		}
 		return classifyWindows(ua, archHint)
 	case "linux":
+		if hasWindowsMarker(ua) {
+			return PlatformMismatch
+		}
 		return classifyLinux(ua, archHint)
 	case "":
 		return classifyFromUserAgent(ua, archHint)
@@ -56,11 +67,11 @@ func classifyPlatform(userAgent, platformHint, architectureHint string) Platform
 
 func classifyFromUserAgent(userAgent, architectureHint string) Platform {
 	switch {
-	case containsAny(userAgent, "android", "chrome os", "cros", "iphone", "ipad", "macintosh", "mac os x"):
+	case hasWindowsMarker(userAgent) && hasLinuxMarker(userAgent):
 		return PlatformMismatch
 	case hasWindowsMarker(userAgent):
 		return classifyWindows(userAgent, architectureHint)
-	case strings.Contains(userAgent, "linux") || strings.Contains(userAgent, "x11"):
+	case hasLinuxMarker(userAgent):
 		return classifyLinux(userAgent, architectureHint)
 	default:
 		return PlatformMismatch
@@ -68,22 +79,18 @@ func classifyFromUserAgent(userAgent, architectureHint string) Platform {
 }
 
 func classifyWindows(userAgent, architectureHint string) Platform {
-	arch, recognized := detectArchitecture(architectureHint, userAgent)
-	if architectureHint != "" && !recognized {
+	switch detectArchitecture(architectureHint, userAgent) {
+	case architectureARM:
+		return PlatformWindowsARM
+	case architectureX86:
+		return PlatformWindowsX86
+	default:
 		return PlatformMismatch
 	}
-	if arch == architectureARM {
-		return PlatformWindowsARM
-	}
-	return PlatformWindowsX86
 }
 
 func classifyLinux(userAgent, architectureHint string) Platform {
-	arch, recognized := detectArchitecture(architectureHint, userAgent)
-	if architectureHint != "" && !recognized {
-		return PlatformMismatch
-	}
-	if arch == architectureARM {
+	if detectArchitecture(architectureHint, userAgent) != architectureX86 {
 		return PlatformMismatch
 	}
 	if containsAny(userAgent, "musl", "alpine") {
@@ -92,24 +99,96 @@ func classifyLinux(userAgent, architectureHint string) Platform {
 	return PlatformLinuxGNU
 }
 
-func detectArchitecture(architectureHint, userAgent string) (architecture, bool) {
-	value := architectureHint
-	if value == "" {
-		value = userAgent
+func detectArchitecture(architectureHint, userAgent string) architecture {
+	userAgentArchitecture := detectUserAgentArchitecture(userAgent)
+	// Architecture hints describe families such as x86 or arm, not bitness.
+	// An explicit 32-bit UA marker must still reject the request.
+	if userAgentArchitecture == architectureUnsupported {
+		return architectureUnsupported
 	}
+	if architectureHint != "" {
+		return detectArchitectureHint(architectureHint)
+	}
+	return userAgentArchitecture
+}
 
+func detectArchitectureHint(value string) architecture {
 	switch {
-	case containsAny(value, "aarch64", "arm64", "armv8", "armhf", "armeabi", "arm"):
-		return architectureARM, true
-	case containsAny(value, "x86", "amd64", "x64", "i686", "i386", "win32", "win64"):
-		return architectureX86, true
+	case containsAny(value, "arm64", "aarch64", "armv8"):
+		return architectureARM
+	case containsAny(value, "arm32", "armhf", "armv7", "armv6", "armeabi"):
+		return architectureUnsupported
+	case value == "arm":
+		return architectureARM
+	case containsAny(value, "x86_64", "x86-64", "amd64", "x64", "win64"):
+		return architectureX86
+	case value == "x86":
+		return architectureX86
+	case containsAny(value, "i386", "i486", "i586", "i686", "win32", "x86_32", "x86-32"):
+		return architectureUnsupported
 	default:
-		return architectureUnknown, false
+		return architectureUnknown
+	}
+}
+
+func detectUserAgentArchitecture(value string) architecture {
+	switch {
+	case containsAny(value, "i386", "i486", "i586", "i686", "win32", "x86_32", "x86-32"):
+		return architectureUnsupported
+	case containsAny(value, "x86_64", "x86-64", "amd64", "x64", "win64"):
+		return architectureX86
+	case containsAny(value, "aarch64", "arm64"):
+		return architectureARM
+	case containsAny(value, "arm32", "armhf", "armv7", "armv6", "armeabi"):
+		return architectureUnsupported
+	case containsUserAgentToken(value, "x86") || containsUserAgentToken(value, "arm"):
+		return architectureUnsupported
+	default:
+		return architectureUnknown
 	}
 }
 
 func hasWindowsMarker(userAgent string) bool {
 	return containsAny(userAgent, "windows", "win32", "win64", "winnt")
+}
+
+func hasLinuxMarker(userAgent string) bool {
+	return strings.Contains(userAgent, "linux")
+}
+
+func containsUserAgentToken(userAgent, token string) bool {
+	fields := strings.FieldsFunc(userAgent, func(r rune) bool {
+		return r == ' ' || r == '(' || r == ')' || r == ',' || r == '/' || r == ';'
+	})
+	for _, field := range fields {
+		if field == token {
+			return true
+		}
+	}
+	return false
+}
+
+func hasUnsupportedUserAgentMarker(userAgent string) bool {
+	return containsAny(
+		userAgent,
+		"android",
+		"chrome os",
+		"chromeos",
+		"cros",
+		"freebsd",
+		"iphone",
+		"ipad",
+		"ipod",
+		"macintosh",
+		"mac os x",
+		"netbsd",
+		"nintendo",
+		"openbsd",
+		"playstation",
+		"solaris",
+		"sunos",
+		"windows phone",
+	)
 }
 
 func normalizedHint(value string) string {

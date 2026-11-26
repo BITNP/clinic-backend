@@ -3048,16 +3048,18 @@ automatically with the architecture hint.
 
 | Classification | Returned `platform` | Selected object |
 | --- | --- | --- |
-| Linux x86/x64 | `linux-gnu` | `multimeter-x86_64-unknown-linux-gnu.tar.gz` |
-| Linux x86/x64 with `musl` or `alpine` UA marker | `linux-musl` | `multimeter-x86_64-unknown-linux-musl.tar.gz` |
-| Windows x86/x64 | `windows-x86` | `multimeter-x86_64-pc-windows-msvc.exe` |
+| Linux x86_64 | `linux-gnu` | `multimeter-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux x86_64 with `musl` or `alpine` UA marker | `linux-musl` | `multimeter-x86_64-unknown-linux-musl.tar.gz` |
+| Windows x86_64 | `windows-x86` | `multimeter-x86_64-pc-windows-msvc.exe` |
 | Windows ARM64 | `windows-arm` | `multimeter-aarch64-pc-windows-msvc.exe` |
-| Missing or unsupported platform | `mismatch` | None |
+| Other platforms or architectures | `mismatch` | None |
 
 Linux libc is not exposed by standard browser UA or Client Hints, so ordinary
-Linux requests default to GNU. A Windows architecture hint is authoritative;
-without one, the legacy UA is used and ordinary Windows requests default to
-x86.
+Linux x86_64 requests default to GNU. A recognized architecture hint is used
+when present, except that an explicit 32-bit UA marker always forces
+`mismatch`. Without a hint, the legacy UA must contain a supported 64-bit
+architecture marker. ARM Linux, ChromeOS, Android, macOS, and other unsupported
+platforms are also classified as `mismatch`.
 
 **Response `200 OK`**
 
