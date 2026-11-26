@@ -401,9 +401,9 @@ backend can use `http://127.0.0.1:9000` explicitly if needed, but the default
 always use `S3_ENDPOINT`; `S3_INTERNAL_ENDPOINT` only affects backend
 operations.
 
-The public `GET /api/multimeter/download` endpoint signs `GetObject` URLs for
-`s3://clinic-executable/multimeter/latest/`. The configured executable
-credentials must allow `s3:GetObject` for that prefix. Dedicated
+The public `GET /api/downloads/stress-test-helper/download` endpoint signs
+`GetObject` URLs for `s3://clinic-executable/multimeter/latest/`. The configured
+executable credentials must allow `s3:GetObject` for that prefix. Dedicated
 `MULTIMETER_S3_*` credentials can be used when the photo application user is
 scoped only to `clinic-photos`; otherwise the normal `S3_*` credentials are
 reused. The executable bucket remains private, and returned URLs expire using

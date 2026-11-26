@@ -24,8 +24,8 @@ KEY=$(printf '%s' "${CLINIC_API_KEY}${USERNAME}${DATE}" | md5sum | cut -d' ' -f1
 
 There are two independent authentication schemes. Every endpoint below states
 which one it uses; `/healthz`, `/login`, `/logout`,
-`GET /api/multimeter/download`, `GET /api/announcement/toc`, and the sync
-endpoints described below are public.
+`GET /api/downloads/stress-test-helper/download`,
+`GET /api/announcement/toc`, and the sync endpoints described below are public.
 
 ### Staff, admin, and superadmin (session or Keycloak)
 
@@ -69,8 +69,8 @@ logout.
 ### API-key clients
 
 Customer-facing endpoints under `/api/` and `/api/wechat/` (except the public
-`/api/multimeter/download`, `/api/announcement/toc`, and sync endpoints) use a
-signature shared with the DingTalk proxy:
+`/api/downloads/stress-test-helper/download`, `/api/announcement/toc`, and sync
+endpoints) use a signature shared with the DingTalk proxy:
 
 ```http
 Date:      <RFC1123 timestamp, e.g. Mon, 02 Nov 2026 10:00:00 GMT>
@@ -3034,7 +3034,7 @@ curl "$BASE/api/announcement/?username=$USERNAME" \
   -H "Date: $DATE" -H "X-API-KEY: $KEY"
 ```
 
-### `GET /api/multimeter/download`
+### `GET /api/downloads/stress-test-helper/download`
 
 **Description:** Selects the latest multimeter executable for the requester's
 platform and returns a short-lived S3 download URL. Public (no authentication).
@@ -3083,7 +3083,7 @@ x86.
 **curl**
 
 ```bash
-curl "$BASE/api/multimeter/download" \
+curl "$BASE/api/downloads/stress-test-helper/download" \
   -H 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
 ```
 

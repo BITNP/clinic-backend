@@ -102,7 +102,7 @@ func (h routeHandlers) router() *gin.Engine {
 	r.GET("/healthz", redisHealthHandler(h.redisClient))
 
 	// ── Multimeter downloads ──────────────────────────────────────────────
-	r.GET("/api/multimeter/download", h.multimeterH.Download)
+	r.GET("/api/downloads/stress-test-helper/download", h.multimeterH.Download)
 
 	// ── CAS login/logout ─────────────────────────────────────────────────
 	r.GET("/login", h.casHandler.Login)

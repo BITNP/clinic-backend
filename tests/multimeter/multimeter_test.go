@@ -197,7 +197,7 @@ func TestDownloadRouteIsPublic(t *testing.T) {
 		ClientAuth:  deny,
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/multimeter/download", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/downloads/stress-test-helper/download", nil)
 	req.Header.Set("User-Agent", linuxChromeUA)
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)
@@ -266,9 +266,9 @@ func doDownloadRequest(t *testing.T, handler *multimeter.Handler, userAgent, pla
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.GET("/api/multimeter/download", handler.Download)
+	router.GET("/api/downloads/stress-test-helper/download", handler.Download)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/multimeter/download", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/downloads/stress-test-helper/download", nil)
 	if userAgent != "" {
 		req.Header.Set("User-Agent", userAgent)
 	}
