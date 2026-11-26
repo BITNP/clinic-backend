@@ -3037,7 +3037,9 @@ curl "$BASE/api/announcement/?username=$USERNAME" \
 ### `GET /api/downloads/stress-test-helper/download`
 
 **Description:** Selects the latest multimeter executable for the requester's
-platform and returns a short-lived S3 download URL. Public (no authentication).
+platform, verifies that the object is readable with the configured storage
+credentials, and returns a short-lived S3 download URL. Public (no
+authentication).
 
 The backend prefers the `Sec-CH-UA-Platform` and `Sec-CH-UA-Arch` Client Hints
 and falls back to the `User-Agent` header. It responds with `Accept-CH` and
@@ -3078,7 +3080,9 @@ x86.
 }
 ```
 
-**Error responses:** `500` (download URL signing failed).
+**Error responses:** `500` (download URL signing failed); `503` (the selected
+executable is missing or cannot be read with the configured storage
+credentials).
 
 **curl**
 

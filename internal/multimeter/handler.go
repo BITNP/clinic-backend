@@ -9,19 +9,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// DownloadURLSigner creates a signed, short-lived object URL.
-type DownloadURLSigner interface {
+// DownloadStorage verifies executable objects and creates signed download URLs.
+type DownloadStorage interface {
+	Head(ctx context.Context, key string) (storage.ObjectMetadata, error)
 	PresignGet(ctx context.Context, key string) (storage.SignedRequest, error)
 }
 
 // Handler serves public multimeter download links.
 type Handler struct {
-	signer DownloadURLSigner
+	storage DownloadStorage
 }
 
 // NewHandler creates a multimeter download handler.
-func NewHandler(signer DownloadURLSigner) *Handler {
-	return &Handler{signer: signer}
+func NewHandler(storage DownloadStorage) *Handler {
+	return &Handler{storage: storage}
 }
 
 type downloadResponse struct {
@@ -47,7 +48,12 @@ func (h *Handler) Download(c *gin.Context) {
 		return
 	}
 
-	signed, err := h.signer.PresignGet(c.Request.Context(), key)
+	if _, err := h.storage.Head(c.Request.Context(), key); err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "multimeter download is unavailable"})
+		return
+	}
+
+	signed, err := h.storage.PresignGet(c.Request.Context(), key)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create multimeter download URL"})
 		return

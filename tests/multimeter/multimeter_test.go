@@ -21,13 +21,25 @@ const (
 	windowsChromeUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
 )
 
-type fakeDownloadSigner struct {
-	calls int
-	key   string
-	err   error
+type fakeDownloadStorage struct {
+	headCalls int
+	headKey   string
+	headErr   error
+	calls     int
+	key       string
+	err       error
 }
 
-func (f *fakeDownloadSigner) PresignGet(_ context.Context, key string) (storage.SignedRequest, error) {
+func (f *fakeDownloadStorage) Head(_ context.Context, key string) (storage.ObjectMetadata, error) {
+	f.headCalls++
+	f.headKey = key
+	if f.headErr != nil {
+		return storage.ObjectMetadata{}, f.headErr
+	}
+	return storage.ObjectMetadata{Size: 1}, nil
+}
+
+func (f *fakeDownloadStorage) PresignGet(_ context.Context, key string) (storage.SignedRequest, error) {
 	f.calls++
 	f.key = key
 	if f.err != nil {
@@ -125,8 +137,8 @@ func TestDownloadClassifiesUserAgentAndReturnsLink(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			signer := &fakeDownloadSigner{}
-			recorder := doDownloadRequest(t, multimeter.NewHandler(signer), tt.userAgent, tt.platformHint, tt.architectureHint)
+			downloadStorage := &fakeDownloadStorage{}
+			recorder := doDownloadRequest(t, multimeter.NewHandler(downloadStorage), tt.userAgent, tt.platformHint, tt.architectureHint)
 			if recorder.Code != http.StatusOK {
 				t.Fatalf("expected 200, got %d: %s", recorder.Code, recorder.Body.String())
 			}
@@ -145,8 +157,11 @@ func TestDownloadClassifiesUserAgentAndReturnsLink(t *testing.T) {
 				if response.DownloadURL != nil {
 					t.Fatalf("downloadUrl = %q, want null", *response.DownloadURL)
 				}
-				if signer.calls != 0 {
-					t.Fatalf("signer calls = %d, want 0", signer.calls)
+				if downloadStorage.headCalls != 0 {
+					t.Fatalf("head calls = %d, want 0", downloadStorage.headCalls)
+				}
+				if downloadStorage.calls != 0 {
+					t.Fatalf("signer calls = %d, want 0", downloadStorage.calls)
 				}
 				return
 			}
@@ -154,8 +169,14 @@ func TestDownloadClassifiesUserAgentAndReturnsLink(t *testing.T) {
 			if response.DownloadURL == nil {
 				t.Fatal("downloadUrl is null")
 			}
-			if signer.calls != 1 || signer.key != tt.wantKey {
-				t.Fatalf("signer = (%d, %q), want (1, %q)", signer.calls, signer.key, tt.wantKey)
+			if downloadStorage.headCalls != 1 {
+				t.Fatalf("head calls = %d, want 1", downloadStorage.headCalls)
+			}
+			if downloadStorage.headKey != tt.wantKey {
+				t.Fatalf("head key = %q, want %q", downloadStorage.headKey, tt.wantKey)
+			}
+			if downloadStorage.calls != 1 || downloadStorage.key != tt.wantKey {
+				t.Fatalf("signer = (%d, %q), want (1, %q)", downloadStorage.calls, downloadStorage.key, tt.wantKey)
 			}
 			if want := "https://s3.example.com/" + tt.wantKey + "?X-Amz-Signature=test"; *response.DownloadURL != want {
 				t.Fatalf("downloadUrl = %q, want %q", *response.DownloadURL, want)
@@ -165,7 +186,7 @@ func TestDownloadClassifiesUserAgentAndReturnsLink(t *testing.T) {
 }
 
 func TestDownloadSetsClientHintAndCacheHeaders(t *testing.T) {
-	recorder := doDownloadRequest(t, multimeter.NewHandler(&fakeDownloadSigner{}), linuxChromeUA, "", "")
+	recorder := doDownloadRequest(t, multimeter.NewHandler(&fakeDownloadStorage{}), linuxChromeUA, "", "")
 	if got := recorder.Header().Get("Accept-CH"); got != "Sec-CH-UA-Platform, Sec-CH-UA-Arch" {
 		t.Fatalf("Accept-CH = %q", got)
 	}
@@ -181,10 +202,25 @@ func TestDownloadSetsClientHintAndCacheHeaders(t *testing.T) {
 }
 
 func TestDownloadSigningFailure(t *testing.T) {
-	handler := multimeter.NewHandler(&fakeDownloadSigner{err: errors.New("signing unavailable")})
+	handler := multimeter.NewHandler(&fakeDownloadStorage{err: errors.New("signing unavailable")})
 	recorder := doDownloadRequest(t, handler, linuxChromeUA, "", "")
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestDownloadUnavailableWhenObjectCannotBeRead(t *testing.T) {
+	downloadStorage := &fakeDownloadStorage{headErr: errors.New("access denied")}
+	handler := multimeter.NewHandler(downloadStorage)
+	recorder := doDownloadRequest(t, handler, linuxChromeUA, "", "")
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if downloadStorage.headCalls != 1 {
+		t.Fatalf("head calls = %d, want 1", downloadStorage.headCalls)
+	}
+	if downloadStorage.calls != 0 {
+		t.Fatalf("signer calls = %d, want 0", downloadStorage.calls)
 	}
 }
 
@@ -192,7 +228,7 @@ func TestDownloadRouteIsPublic(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	deny := func(c *gin.Context) { c.AbortWithStatus(http.StatusUnauthorized) }
 	router := app.NewRouter(app.RouterConfig{
-		MultimeterH: multimeter.NewHandler(&fakeDownloadSigner{}),
+		MultimeterH: multimeter.NewHandler(&fakeDownloadStorage{}),
 		AdminAuth:   deny,
 		ClientAuth:  deny,
 	})
