@@ -154,7 +154,7 @@
     },
     {
       "name": "SERVICE_DATE_REMINDER_TEMPLATE",
-      "display_name": "提醒消息模板",
+      "display_name": "提醒审批工单消息模板",
       "hint": "支持 {{.Date}}、{{.StartTime}}、{{.Room}}、{{.PendingCount}} 和 {{.LeadTime}}；保存后下一条提醒生效。",
       "value_type": "string",
       "group": "reminder",
@@ -164,12 +164,34 @@
       "default": "[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待审核工单，请及时处理。"
     },
     {
+      "name": "SERVICE_DATE_COMPLETION_REMINDER_DELAY",
+      "display_name": "服务结束后提醒时间",
+      "hint": "服务结束后等待多久检查未完成工单；使用 Go 时长，必须为正且至少精确到秒。",
+      "value_type": "string",
+      "group": "reminder",
+      "sort_order": 3,
+      "is_required": true,
+      "role_level": "admin",
+      "default": "30m"
+    },
+    {
+      "name": "SERVICE_DATE_COMPLETION_REMINDER_TEMPLATE",
+      "display_name": "提醒完成工单消息模板",
+      "hint": "支持 {{.Date}}、{{.StartTime}}、{{.Room}}、{{.PendingCount}} 和 {{.LeadTime}}；保存后下一条提醒生效。",
+      "value_type": "string",
+      "group": "reminder",
+      "sort_order": 4,
+      "is_required": true,
+      "role_level": "admin",
+      "default": "[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待完成工单，请及时处理。"
+    },
+    {
       "name": "MESSAGE_GATEWAY_URL",
       "display_name": "消息网关地址",
       "hint": "message-gateway 基础地址，必须使用 HTTP(S)，不能包含查询参数或片段。",
       "value_type": "string",
       "group": "reminder",
-      "sort_order": 3,
+      "sort_order": 5,
       "is_required": false,
       "role_level": "superadmin",
       "default": ""
@@ -180,7 +202,7 @@
       "hint": "下一条提醒立即使用该账号；网关账号令牌必须与账号匹配。",
       "value_type": "string",
       "group": "reminder",
-      "sort_order": 4,
+      "sort_order": 6,
       "is_required": true,
       "role_level": "superadmin",
       "default": "qq"
@@ -191,7 +213,7 @@
       "hint": "仅写入；必须是当前消息网关账号的 client_token。",
       "value_type": "string",
       "group": "reminder",
-      "sort_order": 5,
+      "sort_order": 7,
       "is_required": false,
       "role_level": "superadmin",
       "writeonly": true,
@@ -203,7 +225,7 @@
       "hint": "Go 时长格式，必须大于 0；下一条提醒发送时生效。",
       "value_type": "string",
       "group": "reminder",
-      "sort_order": 6,
+      "sort_order": 8,
       "is_required": true,
       "role_level": "superadmin",
       "default": "5s"

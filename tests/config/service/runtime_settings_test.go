@@ -226,6 +226,12 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	if settings.ServiceDateReminderTemplate != configservice.DefaultServiceDateReminderTemplate {
 		t.Errorf("ServiceDateReminderTemplate = %q", settings.ServiceDateReminderTemplate)
 	}
+	if settings.ServiceDateCompletionReminderDelay != configservice.DefaultServiceDateCompletionReminderDelay {
+		t.Errorf("ServiceDateCompletionReminderDelay = %v", settings.ServiceDateCompletionReminderDelay)
+	}
+	if settings.ServiceDateCompletionReminderTemplate != configservice.DefaultServiceDateCompletionReminderTemplate {
+		t.Errorf("ServiceDateCompletionReminderTemplate = %q", settings.ServiceDateCompletionReminderTemplate)
+	}
 	if settings.TaggerLLMAPIKey != "" {
 		t.Errorf("TaggerLLMAPIKey = %q, want empty", settings.TaggerLLMAPIKey)
 	}
@@ -273,12 +279,14 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	if err := db.Model(&configmodel.ClinicConfigItem{}).Count(&itemCount).Error; err != nil {
 		t.Fatalf("count items: %v", err)
 	}
-	if groupCount != 4 || itemCount != 38 {
-		t.Errorf("seeded counts = %d groups, %d items; want 4 and 38", groupCount, itemCount)
+	if groupCount != 4 || itemCount != 40 {
+		t.Errorf("seeded counts = %d groups, %d items; want 4 and 40", groupCount, itemCount)
 	}
 	for name, want := range map[string]string{
-		"DINGTALK_TEMPLATE_NO_SHOW":        "钉钉爽约封禁模式模板",
-		"DINGTALK_TEMPLATE_NO_SHOW_NO_BAN": "钉钉爽约非封禁模式模板",
+		"SERVICE_DATE_REMINDER_TEMPLATE":            "提醒审批工单消息模板",
+		"SERVICE_DATE_COMPLETION_REMINDER_TEMPLATE": "提醒完成工单消息模板",
+		"DINGTALK_TEMPLATE_NO_SHOW":                 "钉钉爽约封禁模式模板",
+		"DINGTALK_TEMPLATE_NO_SHOW_NO_BAN":          "钉钉爽约非封禁模式模板",
 	} {
 		var item configmodel.ClinicConfigItem
 		if err := db.Where("name = ?", name).First(&item).Error; err != nil {
@@ -435,6 +443,8 @@ func TestConfigService_EnsureRuntimeSettingsUsesExternalFileAndIgnoresEnvironmen
 		settings.MessageGatewayAccountToken != "" ||
 		settings.MessageGatewayTimeout != 5*time.Second ||
 		settings.ServiceDateReminderTemplate != configservice.DefaultServiceDateReminderTemplate ||
+		settings.ServiceDateCompletionReminderDelay != configservice.DefaultServiceDateCompletionReminderDelay ||
+		settings.ServiceDateCompletionReminderTemplate != configservice.DefaultServiceDateCompletionReminderTemplate ||
 		settings.TaggerLLMAPIKey != "" ||
 		settings.TaggerAgentPoolSize != 4 ||
 		settings.TaggerContextTokens != 32000 ||
@@ -658,6 +668,22 @@ func TestConfigService_RequiresCompleteExternalRuntimeSettingsFile(t *testing.T)
 			},
 		},
 		{
+			name: "invalid completion reminder delay",
+			path: func(t *testing.T) string {
+				values := testutil.RuntimeSettingsValues()
+				values["SERVICE_DATE_COMPLETION_REMINDER_DELAY"] = "0s"
+				return testutil.WriteRuntimeSettingsFile(t, values)
+			},
+		},
+		{
+			name: "invalid completion reminder template",
+			path: func(t *testing.T) string {
+				values := testutil.RuntimeSettingsValues()
+				values["SERVICE_DATE_COMPLETION_REMINDER_TEMPLATE"] = "{{.Missing}}"
+				return testutil.WriteRuntimeSettingsFile(t, values)
+			},
+		},
+		{
 			name: "invalid DingTalk URL",
 			path: func(t *testing.T) string {
 				values := testutil.RuntimeSettingsValues()
@@ -706,6 +732,8 @@ func TestConfigService_ExternalRuntimeSettingsUseMessageDefaults(t *testing.T) {
 	values := testutil.RuntimeSettingsValues()
 	for _, name := range []string{
 		"SERVICE_DATE_REMINDER_TEMPLATE",
+		"SERVICE_DATE_COMPLETION_REMINDER_DELAY",
+		"SERVICE_DATE_COMPLETION_REMINDER_TEMPLATE",
 		"MESSAGE_GATEWAY_URL",
 		"MESSAGE_GATEWAY_ACCOUNT",
 		"MESSAGE_GATEWAY_ACCOUNT_TOKEN",
@@ -724,6 +752,8 @@ func TestConfigService_ExternalRuntimeSettingsUseMessageDefaults(t *testing.T) {
 		t.Fatalf("load runtime settings: %v", err)
 	}
 	if settings.ServiceDateReminderTemplate != configservice.DefaultServiceDateReminderTemplate ||
+		settings.ServiceDateCompletionReminderDelay != configservice.DefaultServiceDateCompletionReminderDelay ||
+		settings.ServiceDateCompletionReminderTemplate != configservice.DefaultServiceDateCompletionReminderTemplate ||
 		settings.MessageGatewayURL != "" ||
 		settings.MessageGatewayAccount != "qq" ||
 		settings.MessageGatewayAccountToken != "" ||

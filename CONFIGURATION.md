@@ -46,6 +46,8 @@ an error.
   "SERVICE_DATE_REMINDER_ENABLED": "false",
   "SERVICE_DATE_REMINDER_LEAD_TIMES": "5h,3h",
   "SERVICE_DATE_REMINDER_TEMPLATE": "[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待审核工单，请及时处理。",
+  "SERVICE_DATE_COMPLETION_REMINDER_DELAY": "30m",
+  "SERVICE_DATE_COMPLETION_REMINDER_TEMPLATE": "[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待完成工单，请及时处理。",
   "MESSAGE_GATEWAY_URL": "http://127.0.0.1:8081",
   "MESSAGE_GATEWAY_ACCOUNT": "qq",
   "MESSAGE_GATEWAY_ACCOUNT_TOKEN": "",
@@ -69,7 +71,9 @@ tabs refresh their sync interval periodically.
 | `RECORD_PHOTO_MAX_SIZE_BYTES` | `10485760` | Positive maximum size of one uploaded photo in bytes. |
 | `SERVICE_DATE_REMINDER_ENABLED` | `false` | Strict boolean controlling the pending-ticket reminder worker. |
 | `SERVICE_DATE_REMINDER_LEAD_TIMES` | `5h,3h` | Comma-separated unique positive Go durations using whole seconds, relative to service start. |
-| `SERVICE_DATE_REMINDER_TEMPLATE` | built-in Chinese reminder | Non-empty Go text template supporting `Date`, `StartTime`, `Room`, `PendingCount`, and `LeadTime`. |
+| `SERVICE_DATE_REMINDER_TEMPLATE` | built-in Chinese reminder | Approval reminder template supporting `Date`, `StartTime`, `Room`, `PendingCount`, and `LeadTime`. |
+| `SERVICE_DATE_COMPLETION_REMINDER_DELAY` | `30m` | Positive Go duration using whole seconds to wait after service end before checking for unfinished work orders. |
+| `SERVICE_DATE_COMPLETION_REMINDER_TEMPLATE` | built-in Chinese reminder | Completion reminder template supporting `Date`, `StartTime`, `Room`, `PendingCount`, and `LeadTime`. |
 | `MESSAGE_GATEWAY_URL` | empty for legacy files; local example uses `http://127.0.0.1:8081` | HTTP(S) message-gateway base URL without query or fragment. Required while reminders are enabled. |
 | `MESSAGE_GATEWAY_ACCOUNT` | `qq` | Account segment used for pending-ticket reminder delivery. |
 | `MESSAGE_GATEWAY_ACCOUNT_TOKEN` | empty | Optional write-only gateway `client_token`; never returned by the API. Required while reminders are enabled and must match the selected account. |
@@ -188,6 +192,8 @@ row on the first upgraded startup, but later environment changes are ignored.
 | `MESSAGE_GATEWAY_ACCOUNT_TOKEN` | The selected account's gateway `client_token`. |
 | `MESSAGE_GATEWAY_TIMEOUT` | Positive request timeout such as `5s`. |
 | `SERVICE_DATE_REMINDER_TEMPLATE` | Optional initial message template with the supported text-template fields. |
+| `SERVICE_DATE_COMPLETION_REMINDER_DELAY` | Optional initial delay after service end, normally `30m`. |
+| `SERVICE_DATE_COMPLETION_REMINDER_TEMPLATE` | Optional initial completion message template. |
 
 There is no global gateway access key. Each gateway account has its own
 `client_token` in `message-gateway/accounts.json`; that token is used as the
