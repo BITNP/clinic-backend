@@ -19,15 +19,16 @@ const (
 // DingTalkNotificationConfig contains the configurable guest notification
 // templates and their organization-specific values.
 type DingTalkNotificationConfig struct {
-	Title             string
-	Header            string
-	QQAccount         string
-	ConfirmedTemplate string
-	RejectedTemplate  string
-	ReferredTemplate  string
-	TransferTemplate  string
-	NoShowTemplate    string
-	ReminderTemplate  string
+	Title               string
+	Header              string
+	QQAccount           string
+	ConfirmedTemplate   string
+	RejectedTemplate    string
+	ReferredTemplate    string
+	TransferTemplate    string
+	NoShowBanTemplate   string
+	NoShowNoBanTemplate string
+	ReminderTemplate    string
 }
 
 // DingTalkReminderConfig controls guest pre-shift reminder discovery.
@@ -95,15 +96,16 @@ func LoadDingTalkConfig(getenv func(string) string) (DingTalkConfig, error) {
 		RedirectEnabled:  redirectEnabled,
 		RedirectReceiver: redirectReceiver,
 		Notification: DingTalkNotificationConfig{
-			Title:             dingTalkStringSetting(getenv, "DINGTALK_NOTIFICATION_TITLE", configservice.DefaultDingTalkNotificationTitle),
-			Header:            dingTalkStringSetting(getenv, "DINGTALK_NOTIFICATION_HEADER", configservice.DefaultDingTalkNotificationHeader),
-			QQAccount:         strings.TrimSpace(getenv("DINGTALK_NOTIFICATION_QQ_ACCOUNT")),
-			ConfirmedTemplate: dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_CONFIRMED", configservice.DefaultDingTalkConfirmedTemplate),
-			RejectedTemplate:  dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_REJECTED", configservice.DefaultDingTalkRejectedTemplate),
-			ReferredTemplate:  dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_REFERRED", configservice.DefaultDingTalkReferredTemplate),
-			TransferTemplate:  dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_TRANSFER", configservice.DefaultDingTalkTransferTemplate),
-			NoShowTemplate:    dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_NO_SHOW", configservice.DefaultDingTalkNoShowTemplate),
-			ReminderTemplate:  dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_REMINDER", configservice.DefaultDingTalkReminderTemplate),
+			Title:               dingTalkStringSetting(getenv, "DINGTALK_NOTIFICATION_TITLE", configservice.DefaultDingTalkNotificationTitle),
+			Header:              dingTalkStringSetting(getenv, "DINGTALK_NOTIFICATION_HEADER", configservice.DefaultDingTalkNotificationHeader),
+			QQAccount:           strings.TrimSpace(getenv("DINGTALK_NOTIFICATION_QQ_ACCOUNT")),
+			ConfirmedTemplate:   dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_CONFIRMED", configservice.DefaultDingTalkConfirmedTemplate),
+			RejectedTemplate:    dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_REJECTED", configservice.DefaultDingTalkRejectedTemplate),
+			ReferredTemplate:    dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_REFERRED", configservice.DefaultDingTalkReferredTemplate),
+			TransferTemplate:    dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_TRANSFER", configservice.DefaultDingTalkTransferTemplate),
+			NoShowBanTemplate:   dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_NO_SHOW", configservice.DefaultDingTalkNoShowTemplate),
+			NoShowNoBanTemplate: dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_NO_SHOW_NO_BAN", configservice.DefaultDingTalkNoShowNoBanTemplate),
+			ReminderTemplate:    dingTalkStringSetting(getenv, "DINGTALK_TEMPLATE_REMINDER", configservice.DefaultDingTalkReminderTemplate),
 		},
 		Reminder: DingTalkReminderConfig{
 			LeadTime:     reminderLeadTime,
@@ -130,15 +132,16 @@ func LoadDingTalkConfigFromRuntime(settings configservice.RuntimeSettings) (Ding
 		RedirectEnabled:  dingTalk.RedirectEnabled,
 		RedirectReceiver: strings.TrimSpace(dingTalk.RedirectReceiver),
 		Notification: DingTalkNotificationConfig{
-			Title:             strings.TrimSpace(dingTalk.NotificationTitle),
-			Header:            strings.TrimSpace(dingTalk.NotificationHeader),
-			QQAccount:         strings.TrimSpace(dingTalk.QQAccount),
-			ConfirmedTemplate: dingTalk.ConfirmedTemplate,
-			RejectedTemplate:  dingTalk.RejectedTemplate,
-			ReferredTemplate:  dingTalk.ReferredTemplate,
-			TransferTemplate:  dingTalk.TransferTemplate,
-			NoShowTemplate:    dingTalk.NoShowTemplate,
-			ReminderTemplate:  dingTalk.ReminderTemplate,
+			Title:               strings.TrimSpace(dingTalk.NotificationTitle),
+			Header:              strings.TrimSpace(dingTalk.NotificationHeader),
+			QQAccount:           strings.TrimSpace(dingTalk.QQAccount),
+			ConfirmedTemplate:   dingTalk.ConfirmedTemplate,
+			RejectedTemplate:    dingTalk.RejectedTemplate,
+			ReferredTemplate:    dingTalk.ReferredTemplate,
+			TransferTemplate:    dingTalk.TransferTemplate,
+			NoShowBanTemplate:   dingTalk.NoShowTemplate,
+			NoShowNoBanTemplate: dingTalk.NoShowNoBanTemplate,
+			ReminderTemplate:    dingTalk.ReminderTemplate,
 		},
 		Reminder: DingTalkReminderConfig{
 			LeadTime:     dingTalk.ReminderLeadTime,
@@ -188,16 +191,17 @@ func dingTalkReceiverOverride(cfg DingTalkConfig) string {
 
 func dingTalkTicketNotifierConfig(cfg DingTalkConfig) recordservice.DingTalkTicketNotifierConfig {
 	return recordservice.DingTalkTicketNotifierConfig{
-		Title:             cfg.Notification.Title,
-		Header:            cfg.Notification.Header,
-		QQAccount:         cfg.Notification.QQAccount,
-		ConfirmedTemplate: cfg.Notification.ConfirmedTemplate,
-		RejectedTemplate:  cfg.Notification.RejectedTemplate,
-		ReferredTemplate:  cfg.Notification.ReferredTemplate,
-		TransferTitle:     configservice.DefaultDingTalkTransferTitle,
-		TransferTemplate:  cfg.Notification.TransferTemplate,
-		NoShowTemplate:    cfg.Notification.NoShowTemplate,
-		ReminderTemplate:  cfg.Notification.ReminderTemplate,
+		Title:               cfg.Notification.Title,
+		Header:              cfg.Notification.Header,
+		QQAccount:           cfg.Notification.QQAccount,
+		ConfirmedTemplate:   cfg.Notification.ConfirmedTemplate,
+		RejectedTemplate:    cfg.Notification.RejectedTemplate,
+		ReferredTemplate:    cfg.Notification.ReferredTemplate,
+		TransferTitle:       configservice.DefaultDingTalkTransferTitle,
+		TransferTemplate:    cfg.Notification.TransferTemplate,
+		NoShowBanTemplate:   cfg.Notification.NoShowBanTemplate,
+		NoShowNoBanTemplate: cfg.Notification.NoShowNoBanTemplate,
+		ReminderTemplate:    cfg.Notification.ReminderTemplate,
 	}
 }
 

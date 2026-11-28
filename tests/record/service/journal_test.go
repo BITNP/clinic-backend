@@ -328,8 +328,9 @@ func TestAutomaticNoShowJournalsNotificationSent(t *testing.T) {
 	if err := json.Unmarshal(event.Details, &details); err != nil {
 		t.Fatalf("decode details: %v", err)
 	}
-	if details["template_key"] != "DINGTALK_TEMPLATE_NO_SHOW" ||
-		details["record_status"] != "no_show" {
+	if details["template_key"] != "DINGTALK_TEMPLATE_NO_SHOW_NO_BAN" ||
+		details["record_status"] != "no_show" ||
+		details["no_show_ban_enabled"] != false {
 		t.Fatalf("details = %+v", details)
 	}
 }

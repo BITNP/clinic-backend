@@ -37,6 +37,7 @@ func dingTalkRuntimeSettings() configservice.RuntimeSettings {
 			ReferredTemplate:     configservice.DefaultDingTalkReferredTemplate,
 			TransferTemplate:     configservice.DefaultDingTalkTransferTemplate,
 			NoShowTemplate:       configservice.DefaultDingTalkNoShowTemplate,
+			NoShowNoBanTemplate:  configservice.DefaultDingTalkNoShowNoBanTemplate,
 			ReminderTemplate:     configservice.DefaultDingTalkReminderTemplate,
 		},
 	}

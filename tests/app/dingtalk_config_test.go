@@ -46,7 +46,8 @@ func TestLoadDingTalkConfig(t *testing.T) {
 	if !strings.Contains(cfg.Notification.ConfirmedTemplate, "您的预约已通过") ||
 		!strings.Contains(cfg.Notification.ReferredTemplate, "建议联系售后进行维修") ||
 		!strings.Contains(cfg.Notification.ReferredTemplate, "{{.REAS}}") ||
-		!strings.Contains(cfg.Notification.NoShowTemplate, "{{.QQAC}}") {
+		!strings.Contains(cfg.Notification.NoShowBanTemplate, "{{.QQAC}}") ||
+		!strings.Contains(cfg.Notification.NoShowNoBanTemplate, "未到诊所（不启用黑名单）") {
 		t.Errorf("notification templates = %+v", cfg.Notification)
 	}
 }
@@ -60,6 +61,7 @@ func TestLoadDingTalkConfigNotificationOverrides(t *testing.T) {
 	values["DINGTALK_TEMPLATE_REJECTED"] = "驳回 {{.REAS}}"
 	values["DINGTALK_TEMPLATE_REFERRED"] = "转诊 {{.TRRO}}"
 	values["DINGTALK_TEMPLATE_NO_SHOW"] = "未到 {{.QQAC}}"
+	values["DINGTALK_TEMPLATE_NO_SHOW_NO_BAN"] = "非封禁未到 {{.DATE}}"
 	values["DINGTALK_TEMPLATE_REMINDER"] = "提醒 {{.DATE}}"
 	values["DINGTALK_REMINDER_LEAD_TIME"] = "45m"
 	values["DINGTALK_REMINDER_POLL_INTERVAL"] = "30s"
@@ -71,7 +73,8 @@ func TestLoadDingTalkConfigNotificationOverrides(t *testing.T) {
 	got := cfg.Notification
 	if got.Title != "自定义标题" || got.Header != "自定义协会" || got.QQAccount != "123456" ||
 		got.ConfirmedTemplate != "确认 {{.ROOM}}" || got.RejectedTemplate != "驳回 {{.REAS}}" ||
-		got.ReferredTemplate != "转诊 {{.TRRO}}" || got.NoShowTemplate != "未到 {{.QQAC}}" ||
+		got.ReferredTemplate != "转诊 {{.TRRO}}" || got.NoShowBanTemplate != "未到 {{.QQAC}}" ||
+		got.NoShowNoBanTemplate != "非封禁未到 {{.DATE}}" ||
 		got.ReminderTemplate != "提醒 {{.DATE}}" {
 		t.Errorf("notification config = %+v", got)
 	}
@@ -202,6 +205,7 @@ func TestLoadDingTalkConfigFromRuntime(t *testing.T) {
 			ReferredTemplate:     "转诊 {{.TRRO}}",
 			TransferTemplate:     "调场 {{.TRRO}} {{.TRLO}}",
 			NoShowTemplate:       "未到 {{.QQAC}}",
+			NoShowNoBanTemplate:  "非封禁未到 {{.DATE}}",
 			ReminderTemplate:     "提醒 {{.DATE}}",
 		},
 	}
@@ -238,6 +242,7 @@ func TestLoadDingTalkConfigFromRuntimeValidatesDependencies(t *testing.T) {
 			ReferredTemplate:     "{{.TRRO}}",
 			TransferTemplate:     "{{.TRRO}} {{.TRLO}}",
 			NoShowTemplate:       "{{.QQAC}}",
+			NoShowNoBanTemplate:  "{{.DATE}}",
 			ReminderTemplate:     "{{.DATE}}",
 		},
 	}

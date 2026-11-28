@@ -106,16 +106,17 @@ func TestDingTalkTicketNotifierFormatsStatusMessages(t *testing.T) {
 	end := time.Date(2026, 11, 20, 21, 0, 0, 0, location)
 	const allFields = "{{.HEDR}}|{{.DATE}}|{{.ID}}|{{.ROOM}}|{{.LOCA}}|{{.TRRO}}|{{.TRLO}}|{{.REAS}}|{{.QQAC}}"
 	cfg := recordservice.DingTalkTicketNotifierConfig{
-		Title:             "状态通知",
-		Header:            "测试协会",
-		QQAccount:         "123456",
-		ConfirmedTemplate: allFields,
-		RejectedTemplate:  allFields,
-		ReferredTemplate:  allFields,
-		TransferTitle:     "工单转诊",
-		TransferTemplate:  allFields,
-		NoShowTemplate:    allFields,
-		ReminderTemplate:  "{{.ROOM}}",
+		Title:               "状态通知",
+		Header:              "测试协会",
+		QQAccount:           "123456",
+		ConfirmedTemplate:   allFields,
+		RejectedTemplate:    allFields,
+		ReferredTemplate:    allFields,
+		TransferTitle:       "工单转诊",
+		TransferTemplate:    allFields,
+		NoShowBanTemplate:   allFields,
+		NoShowNoBanTemplate: allFields,
+		ReminderTemplate:    "{{.ROOM}}",
 	}
 	tests := []struct {
 		name     string
@@ -197,14 +198,15 @@ func TestDingTalkTicketNotifierFormatsStatusMessages(t *testing.T) {
 
 func TestDingTalkTicketNotifierRejectsInvalidTemplate(t *testing.T) {
 	cfg := recordservice.DingTalkTicketNotifierConfig{
-		Title:             "状态通知",
-		Header:            "测试协会",
-		ConfirmedTemplate: "{{.UNKNOWN}}",
-		RejectedTemplate:  "rejected",
-		ReferredTemplate:  "referred",
-		TransferTemplate:  "transfer",
-		NoShowTemplate:    "no_show",
-		ReminderTemplate:  "reminder",
+		Title:               "状态通知",
+		Header:              "测试协会",
+		ConfirmedTemplate:   "{{.UNKNOWN}}",
+		RejectedTemplate:    "rejected",
+		ReferredTemplate:    "referred",
+		TransferTemplate:    "transfer",
+		NoShowBanTemplate:   "no_show_ban",
+		NoShowNoBanTemplate: "no_show_no_ban",
+		ReminderTemplate:    "reminder",
 	}
 	if _, err := recordservice.NewDingTalkTicketNotifier(&fakeDingTalkStatusSender{}, time.UTC, cfg); err == nil {
 		t.Fatal("expected invalid template error")
@@ -213,14 +215,15 @@ func TestDingTalkTicketNotifierRejectsInvalidTemplate(t *testing.T) {
 
 func TestDingTalkTicketNotifierDecodesEscapedNewlines(t *testing.T) {
 	cfg := recordservice.DingTalkTicketNotifierConfig{
-		Title:             "状态通知",
-		Header:            "测试协会",
-		ConfirmedTemplate: `第一行\n{{.ROOM}}`,
-		RejectedTemplate:  "rejected",
-		ReferredTemplate:  "referred",
-		TransferTemplate:  "transfer",
-		NoShowTemplate:    "no_show",
-		ReminderTemplate:  "reminder",
+		Title:               "状态通知",
+		Header:              "测试协会",
+		ConfirmedTemplate:   `第一行\n{{.ROOM}}`,
+		RejectedTemplate:    "rejected",
+		ReferredTemplate:    "referred",
+		TransferTemplate:    "transfer",
+		NoShowBanTemplate:   "no_show_ban",
+		NoShowNoBanTemplate: "no_show_no_ban",
+		ReminderTemplate:    "reminder",
 	}
 	sender := &fakeDingTalkStatusSender{}
 	notifier, err := recordservice.NewDingTalkTicketNotifier(sender, time.UTC, cfg)
@@ -246,14 +249,15 @@ func TestDingTalkTicketNotifierDecodesEscapedNewlines(t *testing.T) {
 func TestDingTalkTicketNotifierSendsReminderTemplate(t *testing.T) {
 	location := time.FixedZone("UTC+8", 8*60*60)
 	cfg := recordservice.DingTalkTicketNotifierConfig{
-		Title:             "状态通知",
-		Header:            "测试协会",
-		ConfirmedTemplate: "confirmed",
-		RejectedTemplate:  "rejected",
-		ReferredTemplate:  "referred",
-		TransferTemplate:  "transfer",
-		NoShowTemplate:    "no_show",
-		ReminderTemplate:  "提醒：{{.DATE}} {{.ROOM}} {{.LOCA}}",
+		Title:               "状态通知",
+		Header:              "测试协会",
+		ConfirmedTemplate:   "confirmed",
+		RejectedTemplate:    "rejected",
+		ReferredTemplate:    "referred",
+		TransferTemplate:    "transfer",
+		NoShowBanTemplate:   "no_show_ban",
+		NoShowNoBanTemplate: "no_show_no_ban",
+		ReminderTemplate:    "提醒：{{.DATE}} {{.ROOM}} {{.LOCA}}",
 	}
 	sender := &fakeDingTalkStatusSender{}
 	notifier, err := recordservice.NewDingTalkTicketNotifier(sender, location, cfg)
@@ -276,6 +280,48 @@ func TestDingTalkTicketNotifierSendsReminderTemplate(t *testing.T) {
 	}
 	if got := sender.requests[0].Content; got != "提醒：2026-11-20的18:30-21:00 徐特立图书馆 三楼311G" {
 		t.Errorf("Content = %q", got)
+	}
+}
+
+func TestDingTalkTicketNotifierSelectsNoShowTemplate(t *testing.T) {
+	start := time.Date(2026, 11, 20, 18, 30, 0, 0, time.UTC)
+	end := start.Add(2 * time.Hour)
+	cfg := recordservice.DingTalkTicketNotifierConfig{
+		Title:               "状态通知",
+		Header:              "测试协会",
+		ConfirmedTemplate:   "confirmed",
+		RejectedTemplate:    "rejected",
+		ReferredTemplate:    "referred",
+		TransferTemplate:    "transfer",
+		NoShowBanTemplate:   "封禁模式 {{.DATE}}",
+		NoShowNoBanTemplate: "非封禁模式 {{.DATE}}",
+		ReminderTemplate:    "reminder",
+	}
+	tests := []struct {
+		name    string
+		banMode bool
+		want    string
+	}{
+		{name: "ban mode", banMode: true, want: "封禁模式 2026-11-20的18:30-20:30"},
+		{name: "non-ban mode", want: "非封禁模式 2026-11-20的18:30-20:30"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sender := &fakeDingTalkStatusSender{}
+			notifier, err := recordservice.NewDingTalkTicketNotifier(sender, time.UTC, cfg)
+			if err != nil {
+				t.Fatalf("create notifier: %v", err)
+			}
+			if _, err := notifier.Notify(context.Background(), recordservice.TicketStatusNotification{
+				RecordID: 1, User: "ding-user", Status: recordmodel.RecordStatusNoShow,
+				NoShowBanEnabled: tt.banMode, ServiceStart: start, ServiceEnd: end,
+			}); err != nil {
+				t.Fatalf("notify: %v", err)
+			}
+			if got := sender.requests[0].Content; got != tt.want {
+				t.Fatalf("content = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -353,6 +399,32 @@ func TestTicketTransitionsNotifySupportedStatuses(t *testing.T) {
 			}
 			if got.RoomName != room.Name || got.ServiceStart.IsZero() || got.ServiceEnd.IsZero() {
 				t.Errorf("notification details = %+v", got)
+			}
+		})
+	}
+}
+
+func TestNoShowNotificationUsesCampusPolicyMode(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "disabled", true: "enabled"}[enabled], func(t *testing.T) {
+			db := setupAdminRecordTestDB(t)
+			room := seedNoShowPolicyRoom(t, db, "notification-"+map[bool]string{false: "disabled", true: "enabled"}[enabled], roommodel.NoShowBanPolicy{
+				Enabled: enabled, DurationHours: 48, Level: roommodel.NoShowBanLevelCampus,
+			})
+			record := seedActionRecord(t, db, recordmodel.RecordStatusConfirmed, room.ID)
+			seedTicketNotificationServiceDate(t, db, room.ID, &record)
+
+			notifier := &fakeTicketStatusNotifier{}
+			svc := recordservice.NewAdminRecordService(testutil.RawDB(t, db))
+			svc.SetTicketStatusNotifier(notifier)
+			if _, err := svc.MarkNoShow(context.Background(), 7, record.ID); err != nil {
+				t.Fatalf("no-show: %v", err)
+			}
+			if len(notifier.notifications) != 1 {
+				t.Fatalf("notifications = %d, want 1", len(notifier.notifications))
+			}
+			if got := notifier.notifications[0].NoShowBanEnabled; got != enabled {
+				t.Fatalf("NoShowBanEnabled = %t, want %t", got, enabled)
 			}
 		})
 	}

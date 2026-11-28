@@ -19,15 +19,16 @@ import (
 // TicketStatusNotification describes a ticket transition that should be sent
 // to the guest.
 type TicketStatusNotification struct {
-	RecordID     uint
-	User         string
-	Status       recordmodel.RecordStatus
-	Reason       string
-	RoomName     string
-	RoomAddress  string
-	RoomTransfer bool
-	ServiceStart time.Time
-	ServiceEnd   time.Time
+	RecordID         uint
+	User             string
+	Status           recordmodel.RecordStatus
+	Reason           string
+	RoomName         string
+	RoomAddress      string
+	RoomTransfer     bool
+	NoShowBanEnabled bool
+	ServiceStart     time.Time
+	ServiceEnd       time.Time
 }
 
 // TicketNotificationDelivery describes a message accepted and verified by the
@@ -62,30 +63,33 @@ type DingTalkStatusSender interface {
 // DingTalkTicketNotifierConfig contains configurable guest notification values
 // and templates.
 type DingTalkTicketNotifierConfig struct {
-	Title             string
-	Header            string
-	QQAccount         string
-	ConfirmedTemplate string
-	RejectedTemplate  string
-	ReferredTemplate  string
-	TransferTitle     string
-	TransferTemplate  string
-	NoShowTemplate    string
-	ReminderTemplate  string
+	Title               string
+	Header              string
+	QQAccount           string
+	ConfirmedTemplate   string
+	RejectedTemplate    string
+	ReferredTemplate    string
+	TransferTitle       string
+	TransferTemplate    string
+	NoShowBanTemplate   string
+	NoShowNoBanTemplate string
+	ReminderTemplate    string
 }
 
 // DingTalkTicketNotifier formats ticket status notifications and sends them to
 // the DingTalk user id stored on the record.
 type DingTalkTicketNotifier struct {
-	sender           DingTalkStatusSender
-	location         *time.Location
-	title            string
-	header           string
-	qqAccount        string
-	transferTitle    string
-	transferTemplate *template.Template
-	statusTemplates  map[recordmodel.RecordStatus]*template.Template
-	reminderTemplate *template.Template
+	sender              DingTalkStatusSender
+	location            *time.Location
+	title               string
+	header              string
+	qqAccount           string
+	transferTitle       string
+	transferTemplate    *template.Template
+	statusTemplates     map[recordmodel.RecordStatus]*template.Template
+	noShowBanTemplate   *template.Template
+	noShowNoBanTemplate *template.Template
+	reminderTemplate    *template.Template
 }
 
 // NewDingTalkTicketNotifier constructs a ticket notifier using location for
@@ -123,7 +127,11 @@ func NewDingTalkTicketNotifier(
 	if err != nil {
 		return nil, err
 	}
-	noShowTemplate, err := parseTicketNotificationTemplate("no_show", cfg.NoShowTemplate)
+	noShowBanTemplate, err := parseTicketNotificationTemplate("no_show_ban", cfg.NoShowBanTemplate)
+	if err != nil {
+		return nil, err
+	}
+	noShowNoBanTemplate, err := parseTicketNotificationTemplate("no_show_no_ban", cfg.NoShowNoBanTemplate)
 	if err != nil {
 		return nil, err
 	}
@@ -133,18 +141,19 @@ func NewDingTalkTicketNotifier(
 	}
 
 	return &DingTalkTicketNotifier{
-		sender:           sender,
-		location:         location,
-		title:            title,
-		header:           header,
-		qqAccount:        strings.TrimSpace(cfg.QQAccount),
-		transferTitle:    strings.TrimSpace(cfg.TransferTitle),
-		transferTemplate: transferTemplate,
+		sender:              sender,
+		location:            location,
+		title:               title,
+		header:              header,
+		qqAccount:           strings.TrimSpace(cfg.QQAccount),
+		transferTitle:       strings.TrimSpace(cfg.TransferTitle),
+		transferTemplate:    transferTemplate,
+		noShowBanTemplate:   noShowBanTemplate,
+		noShowNoBanTemplate: noShowNoBanTemplate,
 		statusTemplates: map[recordmodel.RecordStatus]*template.Template{
 			recordmodel.RecordStatusConfirmed: confirmTemplate,
 			recordmodel.RecordStatusRejected:  rejectedTemplate,
 			recordmodel.RecordStatusReferred:  referredTemplate,
-			recordmodel.RecordStatusNoShow:    noShowTemplate,
 		},
 		reminderTemplate: reminderTemplate,
 	}, nil
@@ -167,6 +176,13 @@ func (n *DingTalkTicketNotifier) Notify(
 	}
 	if !isNotifiableTicketStatus(notification.Status) {
 		return TicketNotificationDelivery{Skipped: true}, nil
+	}
+	if notification.Status == recordmodel.RecordStatusNoShow {
+		tmpl := n.noShowNoBanTemplate
+		if notification.NoShowBanEnabled {
+			tmpl = n.noShowBanTemplate
+		}
+		return n.send(ctx, tmpl, n.title, notification)
 	}
 	tmpl, ok := n.statusTemplates[notification.Status]
 	if !ok {
@@ -311,6 +327,7 @@ func (s *AdminRecordService) notifyTicketStatusChange(
 		s.journalTicketNotificationOutcome(
 			record,
 			roomTransfer,
+			false,
 			causedByEventID,
 			TicketNotificationDelivery{},
 			"notification_context_unavailable",
@@ -318,21 +335,23 @@ func (s *AdminRecordService) notifyTicketStatusChange(
 		return
 	}
 	delivery, err := s.notifier.Notify(ctx, TicketStatusNotification{
-		RecordID:     record.ID,
-		User:         record.User,
-		Status:       record.Status,
-		Reason:       reason,
-		RoomName:     details.RoomName,
-		RoomAddress:  details.RoomAddress,
-		RoomTransfer: roomTransfer,
-		ServiceStart: details.ServiceStart,
-		ServiceEnd:   details.ServiceEnd,
+		RecordID:         record.ID,
+		User:             record.User,
+		Status:           record.Status,
+		Reason:           reason,
+		RoomName:         details.RoomName,
+		RoomAddress:      details.RoomAddress,
+		RoomTransfer:     roomTransfer,
+		NoShowBanEnabled: details.NoShowBanEnabled,
+		ServiceStart:     details.ServiceStart,
+		ServiceEnd:       details.ServiceEnd,
 	})
 	if err != nil {
 		log.Printf("record %d %s notification: %v", record.ID, record.Status, err)
 		s.journalTicketNotificationOutcome(
 			record,
 			roomTransfer,
+			details.NoShowBanEnabled,
 			causedByEventID,
 			TicketNotificationDelivery{},
 			"dingtalk_delivery_failed",
@@ -342,12 +361,13 @@ func (s *AdminRecordService) notifyTicketStatusChange(
 	if delivery.Skipped {
 		return
 	}
-	s.journalTicketNotificationOutcome(record, roomTransfer, causedByEventID, delivery, "")
+	s.journalTicketNotificationOutcome(record, roomTransfer, details.NoShowBanEnabled, causedByEventID, delivery, "")
 }
 
 func (s *AdminRecordService) journalTicketNotificationOutcome(
 	record recordmodel.ClinicRecord,
 	roomTransfer bool,
+	noShowBanEnabled bool,
 	causedByEventID uint64,
 	delivery TicketNotificationDelivery,
 	failureCode string,
@@ -362,13 +382,14 @@ func (s *AdminRecordService) journalTicketNotificationOutcome(
 	}
 	action := "notification.sent"
 	details := map[string]any{
-		"version":       1,
-		"kind":          "record_status",
-		"channel":       "dingtalk",
-		"recipient":     map[string]any{"type": "customer"},
-		"template_key":  ticketNotificationTemplateKey(record.Status, roomTransfer),
-		"record_status": string(record.Status),
-		"room_transfer": roomTransfer,
+		"version":             1,
+		"kind":                "record_status",
+		"channel":             "dingtalk",
+		"recipient":           map[string]any{"type": "customer"},
+		"template_key":        ticketNotificationTemplateKey(record.Status, roomTransfer, noShowBanEnabled),
+		"record_status":       string(record.Status),
+		"room_transfer":       roomTransfer,
+		"no_show_ban_enabled": noShowBanEnabled,
 	}
 	if failureCode == "" {
 		details["confirmation"] = "message_center_send_success"
@@ -411,7 +432,7 @@ func (s *AdminRecordService) journalTicketNotificationOutcome(
 	bumpJournalSync(journalCtx, s.journal, "record notification outcome")
 }
 
-func ticketNotificationTemplateKey(status recordmodel.RecordStatus, roomTransfer bool) string {
+func ticketNotificationTemplateKey(status recordmodel.RecordStatus, roomTransfer, noShowBanEnabled bool) string {
 	if roomTransfer {
 		return "DINGTALK_TEMPLATE_TRANSFER"
 	}
@@ -423,17 +444,21 @@ func ticketNotificationTemplateKey(status recordmodel.RecordStatus, roomTransfer
 	case recordmodel.RecordStatusReferred:
 		return "DINGTALK_TEMPLATE_REFERRED"
 	case recordmodel.RecordStatusNoShow:
-		return "DINGTALK_TEMPLATE_NO_SHOW"
+		if noShowBanEnabled {
+			return "DINGTALK_TEMPLATE_NO_SHOW"
+		}
+		return "DINGTALK_TEMPLATE_NO_SHOW_NO_BAN"
 	default:
 		return ""
 	}
 }
 
 type ticketNotificationDetails struct {
-	RoomName     string
-	RoomAddress  string
-	ServiceStart time.Time
-	ServiceEnd   time.Time
+	RoomName         string
+	RoomAddress      string
+	ServiceStart     time.Time
+	ServiceEnd       time.Time
+	NoShowBanEnabled bool
 }
 
 func (s *AdminRecordService) loadTicketNotificationDetails(
@@ -447,14 +472,15 @@ func (s *AdminRecordService) loadTicketNotificationDetails(
 	}
 	err := s.db.QueryRowContext(
 		ctx,
-		fmt.Sprintf(`SELECT r.name, r.address, d.start_time, d.end_time
+		fmt.Sprintf(`SELECT r.name, r.address, d.start_time, d.end_time, COALESCE(c.no_show_ban_enabled, FALSE)
 		 FROM clinic_room r
+		 LEFT JOIN clinic_campus c ON c.id = r.campus_id
 		 JOIN clinic_service_date d ON r.id = $1 AND d.room_id = r.id AND %s
 		 ORDER BY d.id
 		 LIMIT 1`, datePredicate),
 		record.RoomID,
 		record.AppointmentTime,
-	).Scan(&details.RoomName, &details.RoomAddress, &details.ServiceStart, &details.ServiceEnd)
+	).Scan(&details.RoomName, &details.RoomAddress, &details.ServiceStart, &details.ServiceEnd, &details.NoShowBanEnabled)
 	if err == sql.ErrNoRows {
 		return ticketNotificationDetails{}, fmt.Errorf("notification room or service date is missing")
 	}
