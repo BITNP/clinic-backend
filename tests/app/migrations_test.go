@@ -2,10 +2,12 @@ package app_test
 
 import (
 	"testing"
+	"time"
 
 	"clinic-backend/internal/app"
 	configmodel "clinic-backend/internal/config/model"
 	roommodel "clinic-backend/internal/room/model"
+	schedulingmodel "clinic-backend/internal/scheduling/model"
 	staffmodel "clinic-backend/internal/staff/model"
 
 	"gorm.io/driver/sqlite"
@@ -39,6 +41,20 @@ type legacyClinicConfigItem struct {
 
 func (legacyClinicConfigItem) TableName() string {
 	return "clinic_config_item"
+}
+
+type legacyServiceDateReminder struct {
+	ID              uint      `gorm:"primaryKey;column:id"`
+	ServiceDateID   uint      `gorm:"not null;column:service_date_id;uniqueIndex:idx_reminder_identity,priority:1"`
+	ServiceStartAt  time.Time `gorm:"not null;column:service_start_at;uniqueIndex:idx_reminder_identity,priority:2"`
+	LeadTimeSeconds int64     `gorm:"not null;column:lead_time_seconds;uniqueIndex:idx_reminder_identity,priority:3"`
+	StaffID         int       `gorm:"not null;column:staff_id;uniqueIndex:idx_reminder_identity,priority:4"`
+	Status          string    `gorm:"size:16;not null;column:status"`
+	NextAttemptAt   time.Time `gorm:"not null;column:next_attempt_at"`
+}
+
+func (legacyServiceDateReminder) TableName() string {
+	return "clinic_service_date_reminder"
 }
 
 func setupMigrationTestDB(t *testing.T) *gorm.DB {
@@ -122,6 +138,56 @@ func TestMigrateBeforeAutoMigrate_RenamesConfigItemReadableColumn(t *testing.T) 
 
 	if err := app.MigrateBeforeAutoMigrate(db); err != nil {
 		t.Fatalf("second migrate before auto: %v", err)
+	}
+}
+
+func TestAutoMigrate_UpgradesServiceDateReminderIdentity(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.AutoMigrate(&legacyServiceDateReminder{}); err != nil {
+		t.Fatalf("migrate legacy reminder: %v", err)
+	}
+	start := time.Date(2026, 11, 12, 18, 30, 0, 0, time.UTC)
+	legacy := legacyServiceDateReminder{
+		ServiceDateID:   1,
+		ServiceStartAt:  start,
+		LeadTimeSeconds: 3600,
+		StaffID:         1,
+		Status:          "pending",
+		NextAttemptAt:   start.Add(-time.Hour),
+	}
+	if err := db.Create(&legacy).Error; err != nil {
+		t.Fatalf("seed legacy reminder: %v", err)
+	}
+
+	if err := app.MigrateBeforeAutoMigrate(db); err != nil {
+		t.Fatalf("migrate before auto: %v", err)
+	}
+	if err := db.AutoMigrate(&schedulingmodel.ServiceDateReminder{}); err != nil {
+		t.Fatalf("migrate reminder schema: %v", err)
+	}
+
+	var stored schedulingmodel.ServiceDateReminder
+	if err := db.First(&stored, legacy.ID).Error; err != nil {
+		t.Fatalf("load migrated reminder: %v", err)
+	}
+	if stored.Kind != schedulingmodel.ReminderKindStart {
+		t.Fatalf("migrated reminder kind = %q, want %q", stored.Kind, schedulingmodel.ReminderKindStart)
+	}
+
+	completion := schedulingmodel.ServiceDateReminder{
+		ServiceDateID:   legacy.ServiceDateID,
+		ServiceStartAt:  legacy.ServiceStartAt,
+		LeadTimeSeconds: legacy.LeadTimeSeconds,
+		StaffID:         legacy.StaffID,
+		Kind:            schedulingmodel.ReminderKindCompletion,
+		Status:          "pending",
+		NextAttemptAt:   start.Add(30 * time.Minute),
+	}
+	if err := db.Create(&completion).Error; err != nil {
+		t.Fatalf("create completion reminder after migration: %v", err)
 	}
 }
 

@@ -28,4 +28,16 @@ func TestReminderIdentityIsUnique(t *testing.T) {
 	if err = db.Create(&job).Error; err != nil {
 		t.Fatal(err)
 	}
+
+	completionJob := job
+	completionJob.ID = 0
+	completionJob.StaffID = 1
+	completionJob.Kind = schedulingmodel.ReminderKindCompletion
+	if err = db.Create(&completionJob).Error; err != nil {
+		t.Fatalf("create completion reminder beside approval reminder: %v", err)
+	}
+	completionJob.ID = 0
+	if err = db.Create(&completionJob).Error; err == nil {
+		t.Fatal("duplicate completion reminder identity accepted")
+	}
 }

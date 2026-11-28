@@ -7,6 +7,7 @@ import (
 	configmodel "clinic-backend/internal/config/model"
 	"clinic-backend/internal/database"
 	roommodel "clinic-backend/internal/room/model"
+	schedulingmodel "clinic-backend/internal/scheduling/model"
 	staffmodel "clinic-backend/internal/staff/model"
 
 	"gorm.io/gorm"
@@ -22,6 +23,9 @@ func MigrateBeforeAutoMigrate(db *gorm.DB) error {
 	if err := renameConfigItemWriteOnlyColumn(db); err != nil {
 		return err
 	}
+	if err := prepareServiceDateReminderKindIndex(db); err != nil {
+		return err
+	}
 
 	// clinic_staff.phone_num was replaced by email. AutoMigrate only adds
 	// missing columns, so rename an existing phone_num column explicitly.
@@ -30,6 +34,22 @@ func MigrateBeforeAutoMigrate(db *gorm.DB) error {
 	}
 	if err := db.Migrator().RenameColumn(&staffmodel.ClinicStaff{}, "phone_num", "email"); err != nil {
 		return fmt.Errorf("rename clinic_staff.phone_num to email: %w", err)
+	}
+	return nil
+}
+
+// prepareServiceDateReminderKindIndex removes the old identity index before
+// AutoMigrate adds the kind column. AutoMigrate then recreates the index with
+// kind included, preserving existing reminders as start reminders.
+func prepareServiceDateReminderKindIndex(db *gorm.DB) error {
+	model := &schedulingmodel.ServiceDateReminder{}
+	if !db.Migrator().HasTable(model) ||
+		db.Migrator().HasColumn(model, "kind") ||
+		!db.Migrator().HasIndex(model, "idx_reminder_identity") {
+		return nil
+	}
+	if err := db.Migrator().DropIndex(model, "idx_reminder_identity"); err != nil {
+		return fmt.Errorf("drop legacy service date reminder identity index: %w", err)
 	}
 	return nil
 }

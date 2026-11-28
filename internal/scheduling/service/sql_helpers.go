@@ -24,7 +24,7 @@ const workScheduleStaffColumns = "id, weekday_id, staff_id, schedule_id"
 const staffColumns = "id, account_id, realname, email, qq_number, role, version"
 const roomColumns = "id, name, address, enabled, campus_id, type"
 const roomWithCampusColumns = "r.id, r.name, r.address, r.enabled, r.campus_id, r.type, c.id, c.name, c.selection_policy, c.no_show_ban_enabled, c.no_show_ban_duration_hours, c.no_show_ban_level"
-const reminderColumns = "id, service_date_id, service_start_at, lead_time_seconds, staff_id, status, attempts, next_attempt_at, lease_until, claim_token, gateway_delivery_id, gateway_account, accepted_at, sent_at, last_tracked_at, last_error, created_at, updated_at"
+const reminderColumns = "id, service_date_id, service_start_at, lead_time_seconds, staff_id, kind, status, attempts, next_attempt_at, lease_until, claim_token, gateway_delivery_id, gateway_account, accepted_at, sent_at, last_tracked_at, last_error, created_at, updated_at"
 
 func scanServiceDate(row rowScanner) (schedulingmodel.ClinicServiceDate, error) {
 	var date schedulingmodel.ClinicServiceDate
@@ -131,6 +131,7 @@ func scanReminder(row rowScanner) (schedulingmodel.ServiceDateReminder, error) {
 		&reminder.ServiceStartAt,
 		&reminder.LeadTimeSeconds,
 		&reminder.StaffID,
+		&reminder.Kind,
 		&reminder.Status,
 		&reminder.Attempts,
 		&reminder.NextAttemptAt,
@@ -162,6 +163,9 @@ func scanReminder(row rowScanner) (schedulingmodel.ServiceDateReminder, error) {
 	}
 	if updatedAt.Valid {
 		reminder.UpdatedAt = updatedAt.Time
+	}
+	if reminder.Kind == "" {
+		reminder.Kind = schedulingmodel.ReminderKindStart
 	}
 	return reminder, err
 }
