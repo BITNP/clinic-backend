@@ -45,6 +45,7 @@ func setupLegacyHandlerRouter(t *testing.T) (*gin.Engine, *gorm.DB, *recordservi
 		&roommodel.ClinicRoom{},
 		&schedulingmodel.ClinicServiceDate{},
 		&recordmodel.ClinicRecord{},
+		&recordmodel.ClinicUserTicketBan{},
 		&recordmodel.ClinicRecordDevice{},
 		&recordmodel.ClinicRecordArrival{},
 		&recordmodel.ClinicRecordWorker{},
@@ -174,6 +175,36 @@ func TestLegacy_CreateRecord_OldShape(t *testing.T) {
 	url, _ := resp["url"].(string)
 	if len(url) < 13 || url[:12] != "/api/wechat/" || url[len(url)-1:] != "/" {
 		t.Errorf("url should be /api/wechat/{id}/, got %q", url)
+	}
+}
+
+func TestLegacy_CreateRecord_BannedUser(t *testing.T) {
+	r, db, _ := setupLegacyHandlerRouter(t)
+	testutil.SeedOpenServiceDate(t, db, time.UTC, testutil.FutureTruncatedDate(7), 5)
+	if err := db.Create(&recordmodel.ClinicUserTicketBan{
+		UserID: "1120221234", Reason: "abuse", ExpirateAt: time.Now().UTC().Add(time.Hour),
+	}).Error; err != nil {
+		t.Fatalf("seed ban: %v", err)
+	}
+
+	body := map[string]any{
+		"realname":         "张三",
+		"phone_num":        "13800138000",
+		"campus":           "中关村",
+		"appointment_time": testutil.FutureTruncatedDate(7).Format("2006-01-02"),
+		"description":      "笔电不开机",
+	}
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, testutil.SignedTicketReq(http.MethodPost, "/api/wechat", body, ""))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["msg"] != recordservice.ErrTicketUserBanned.Error() {
+		t.Fatalf("expected banned message, got %v", resp)
 	}
 }
 

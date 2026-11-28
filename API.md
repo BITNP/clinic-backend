@@ -2734,14 +2734,21 @@ Ticket (customer-facing record) view:
 | `password` | string | Device password. |
 | `liquid_metal_status` | string | `unknown`, `liquid_metal`, `to_verify`, or `non_liquid_metal`. |
 
-Booking rules (enforced on create and when room/date changes):
+Booking rules:
 
-1. `campus` must name an existing room.
-2. A service date must exist for that room and day.
-3. Ticketed bookings must be below the service date capacity.
-4. A customer may have at most one unfinished booking with an appointment today
+1. Ticket creation is refused while the customer has an active global ban or an
+   active ban for the campus of the requested room. Expired bans do not apply.
+2. `campus` must name an existing room.
+3. A service date must exist for that room and day.
+4. Ticketed bookings must be below the service date capacity.
+5. A customer may have at most one unfinished booking with an appointment today
    or later.
-5. The appointment date must not be in the past.
+6. The appointment date must not be in the past.
+
+Room/date/capacity checks are also repeated when an existing ticket changes
+campus or date. A newly active ban does not prevent the customer from reading,
+editing, or deleting an existing ticket; ban enforcement applies to ticket
+creation.
 
 ### `GET /api/tickets`
 
@@ -2782,9 +2789,9 @@ the `record` counter.
 **Response `201 Created`** — ticket view.
 
 **Error responses:** `400` with `{"msg": "..."}` for booking violations
-(`campus 不存在`, date closed, no capacity, already one unfinished booking, past
-date) or invalid `appointment_time`; `400` with `{"error": "..."}` for malformed
-bodies; `401`, `500`.
+(`您已被暂停预约`, `campus 不存在`, date closed, no capacity, already one
+unfinished booking, past date) or invalid `appointment_time`; `400` with
+`{"error": "..."}` for malformed bodies; `401`, `500`.
 
 **curl**
 
@@ -2994,7 +3001,7 @@ curl "$BASE/api/wechat/?username=$USERNAME&page=1" \
 ### `POST /api/wechat` and `POST /api/wechat/`
 
 **Description:** Creates a booking using the same body and validation rules as
-`POST /api/tickets`.
+`POST /api/tickets`, including active global and campus ticket bans.
 
 **Response `201 Created`** — legacy record.
 

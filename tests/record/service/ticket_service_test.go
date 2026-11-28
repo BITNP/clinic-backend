@@ -29,6 +29,7 @@ func setupTicketTestDB(t *testing.T) *gorm.DB {
 		&roommodel.ClinicRoom{},
 		&schedulingmodel.ClinicServiceDate{},
 		&recordmodel.ClinicRecord{},
+		&recordmodel.ClinicUserTicketBan{},
 		&recordmodel.ClinicRecordDevice{},
 		&recordmodel.ClinicRecordArrival{},
 		&recordmodel.ClinicRecordWorker{},
@@ -68,6 +69,81 @@ func TestTicketService_Create_HappyPath(t *testing.T) {
 	}
 	if device.LaptopModel != "ThinkPad X1" || device.Password != "pw" {
 		t.Errorf("device mismatch: %+v", device)
+	}
+}
+
+func TestTicketService_Create_RejectsActiveUserTicketBans(t *testing.T) {
+	tests := []struct {
+		name    string
+		ban     string
+		wantErr error
+	}{
+		{name: "global ban", ban: "global", wantErr: recordservice.ErrTicketUserBanned},
+		{name: "matching campus ban", ban: "campus", wantErr: recordservice.ErrTicketUserBanned},
+		{name: "other campus ban", ban: "other"},
+		{name: "expired global ban", ban: "expired"},
+		{name: "no ban", ban: "none"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db := setupTicketTestDB(t)
+			mainCampus := roommodel.ClinicCampus{Name: "Main"}
+			otherCampus := roommodel.ClinicCampus{Name: "Other"}
+			if err := db.Create(&mainCampus).Error; err != nil {
+				t.Fatalf("seed main campus: %v", err)
+			}
+			if err := db.Create(&otherCampus).Error; err != nil {
+				t.Fatalf("seed other campus: %v", err)
+			}
+			room := roommodel.ClinicRoom{Name: "中关村", Address: "addr", Enabled: true, CampusID: &mainCampus.ID}
+			if err := db.Create(&room).Error; err != nil {
+				t.Fatalf("seed room: %v", err)
+			}
+			day := testutil.FutureTruncatedDate(7)
+			serviceDate := schedulingmodel.ClinicServiceDate{
+				Capacity:  5,
+				RoomID:    &room.ID,
+				Date:      day,
+				StartTime: day.Add(9 * time.Hour),
+				EndTime:   day.Add(17 * time.Hour),
+				Title:     "open",
+			}
+			if err := db.Create(&serviceDate).Error; err != nil {
+				t.Fatalf("seed service date: %v", err)
+			}
+
+			switch tc.ban {
+			case "global", "expired":
+				expiry := time.Now().UTC().Add(time.Hour)
+				if tc.ban == "expired" {
+					expiry = time.Now().UTC().Add(-time.Hour)
+				}
+				if err := db.Create(&recordmodel.ClinicUserTicketBan{
+					UserID: "u", Reason: tc.name, ExpirateAt: expiry,
+				}).Error; err != nil {
+					t.Fatalf("seed global ban: %v", err)
+				}
+			case "campus", "other":
+				campusID := mainCampus.ID
+				if tc.ban == "other" {
+					campusID = otherCampus.ID
+				}
+				if err := db.Create(&recordmodel.ClinicUserTicketBan{
+					UserID: "u", CampusID: &campusID, Reason: tc.name, ExpirateAt: time.Now().UTC().Add(time.Hour),
+				}).Error; err != nil {
+					t.Fatalf("seed campus ban: %v", err)
+				}
+			}
+
+			svc := recordservice.NewTicketService(testutil.RawDB(t, db), nil)
+			_, err := svc.Create(recordservice.CreateTicketInput{
+				User: "u", Realname: "r", PhoneNum: "p", Campus: room.Name,
+				AppointmentTime: day, Description: "d",
+			})
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("expected %v, got %v", tc.wantErr, err)
+			}
+		})
 	}
 }
 

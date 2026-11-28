@@ -26,6 +26,7 @@ var (
 	ErrTicketOneWorking  = errors.New("您的未完成工单多于一个")
 	ErrTicketPastTime    = errors.New("无法选择过去的时间")
 	ErrTicketRoomMissing = errors.New("campus 不存在")
+	ErrTicketUserBanned  = errors.New("您已被暂停预约")
 	ErrTicketNotFound    = errors.New("record not found")
 	ErrTicketForbidden   = errors.New("forbidden")
 	ErrTicketInvalidDate = errors.New("invalid appointment_time")
@@ -38,6 +39,7 @@ type TicketService struct {
 	defaultTagID uint
 	tagger       TicketTagger
 	photoSvc     *PhotoService
+	banSvc       *UserTicketBanService
 }
 
 // ticketPhotoCleanupTimeout bounds post-delete photo cleanup so a slow object
@@ -54,7 +56,11 @@ func NewTicketService(db *database.DB, loc *time.Location) *TicketService {
 	if loc == nil {
 		loc = time.UTC
 	}
-	return &TicketService{db: db, loc: loc}
+	return &TicketService{
+		db:     db,
+		loc:    loc,
+		banSvc: NewUserTicketBanService(db),
+	}
 }
 
 // SetDefaultTagID sets the tag id assigned to newly created records.
@@ -121,6 +127,14 @@ func (s *TicketService) Create(in CreateTicketInput) (recordmodel.ClinicRecord, 
 		return recordmodel.ClinicRecord{}, ErrTicketInvalidDate
 	}
 	appointmentDate := calendar.DateInLocation(in.AppointmentTime, s.loc)
+
+	banned, err := s.banSvc.IsBanned(in.User, room.CampusID, time.Now())
+	if err != nil {
+		return recordmodel.ClinicRecord{}, err
+	}
+	if banned {
+		return recordmodel.ClinicRecord{}, ErrTicketUserBanned
+	}
 
 	if err := s.validateCreate(in.User, room.ID, appointmentDate); err != nil {
 		return recordmodel.ClinicRecord{}, err

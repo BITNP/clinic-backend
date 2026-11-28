@@ -32,6 +32,7 @@ func SetupTagTestDB(t *testing.T) *gorm.DB {
 		&roommodel.ClinicRoom{},
 		&schedulingmodel.ClinicServiceDate{},
 		&recordmodel.ClinicRecord{},
+		&recordmodel.ClinicUserTicketBan{},
 		&recordmodel.ClinicRecordDevice{},
 		&taggingmodel.ClinicRecordTag{},
 	); err != nil {

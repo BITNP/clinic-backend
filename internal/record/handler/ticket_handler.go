@@ -254,6 +254,7 @@ func WriteTicketError(c *gin.Context, err error) {
 		errors.Is(err, recordservice.ErrTicketOneWorking),
 		errors.Is(err, recordservice.ErrTicketPastTime),
 		errors.Is(err, recordservice.ErrTicketRoomMissing),
+		errors.Is(err, recordservice.ErrTicketUserBanned),
 		errors.Is(err, recordservice.ErrTicketInvalidDate):
 		c.JSON(http.StatusBadRequest, gin.H{"msg": err.Error()})
 	default:
