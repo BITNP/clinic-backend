@@ -72,6 +72,7 @@ func openDatabase() (*gorm.DB, *databasepkg.DB) {
 		&staffmodel.ClinicStaff{},
 		&staffmodel.ClinicStaffWorkyear{},
 		&recordmodel.ClinicRecord{},
+		&recordmodel.ClinicUserTicketBan{},
 		&taggingmodel.ClinicRecordTag{},
 		&recordmodel.ClinicRecordDevice{},
 		&recordmodel.ClinicRecordWorker{},
@@ -86,6 +87,9 @@ func openDatabase() (*gorm.DB, *databasepkg.DB) {
 		&schedulingmodel.ClinicWorkScheduleStaff{},
 	); err != nil {
 		log.Fatalf("failed to migrate: %v", err)
+	}
+	if err := ensureUserTicketBanIndexes(db); err != nil {
+		log.Fatalf("failed to create user ticket ban indexes: %v", err)
 	}
 	if err := MigrateAfterAutoMigrate(db); err != nil {
 		log.Fatalf("failed to run post-migration: %v", err)
@@ -118,4 +122,24 @@ func openDatabase() (*gorm.DB, *databasepkg.DB) {
 		rawDriver = databasepkg.DriverPostgres
 	}
 	return db, databasepkg.Wrap(sqlDB, rawDriver)
+}
+
+// ensureUserTicketBanIndexes enforces one configured ban per user and scope.
+// PostgreSQL permits multiple NULL values in an ordinary unique constraint, so
+// global and campus-scoped bans use separate partial unique indexes.
+func ensureUserTicketBanIndexes(db *gorm.DB) error {
+	statements := []string{
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_ticket_ban_global_user
+		 ON clinic_user_ticket_ban(user_id)
+		 WHERE campus_id IS NULL`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_ticket_ban_campus_user
+		 ON clinic_user_ticket_ban(user_id, campus_id)
+		 WHERE campus_id IS NOT NULL`,
+	}
+	for _, statement := range statements {
+		if err := db.Exec(statement).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }

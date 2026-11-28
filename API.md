@@ -702,6 +702,175 @@ curl "$BASE/api/admin/campuses/1/rooms?enabled=true&type=normal" \
   -b cookies.txt
 ```
 
+## Admin: user ticket bans
+
+A user ticket ban prevents a user from creating clinic tickets. A `global` ban
+applies to every campus; a `campus` ban applies only to tickets for rooms in that
+campus. Bans expire automatically when the current time reaches `expirate_at`.
+
+Staff and admin users can read bans. Only admin and superadmin users can create,
+update, or delete them. `user_id` and scope are immutable after creation.
+
+User ticket ban object:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | integer | Ban id. |
+| `user_id` | string | Banned account id, max 50 characters. |
+| `scope` | string | `global` or `campus`. Derived from `campus_id`. |
+| `campus_id` | integer or null | Campus id for a campus ban; null for a global ban. |
+| `reason` | string | Stored banning reason, max 500 characters. |
+| `expirate_at` | string | RFC3339 timestamp at which the ban stops applying. |
+| `active` | boolean | Whether `expirate_at` is after the current server time. |
+
+### `GET /api/admin/user-ticket-bans`
+
+**Description:** Lists user ticket bans, ordered by id ascending. Staff and
+admin.
+
+**Query parameters**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `user_id` | string | no | Exact user id match. |
+| `scope` | string | no | `global` or `campus`. Invalid values return `400`. |
+| `campus_id` | integer | no | Positive campus id. |
+| `active` | boolean string | no | `true` for unexpired bans, `false` for expired bans. |
+| `page` | integer | no | Default `1`. |
+| `pageSize` | integer | no | Default `20`. |
+
+**Response `200 OK`** — paginated user ticket ban objects.
+
+```json
+{
+  "items": [
+    {
+      "id": 1,
+      "user_id": "1120221234",
+      "scope": "campus",
+      "campus_id": 1,
+      "reason": "repeated abusive bookings",
+      "expirate_at": "2026-12-31T23:59:59+08:00",
+      "active": true
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "pageSize": 20
+}
+```
+
+**Error responses:** `400` (invalid query parameter), `401`, `403`, `500`.
+
+**curl**
+
+```bash
+curl "$BASE/api/admin/user-ticket-bans?scope=campus&active=true" \
+  -b cookies.txt
+```
+
+### `GET /api/admin/user-ticket-bans/{id}`
+
+**Description:** Returns one user ticket ban. Staff and admin.
+
+**Path parameter**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | integer | yes | Ban id. |
+
+**Response `200 OK`** — user ticket ban object.
+
+**Error responses:** `400`, `401`, `403`, `404`, `500`.
+
+**curl**
+
+```bash
+curl "$BASE/api/admin/user-ticket-bans/1" -b cookies.txt
+```
+
+### `POST /api/admin/user-ticket-bans`
+
+**Description:** Creates a global or campus-level user ticket ban. Admin only.
+Only one configured ban is allowed for the same user and scope.
+
+**Request body**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `user_id` | string | yes | Non-empty account id, max 50 characters. |
+| `scope` | string | yes | `global` or `campus`. |
+| `campus_id` | integer | conditional | Required for `campus`; must be omitted or null for `global`. |
+| `reason` | string | yes | Non-empty reason, max 500 characters. |
+| `expirate_at` | string | yes | Future RFC3339 timestamp. |
+
+**Response `201 Created`** — created user ticket ban object.
+
+**Error responses:** `400` (invalid field, unknown campus, or past expiration),
+`401`, `403`, `409` (same user and scope already configured), `500`.
+
+**curl**
+
+```bash
+curl -X POST "$BASE/api/admin/user-ticket-bans" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF" \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":"1120221234","scope":"campus","campus_id":1,"reason":"repeated abusive bookings","expirate_at":"2026-12-31T23:59:59+08:00"}'
+```
+
+### `PUT /api/admin/user-ticket-bans/{id}`
+
+**Description:** Updates a ban reason, expiration, or both. Admin only.
+Updating `expirate_at` to a future timestamp also reactivates an expired ban.
+
+**Path parameter**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | integer | yes | Ban id. |
+
+**Request body** — all fields optional:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `reason` | string | Non-empty reason, max 500 characters. |
+| `expirate_at` | string | Future RFC3339 timestamp. |
+
+**Response `200 OK`** — updated user ticket ban object.
+
+**Error responses:** `400`, `401`, `403`, `404`, `500`.
+
+**curl**
+
+```bash
+curl -X PUT "$BASE/api/admin/user-ticket-bans/1" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF" \
+  -H 'Content-Type: application/json' \
+  -d '{"reason":"extended after review","expirate_at":"2027-01-31T23:59:59+08:00"}'
+```
+
+### `DELETE /api/admin/user-ticket-bans/{id}`
+
+**Description:** Immediately removes a user ticket ban. The user can create
+tickets for that scope if no other active ban applies. Admin only.
+
+**Path parameter**
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | integer | yes | Ban id. |
+
+**Response `204 No Content`**
+
+**Error responses:** `400`, `401`, `403`, `404`, `500`.
+
+**curl**
+
+```bash
+curl -X DELETE "$BASE/api/admin/user-ticket-bans/1" \
+  -b cookies.txt -H "X-CSRF-Token: $CSRF"
+```
+
 ## Admin: rooms
 
 Room object:

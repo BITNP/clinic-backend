@@ -202,6 +202,8 @@ func Run() {
 	roomH := roomhandler.NewRoomHandler(roomSvc)
 	campusSvc := roomservice.NewCampusService(rawDB)
 	campusH := roomhandler.NewCampusHandler(campusSvc, roomSvc)
+	userTicketBanSvc := recordservice.NewUserTicketBanService(rawDB)
+	userTicketBanH := recordhandler.NewUserTicketBanHandler(userTicketBanSvc)
 
 	ticketSvc := recordservice.NewTicketService(rawDB, serviceDateLoc)
 	ticketSvc.SetDefaultTagID(recordTagSvc.DefaultID())
@@ -288,27 +290,28 @@ func Run() {
 	optionalAuth := authhandler.NewOptionalAdminAuthMiddleware(authCfg)
 
 	r := NewRouter(RouterConfig{
-		AnnouncementH: announcementH,
-		ServiceDateH:  serviceDateH,
-		CampusH:       campusH,
-		RoomH:         roomH,
-		ConfigH:       configH,
-		JournalH:      journalH,
-		StaffH:        staffH,
-		WorkScheduleH: workScheduleH,
-		AdminRecordH:  adminRecordH,
-		TicketH:       ticketH,
-		LegacyH:       legacyH,
-		CASHandler:    casHandler,
-		UserH:         userH,
-		SyncH:         syncH,
-		AdminAuth:     adminAuth,
-		OptionalAuth:  optionalAuth,
-		ClientAuth:    clientAuth,
-		SyncSvc:       syncSvc,
-		RedisClient:   redisClient,
-		PhotoH:        photoH,
-		MultimeterH:   multimeterH,
+		AnnouncementH:  announcementH,
+		ServiceDateH:   serviceDateH,
+		CampusH:        campusH,
+		UserTicketBanH: userTicketBanH,
+		RoomH:          roomH,
+		ConfigH:        configH,
+		JournalH:       journalH,
+		StaffH:         staffH,
+		WorkScheduleH:  workScheduleH,
+		AdminRecordH:   adminRecordH,
+		TicketH:        ticketH,
+		LegacyH:        legacyH,
+		CASHandler:     casHandler,
+		UserH:          userH,
+		SyncH:          syncH,
+		AdminAuth:      adminAuth,
+		OptionalAuth:   optionalAuth,
+		ClientAuth:     clientAuth,
+		SyncSvc:        syncSvc,
+		RedisClient:    redisClient,
+		PhotoH:         photoH,
+		MultimeterH:    multimeterH,
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

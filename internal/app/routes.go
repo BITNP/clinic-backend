@@ -20,78 +20,81 @@ import (
 // RouterConfig contains the handlers and shared dependencies used to build the
 // HTTP route tree.
 type RouterConfig struct {
-	AnnouncementH *announcement.AnnouncementHandler
-	ServiceDateH  *schedulinghandler.ServiceDateHandler
-	CampusH       *roomhandler.CampusHandler
-	RoomH         *roomhandler.RoomHandler
-	ConfigH       *confighandler.ConfigHandler
-	JournalH      *journalhandler.Handler
-	StaffH        *staffhandler.StaffHandler
-	WorkScheduleH *schedulinghandler.WorkScheduleHandler
-	AdminRecordH  *recordhandler.AdminRecordHandler
-	TicketH       *recordhandler.TicketHandler
-	PhotoH        *recordhandler.PhotoHandler
-	MultimeterH   *multimeter.Handler
-	LegacyH       *legacy.LegacyHandler
-	CASHandler    *authhandler.CASAuthHandler
-	UserH         *authhandler.UserHandler
-	SyncH         *changes.SyncHandler
-	AdminAuth     gin.HandlerFunc
-	OptionalAuth  gin.HandlerFunc
-	ClientAuth    gin.HandlerFunc
-	SyncSvc       *changes.SyncService
-	RedisClient   *redis.Client
+	AnnouncementH  *announcement.AnnouncementHandler
+	ServiceDateH   *schedulinghandler.ServiceDateHandler
+	CampusH        *roomhandler.CampusHandler
+	UserTicketBanH *recordhandler.UserTicketBanHandler
+	RoomH          *roomhandler.RoomHandler
+	ConfigH        *confighandler.ConfigHandler
+	JournalH       *journalhandler.Handler
+	StaffH         *staffhandler.StaffHandler
+	WorkScheduleH  *schedulinghandler.WorkScheduleHandler
+	AdminRecordH   *recordhandler.AdminRecordHandler
+	TicketH        *recordhandler.TicketHandler
+	PhotoH         *recordhandler.PhotoHandler
+	MultimeterH    *multimeter.Handler
+	LegacyH        *legacy.LegacyHandler
+	CASHandler     *authhandler.CASAuthHandler
+	UserH          *authhandler.UserHandler
+	SyncH          *changes.SyncHandler
+	AdminAuth      gin.HandlerFunc
+	OptionalAuth   gin.HandlerFunc
+	ClientAuth     gin.HandlerFunc
+	SyncSvc        *changes.SyncService
+	RedisClient    *redis.Client
 }
 
 // NewRouter builds the backend HTTP route tree from cfg.
 func NewRouter(cfg RouterConfig) *gin.Engine {
 	return routeHandlers{
-		announcementH: cfg.AnnouncementH,
-		serviceDateH:  cfg.ServiceDateH,
-		campusH:       cfg.CampusH,
-		roomH:         cfg.RoomH,
-		configH:       cfg.ConfigH,
-		journalH:      cfg.JournalH,
-		staffH:        cfg.StaffH,
-		workScheduleH: cfg.WorkScheduleH,
-		adminRecordH:  cfg.AdminRecordH,
-		ticketH:       cfg.TicketH,
-		photoH:        cfg.PhotoH,
-		multimeterH:   cfg.MultimeterH,
-		legacyH:       cfg.LegacyH,
-		casHandler:    cfg.CASHandler,
-		userH:         cfg.UserH,
-		syncH:         cfg.SyncH,
-		adminAuth:     cfg.AdminAuth,
-		optionalAuth:  cfg.OptionalAuth,
-		clientAuth:    cfg.ClientAuth,
-		syncSvc:       cfg.SyncSvc,
-		redisClient:   cfg.RedisClient,
+		announcementH:  cfg.AnnouncementH,
+		serviceDateH:   cfg.ServiceDateH,
+		campusH:        cfg.CampusH,
+		userTicketBanH: cfg.UserTicketBanH,
+		roomH:          cfg.RoomH,
+		configH:        cfg.ConfigH,
+		journalH:       cfg.JournalH,
+		staffH:         cfg.StaffH,
+		workScheduleH:  cfg.WorkScheduleH,
+		adminRecordH:   cfg.AdminRecordH,
+		ticketH:        cfg.TicketH,
+		photoH:         cfg.PhotoH,
+		multimeterH:    cfg.MultimeterH,
+		legacyH:        cfg.LegacyH,
+		casHandler:     cfg.CASHandler,
+		userH:          cfg.UserH,
+		syncH:          cfg.SyncH,
+		adminAuth:      cfg.AdminAuth,
+		optionalAuth:   cfg.OptionalAuth,
+		clientAuth:     cfg.ClientAuth,
+		syncSvc:        cfg.SyncSvc,
+		redisClient:    cfg.RedisClient,
 	}.router()
 }
 
 type routeHandlers struct {
-	announcementH *announcement.AnnouncementHandler
-	serviceDateH  *schedulinghandler.ServiceDateHandler
-	campusH       *roomhandler.CampusHandler
-	roomH         *roomhandler.RoomHandler
-	configH       *confighandler.ConfigHandler
-	journalH      *journalhandler.Handler
-	staffH        *staffhandler.StaffHandler
-	workScheduleH *schedulinghandler.WorkScheduleHandler
-	adminRecordH  *recordhandler.AdminRecordHandler
-	ticketH       *recordhandler.TicketHandler
-	photoH        *recordhandler.PhotoHandler
-	multimeterH   *multimeter.Handler
-	legacyH       *legacy.LegacyHandler
-	casHandler    *authhandler.CASAuthHandler
-	userH         *authhandler.UserHandler
-	syncH         *changes.SyncHandler
-	adminAuth     gin.HandlerFunc
-	optionalAuth  gin.HandlerFunc
-	clientAuth    gin.HandlerFunc
-	syncSvc       *changes.SyncService
-	redisClient   *redis.Client
+	announcementH  *announcement.AnnouncementHandler
+	serviceDateH   *schedulinghandler.ServiceDateHandler
+	campusH        *roomhandler.CampusHandler
+	userTicketBanH *recordhandler.UserTicketBanHandler
+	roomH          *roomhandler.RoomHandler
+	configH        *confighandler.ConfigHandler
+	journalH       *journalhandler.Handler
+	staffH         *staffhandler.StaffHandler
+	workScheduleH  *schedulinghandler.WorkScheduleHandler
+	adminRecordH   *recordhandler.AdminRecordHandler
+	ticketH        *recordhandler.TicketHandler
+	photoH         *recordhandler.PhotoHandler
+	multimeterH    *multimeter.Handler
+	legacyH        *legacy.LegacyHandler
+	casHandler     *authhandler.CASAuthHandler
+	userH          *authhandler.UserHandler
+	syncH          *changes.SyncHandler
+	adminAuth      gin.HandlerFunc
+	optionalAuth   gin.HandlerFunc
+	clientAuth     gin.HandlerFunc
+	syncSvc        *changes.SyncService
+	redisClient    *redis.Client
 }
 
 func (h routeHandlers) router() *gin.Engine {
@@ -154,6 +157,22 @@ func (h routeHandlers) router() *gin.Engine {
 		campusWrite.POST("", h.campusH.Create)
 		campusWrite.PUT("/:id", h.campusH.Update)
 		campusWrite.DELETE("/:id", h.campusH.Delete)
+	}
+
+	// ── Admin: User Ticket Bans ──────────────────────────────────────────
+	// Staff can inspect booking restrictions; admin can change them.
+	ticketBanRead := r.Group("/api/admin/user-ticket-bans")
+	ticketBanRead.Use(h.adminAuth, authhandler.RequireStaff)
+	{
+		ticketBanRead.GET("", h.userTicketBanH.List)
+		ticketBanRead.GET("/:id", h.userTicketBanH.Get)
+	}
+	ticketBanWrite := r.Group("/api/admin/user-ticket-bans")
+	ticketBanWrite.Use(h.adminAuth, authhandler.RequireAdmin)
+	{
+		ticketBanWrite.POST("", h.userTicketBanH.Create)
+		ticketBanWrite.PUT("/:id", h.userTicketBanH.Update)
+		ticketBanWrite.DELETE("/:id", h.userTicketBanH.Delete)
 	}
 
 	// ── Admin: Rooms ──────────────────────────────────────────────────────
