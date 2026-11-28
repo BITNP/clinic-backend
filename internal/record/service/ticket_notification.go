@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -508,34 +507,5 @@ func formatBanDurationHours(hours int64) string {
 	if hours <= 0 {
 		return ""
 	}
-	if hours%24 == 0 {
-		return formatChineseDurationNumber(hours/24) + "天"
-	}
-	return formatChineseDurationNumber(hours) + "小时"
-}
-
-func formatChineseDurationNumber(value int64) string {
-	if value == 2 {
-		return "两"
-	}
-	return formatChineseNumber(value)
-}
-
-func formatChineseNumber(value int64) string {
-	if value < 0 || value >= 100 {
-		return strconv.FormatInt(value, 10)
-	}
-	digits := [...]string{"零", "一", "二", "三", "四", "五", "六", "七", "八", "九"}
-	if value < 10 {
-		return digits[value]
-	}
-	tens, ones := value/10, value%10
-	prefix := ""
-	if tens > 1 {
-		prefix = digits[tens]
-	}
-	if ones == 0 {
-		return prefix + "十"
-	}
-	return prefix + "十" + digits[ones]
+	return fmt.Sprintf("%d小时", hours)
 }

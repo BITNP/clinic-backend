@@ -273,7 +273,7 @@ Available template fields:
 | `TRLO` | Confirmed room address resolved from the selected room. |
 | `REAS` | Rejection or referral reason. |
 | `QQAC` | `DINGTALK_NOTIFICATION_QQ_ACCOUNT`. |
-| `BANDU` | Real no-show ban duration from the record campus policy. Whole days use Chinese numerals such as `两天`; other durations use hours such as `三十六小时`. |
+| `BANDU` | Real no-show ban duration from the record campus policy, always formatted as numeric hours such as `48小时` or `36小时`. |
 
 Template example:
 

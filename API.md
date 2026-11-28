@@ -1513,7 +1513,7 @@ creates or extends a global or campus ban until the transition time plus
 No-show DingTalk notifications use `DINGTALK_TEMPLATE_NO_SHOW` when the campus
 policy is enabled and `DINGTALK_TEMPLATE_NO_SHOW_NO_BAN` when it is disabled.
 The ban-mode template can use `BANDU`, which renders the campus policy duration
-as a customer-facing duration such as `两天` or `三十六小时`.
+as numeric hours such as `48小时` or `36小时`.
 
 DingTalk message text is rendered from configurable templates. The available
 fields are `HEDR`, `DATE`, `ID`, `ROOM`, `LOCA`, `TRRO`, `TRLO`, `REAS`,

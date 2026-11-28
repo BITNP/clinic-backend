@@ -182,7 +182,7 @@ func TestDingTalkTicketNotifierFormatsStatusMessages(t *testing.T) {
 				t.Errorf("Receivers = %q, want ding-user-42", request.Receivers)
 			}
 			wantContent := "测试协会|2026-11-20的18:30-21:00|#42|徐特立图书馆|徐特立图书馆三楼311G研讨室|徐特立图书馆|徐特立图书馆三楼311G研讨室|" +
-				tt.reason + "|123456|两天"
+				tt.reason + "|123456|48小时"
 			wantTitle := "状态通知"
 			if tt.transfer {
 				wantTitle = "工单转诊"
@@ -304,9 +304,10 @@ func TestDingTalkTicketNotifierSelectsNoShowTemplate(t *testing.T) {
 		durationHours int64
 		want          string
 	}{
-		{name: "ban mode days", banMode: true, durationHours: 48, want: "封禁模式 两天"},
-		{name: "ban mode hours", banMode: true, durationHours: 36, want: "封禁模式 三十六小时"},
-		{name: "ban mode large duration", banMode: true, durationHours: 2400, want: "封禁模式 100天"},
+		{name: "ban mode 48 hours", banMode: true, durationHours: 48, want: "封禁模式 48小时"},
+		{name: "ban mode 24 hours", banMode: true, durationHours: 24, want: "封禁模式 24小时"},
+		{name: "ban mode 36 hours", banMode: true, durationHours: 36, want: "封禁模式 36小时"},
+		{name: "ban mode 2400 hours", banMode: true, durationHours: 2400, want: "封禁模式 2400小时"},
 		{name: "non-ban mode", want: "非封禁模式 2026-11-20的18:30-20:30"},
 	}
 	for _, tt := range tests {

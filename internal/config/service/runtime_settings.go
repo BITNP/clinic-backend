@@ -904,7 +904,7 @@ func validateDingTalkTemplate(name, value string) error {
 		"TRLO":  "transfer address",
 		"REAS":  "reason",
 		"QQAC":  "QQ",
-		"BANDU": "two days",
+		"BANDU": "48小时",
 	}); err != nil {
 		return fmt.Errorf("%w: %s must be a valid template", ErrConfigValueInvalid, name)
 	}
