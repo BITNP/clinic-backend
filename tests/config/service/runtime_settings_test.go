@@ -255,6 +255,7 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	if settings.DingTalk.NotificationTitle != configservice.DefaultDingTalkNotificationTitle ||
 		settings.DingTalk.NotificationHeader != configservice.DefaultDingTalkNotificationHeader ||
 		settings.DingTalk.ConfirmedTemplate != configservice.DefaultDingTalkConfirmedTemplate ||
+		settings.DingTalk.NoShowNoBanTemplate != configservice.DefaultDingTalkNoShowNoBanTemplate ||
 		settings.DingTalk.ReminderTemplate != configservice.DefaultDingTalkReminderTemplate {
 		t.Errorf("DingTalk notification defaults = %+v", settings.DingTalk)
 	}
@@ -271,8 +272,20 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 	if err := db.Model(&configmodel.ClinicConfigItem{}).Count(&itemCount).Error; err != nil {
 		t.Fatalf("count items: %v", err)
 	}
-	if groupCount != 4 || itemCount != 37 {
-		t.Errorf("seeded counts = %d groups, %d items; want 4 and 37", groupCount, itemCount)
+	if groupCount != 4 || itemCount != 38 {
+		t.Errorf("seeded counts = %d groups, %d items; want 4 and 38", groupCount, itemCount)
+	}
+	for name, want := range map[string]string{
+		"DINGTALK_TEMPLATE_NO_SHOW":        "钉钉爽约封禁模式模板",
+		"DINGTALK_TEMPLATE_NO_SHOW_NO_BAN": "钉钉爽约非封禁模式模板",
+	} {
+		var item configmodel.ClinicConfigItem
+		if err := db.Where("name = ?", name).First(&item).Error; err != nil {
+			t.Fatalf("load %s: %v", name, err)
+		}
+		if item.DisplayName != want {
+			t.Errorf("%s display_name = %q, want %q", name, item.DisplayName, want)
+		}
 	}
 
 	var taggerKey configmodel.ClinicConfigItem

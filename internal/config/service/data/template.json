@@ -398,8 +398,8 @@
     },
     {
       "name": "DINGTALK_TEMPLATE_NO_SHOW",
-      "display_name": "钉钉未到店模板",
-      "hint": "支持 HEDR、DATE、ID、ROOM、LOCA、TRRO、TRLO、REAS、QQAC；保存时校验语法。",
+      "display_name": "钉钉爽约封禁模式模板",
+      "hint": "校区启用未到访封禁策略时使用；支持 HEDR、DATE、ID、ROOM、LOCA、TRRO、TRLO、REAS、QQAC。",
       "value_type": "string",
       "group": "dingtalk",
       "sort_order": 17,
@@ -408,12 +408,23 @@
       "default": "【{{.HEDR}}】由于您未在值班时间前往诊所，您于{{.DATE}}的预约已关闭。未到诊所会导致您后两天无法预约。若您并未未到诊所，请联系{{.QQAC}}进行申诉。\n感谢您对网协工作的理解！"
     },
     {
+      "name": "DINGTALK_TEMPLATE_NO_SHOW_NO_BAN",
+      "display_name": "钉钉爽约非封禁模式模板",
+      "hint": "校区未启用未到访封禁策略时使用；支持 HEDR、DATE、ID、ROOM、LOCA、TRRO、TRLO、REAS、QQAC。",
+      "value_type": "string",
+      "group": "dingtalk",
+      "sort_order": 18,
+      "is_required": true,
+      "role_level": "admin",
+      "default": "未到诊所（不启用黑名单）\n【{{.HEDR}}】由于您未在值班时间前往诊所，您于{{.DATE}}的预约已关闭。下次请务必按时前往诊所。\n感谢您对网协工作的理解！"
+    },
+    {
       "name": "DINGTALK_TEMPLATE_REMINDER",
       "display_name": "钉钉到店提醒模板",
       "hint": "支持 HEDR、DATE、ID、ROOM、LOCA、TRRO、TRLO、REAS、QQAC；保存时校验语法。",
       "value_type": "string",
       "group": "dingtalk",
-      "sort_order": 18,
+      "sort_order": 19,
       "is_required": true,
       "role_level": "admin",
       "default": "【{{.HEDR}}】您预约的位于{{.ROOM}}的值班即将开始，请在{{.DATE}}前往{{.ROOM}}诊室。诊所地址为{{.LOCA}}。"

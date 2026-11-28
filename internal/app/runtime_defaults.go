@@ -38,6 +38,7 @@ func legacyRuntimeSettingValues(getenv func(string) string) map[string]string {
 		"DINGTALK_TEMPLATE_REFERRED",
 		"DINGTALK_TEMPLATE_TRANSFER",
 		"DINGTALK_TEMPLATE_NO_SHOW",
+		"DINGTALK_TEMPLATE_NO_SHOW_NO_BAN",
 		"DINGTALK_TEMPLATE_REMINDER",
 	}
 	values := make(map[string]string, len(names))
