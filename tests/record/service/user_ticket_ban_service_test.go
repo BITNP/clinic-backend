@@ -269,6 +269,54 @@ func TestUserTicketBanService_IsBanned(t *testing.T) {
 	}
 }
 
+func TestUserTicketBanService_ActiveBanReasonAndPrecedence(t *testing.T) {
+	db := setupUserTicketBanTestDB(t)
+	campus := roommodel.ClinicCampus{Name: "Main"}
+	if err := db.Create(&campus).Error; err != nil {
+		t.Fatalf("seed campus: %v", err)
+	}
+	svc := recordservice.NewUserTicketBanService(testutil.RawDB(t, db))
+	future := time.Now().UTC().Add(time.Hour)
+	if _, err := svc.Create(recordservice.CreateUserTicketBanInput{
+		UserID: "both", Scope: recordservice.UserTicketBanScopeCampus, CampusID: &campus.ID,
+		Reason: "campus reason", ExpirateAt: future,
+	}); err != nil {
+		t.Fatalf("create campus ban: %v", err)
+	}
+	if _, err := svc.Create(recordservice.CreateUserTicketBanInput{
+		UserID: "both", Scope: recordservice.UserTicketBanScopeGlobal,
+		Reason: "global reason", ExpirateAt: future,
+	}); err != nil {
+		t.Fatalf("create global ban: %v", err)
+	}
+	if _, err := svc.Create(recordservice.CreateUserTicketBanInput{
+		UserID: "campus-only", Scope: recordservice.UserTicketBanScopeCampus, CampusID: &campus.ID,
+		Reason: "campus-only reason", ExpirateAt: future,
+	}); err != nil {
+		t.Fatalf("create campus-only ban: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		userID     string
+		wantReason string
+	}{
+		{name: "global takes precedence", userID: "both", wantReason: "global reason"},
+		{name: "campus reason", userID: "campus-only", wantReason: "campus-only reason"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ban, err := svc.ActiveBan(tc.userID, &campus.ID, time.Now())
+			if err != nil {
+				t.Fatalf("active ban: %v", err)
+			}
+			if ban == nil || ban.Reason != tc.wantReason {
+				t.Fatalf("active ban = %+v, want reason %q", ban, tc.wantReason)
+			}
+		})
+	}
+}
+
 func TestUserTicketBanServicePostgres(t *testing.T) {
 	db, gormDB := setupRecordPostgres(t)
 	firstCampus := roommodel.ClinicCampus{Name: "First"}

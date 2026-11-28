@@ -32,6 +32,18 @@ var (
 	ErrTicketInvalidDate = errors.New("invalid appointment_time")
 )
 
+type ticketUserBannedError struct {
+	reason string
+}
+
+func (e ticketUserBannedError) Error() string {
+	return e.reason
+}
+
+func (e ticketUserBannedError) Unwrap() error {
+	return ErrTicketUserBanned
+}
+
 // TicketService implements the customer-facing booking flow.
 type TicketService struct {
 	db           *database.DB
@@ -128,12 +140,16 @@ func (s *TicketService) Create(in CreateTicketInput) (recordmodel.ClinicRecord, 
 	}
 	appointmentDate := calendar.DateInLocation(in.AppointmentTime, s.loc)
 
-	banned, err := s.banSvc.IsBanned(in.User, room.CampusID, time.Now())
+	activeBan, err := s.banSvc.ActiveBan(in.User, room.CampusID, time.Now())
 	if err != nil {
 		return recordmodel.ClinicRecord{}, err
 	}
-	if banned {
-		return recordmodel.ClinicRecord{}, ErrTicketUserBanned
+	if activeBan != nil {
+		reason := strings.TrimSpace(activeBan.Reason)
+		if reason == "" {
+			reason = ErrTicketUserBanned.Error()
+		}
+		return recordmodel.ClinicRecord{}, ticketUserBannedError{reason: reason}
 	}
 
 	if err := s.validateCreate(in.User, room.ID, appointmentDate); err != nil {

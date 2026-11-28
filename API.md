@@ -2738,6 +2738,7 @@ Booking rules:
 
 1. Ticket creation is refused while the customer has an active global ban or an
    active ban for the campus of the requested room. Expired bans do not apply.
+   When both scopes match, the global ban's reason is returned.
 2. `campus` must name an existing room.
 3. A service date must exist for that room and day.
 4. Ticketed bookings must be below the service date capacity.
@@ -2789,9 +2790,9 @@ the `record` counter.
 **Response `201 Created`** — ticket view.
 
 **Error responses:** `400` with `{"msg": "..."}` for booking violations
-(`您已被暂停预约`, `campus 不存在`, date closed, no capacity, already one
-unfinished booking, past date) or invalid `appointment_time`; `400` with
-`{"error": "..."}` for malformed bodies; `401`, `500`.
+(the active ban's stored `reason`, `campus 不存在`, date closed, no capacity,
+already one unfinished booking, past date) or invalid `appointment_time`; `400`
+with `{"error": "..."}` for malformed bodies; `401`, `500`.
 
 **curl**
 

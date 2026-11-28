@@ -203,8 +203,8 @@ func TestLegacy_CreateRecord_BannedUser(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp["msg"] != recordservice.ErrTicketUserBanned.Error() {
-		t.Fatalf("expected banned message, got %v", resp)
+	if resp["msg"] != "abuse" {
+		t.Fatalf("expected stored ban reason, got %v", resp)
 	}
 }
 

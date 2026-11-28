@@ -332,23 +332,47 @@ func (s *UserTicketBanService) Delete(id uint) error {
 	return nil
 }
 
-// IsBanned reports whether userID has an active global ban or an active ban
-// for campusID at the supplied time.
-func (s *UserTicketBanService) IsBanned(userID string, campusID *uint, at time.Time) (bool, error) {
-	if strings.TrimSpace(userID) == "" {
-		return false, nil
+// ActiveBan returns the active global ban or matching campus ban for userID.
+// A global ban takes precedence when both scopes match.
+func (s *UserTicketBanService) ActiveBan(userID string, campusID *uint, at time.Time) (*recordmodel.ClinicUserTicketBan, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil, nil
 	}
-	var banned bool
-	if err := s.db.QueryRow(
-		`SELECT EXISTS(
-			SELECT 1 FROM clinic_user_ticket_ban
+	query := `SELECT ` + userTicketBanColumns + `
+		FROM clinic_user_ticket_ban
+		WHERE user_id = $1
+		  AND expirate_at > $2
+		  AND campus_id IS NULL
+		ORDER BY id ASC
+		LIMIT 1`
+	args := []any{userID, at.UTC()}
+	if campusID != nil {
+		query = `SELECT ` + userTicketBanColumns + `
+			FROM clinic_user_ticket_ban
 			WHERE user_id = $1
 			  AND expirate_at > $2
 			  AND (campus_id IS NULL OR campus_id = $3)
-		)`,
-		userID, at.UTC(), nullableUint(campusID),
-	).Scan(&banned); err != nil {
-		return false, fmt.Errorf("check user ticket ban: %w", err)
+			ORDER BY CASE WHEN campus_id IS NULL THEN 0 ELSE 1 END, id ASC
+			LIMIT 1`
+		args = append(args, *campusID)
 	}
-	return banned, nil
+	ban, err := scanUserTicketBan(s.db.QueryRow(query, args...))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find active user ticket ban: %w", err)
+	}
+	return &ban, nil
+}
+
+// IsBanned reports whether userID has an active global ban or an active ban
+// for campusID at the supplied time.
+func (s *UserTicketBanService) IsBanned(userID string, campusID *uint, at time.Time) (bool, error) {
+	ban, err := s.ActiveBan(userID, campusID, at)
+	if err != nil {
+		return false, err
+	}
+	return ban != nil, nil
 }

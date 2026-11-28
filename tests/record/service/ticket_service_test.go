@@ -74,12 +74,13 @@ func TestTicketService_Create_HappyPath(t *testing.T) {
 
 func TestTicketService_Create_RejectsActiveUserTicketBans(t *testing.T) {
 	tests := []struct {
-		name    string
-		ban     string
-		wantErr error
+		name        string
+		ban         string
+		wantErr     error
+		wantMessage string
 	}{
-		{name: "global ban", ban: "global", wantErr: recordservice.ErrTicketUserBanned},
-		{name: "matching campus ban", ban: "campus", wantErr: recordservice.ErrTicketUserBanned},
+		{name: "global ban", ban: "global", wantErr: recordservice.ErrTicketUserBanned, wantMessage: "global ban"},
+		{name: "matching campus ban", ban: "campus", wantErr: recordservice.ErrTicketUserBanned, wantMessage: "matching campus ban"},
 		{name: "other campus ban", ban: "other"},
 		{name: "expired global ban", ban: "expired"},
 		{name: "no ban", ban: "none"},
@@ -142,6 +143,9 @@ func TestTicketService_Create_RejectsActiveUserTicketBans(t *testing.T) {
 			})
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("expected %v, got %v", tc.wantErr, err)
+			}
+			if tc.wantMessage != "" && (err == nil || err.Error() != tc.wantMessage) {
+				t.Fatalf("error message = %v, want %q", err, tc.wantMessage)
 			}
 		})
 	}
