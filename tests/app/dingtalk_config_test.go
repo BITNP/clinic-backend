@@ -47,6 +47,7 @@ func TestLoadDingTalkConfig(t *testing.T) {
 		!strings.Contains(cfg.Notification.ReferredTemplate, "建议联系售后进行维修") ||
 		!strings.Contains(cfg.Notification.ReferredTemplate, "{{.REAS}}") ||
 		!strings.Contains(cfg.Notification.NoShowBanTemplate, "{{.QQAC}}") ||
+		!strings.Contains(cfg.Notification.NoShowBanTemplate, "{{.BANDU}}") ||
 		!strings.Contains(cfg.Notification.NoShowNoBanTemplate, "未到诊所（不启用黑名单）") {
 		t.Errorf("notification templates = %+v", cfg.Notification)
 	}

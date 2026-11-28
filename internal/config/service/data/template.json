@@ -399,13 +399,13 @@
     {
       "name": "DINGTALK_TEMPLATE_NO_SHOW",
       "display_name": "钉钉爽约封禁模式模板",
-      "hint": "校区启用未到访封禁策略时使用；支持 HEDR、DATE、ID、ROOM、LOCA、TRRO、TRLO、REAS、QQAC。",
+      "hint": "校区启用未到访封禁策略时使用；BANDU 为实际封禁时长。支持 HEDR、DATE、ID、ROOM、LOCA、TRRO、TRLO、REAS、QQAC、BANDU。",
       "value_type": "string",
       "group": "dingtalk",
       "sort_order": 17,
       "is_required": true,
       "role_level": "admin",
-      "default": "【{{.HEDR}}】由于您未在值班时间前往诊所，您于{{.DATE}}的预约已关闭。未到诊所会导致您后两天无法预约。若您并未未到诊所，请联系{{.QQAC}}进行申诉。\n感谢您对网协工作的理解！"
+      "default": "【{{.HEDR}}】由于您未在值班时间前往诊所，您于{{.DATE}}的预约已关闭。未到诊所会导致您后{{.BANDU}}无法预约。若您并未未到诊所，请联系{{.QQAC}}进行申诉。\n感谢您对网协工作的理解！"
     },
     {
       "name": "DINGTALK_TEMPLATE_NO_SHOW_NO_BAN",

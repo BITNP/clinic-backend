@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -286,6 +287,25 @@ func TestConfigService_EnsureRuntimeSettingsSeedsDefaults(t *testing.T) {
 		if item.DisplayName != want {
 			t.Errorf("%s display_name = %q, want %q", name, item.DisplayName, want)
 		}
+	}
+	if err := db.Model(&configmodel.ClinicConfigItem{}).
+		Where("name = ?", "DINGTALK_TEMPLATE_NO_SHOW").
+		Update("value", strings.ReplaceAll(
+			configservice.DefaultDingTalkNoShowTemplate,
+			"{{.BANDU}}",
+			"两天",
+		)).Error; err != nil {
+		t.Fatalf("seed legacy no-show template: %v", err)
+	}
+	if err := svc.EnsureRuntimeSettings(); err != nil {
+		t.Fatalf("migrate legacy no-show template: %v", err)
+	}
+	var noShowTemplate configmodel.ClinicConfigItem
+	if err := db.Where("name = ?", "DINGTALK_TEMPLATE_NO_SHOW").First(&noShowTemplate).Error; err != nil {
+		t.Fatalf("load migrated no-show template: %v", err)
+	}
+	if noShowTemplate.Value != configservice.DefaultDingTalkNoShowTemplate {
+		t.Fatalf("migrated no-show template = %q", noShowTemplate.Value)
 	}
 
 	var taggerKey configmodel.ClinicConfigItem

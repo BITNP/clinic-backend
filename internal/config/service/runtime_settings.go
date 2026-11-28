@@ -68,16 +68,17 @@ const (
 const DefaultServiceDateReminderTemplate = `[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待审核工单，请及时处理。`
 
 const (
-	DefaultDingTalkNotificationTitle   = "电脑诊所工单状态更新"
-	DefaultDingTalkNotificationHeader  = "网络开拓者协会"
-	DefaultDingTalkConfirmedTemplate   = "【{{.HEDR}}】您的预约已通过，请于{{.DATE}}前往{{.ROOM}}诊室。诊室地址为{{.LOCA}}。若因故无法按时前往，请在电脑义诊平台删除预约。\n感谢您对网协工作的理解！"
-	DefaultDingTalkRejectedTemplate    = "【{{.HEDR}}】您于{{.DATE}}的预约被驳回，驳回原因为：\n{{.REAS}}\n感谢您对网协工作的理解！"
-	DefaultDingTalkReferredTemplate    = "【{{.HEDR}}】您于{{.DATE}}的预约建议联系售后进行维修，详细情况说明：\n{{.REAS}}\n感谢您对网协工作的理解！"
-	DefaultDingTalkTransferTemplate    = "【{{.HEDR}}】您于{{.DATE}}的预约被转送至{{.TRRO}}，请在预约时间前往{{.TRRO}}。诊室地址为{{.TRLO}}。\n感谢您对网协工作的理解！"
-	DefaultDingTalkNoShowTemplate      = "【{{.HEDR}}】由于您未在值班时间前往诊所，您于{{.DATE}}的预约已关闭。未到诊所会导致您后两天无法预约。若您并未未到诊所，请联系{{.QQAC}}进行申诉。\n感谢您对网协工作的理解！"
-	DefaultDingTalkNoShowNoBanTemplate = "未到诊所（不启用黑名单）\n【{{.HEDR}}】由于您未在值班时间前往诊所，您于{{.DATE}}的预约已关闭。下次请务必按时前往诊所。\n感谢您对网协工作的理解！"
-	DefaultDingTalkReminderTemplate    = "【{{.HEDR}}】您预约的位于{{.ROOM}}的值班即将开始，请在{{.DATE}}前往{{.ROOM}}诊室。诊所地址为{{.LOCA}}。"
-	DefaultDingTalkTransferTitle       = "工单转诊"
+	DefaultDingTalkNotificationTitle    = "电脑诊所工单状态更新"
+	DefaultDingTalkNotificationHeader   = "网络开拓者协会"
+	DefaultDingTalkConfirmedTemplate    = "【{{.HEDR}}】您的预约已通过，请于{{.DATE}}前往{{.ROOM}}诊室。诊室地址为{{.LOCA}}。若因故无法按时前往，请在电脑义诊平台删除预约。\n感谢您对网协工作的理解！"
+	DefaultDingTalkRejectedTemplate     = "【{{.HEDR}}】您于{{.DATE}}的预约被驳回，驳回原因为：\n{{.REAS}}\n感谢您对网协工作的理解！"
+	DefaultDingTalkReferredTemplate     = "【{{.HEDR}}】您于{{.DATE}}的预约建议联系售后进行维修，详细情况说明：\n{{.REAS}}\n感谢您对网协工作的理解！"
+	DefaultDingTalkTransferTemplate     = "【{{.HEDR}}】您于{{.DATE}}的预约被转送至{{.TRRO}}，请在预约时间前往{{.TRRO}}。诊室地址为{{.TRLO}}。\n感谢您对网协工作的理解！"
+	DefaultDingTalkNoShowTemplate       = "【{{.HEDR}}】由于您未在值班时间前往诊所，您于{{.DATE}}的预约已关闭。未到诊所会导致您后{{.BANDU}}无法预约。若您并未未到诊所，请联系{{.QQAC}}进行申诉。\n感谢您对网协工作的理解！"
+	DefaultDingTalkNoShowNoBanTemplate  = "未到诊所（不启用黑名单）\n【{{.HEDR}}】由于您未在值班时间前往诊所，您于{{.DATE}}的预约已关闭。下次请务必按时前往诊所。\n感谢您对网协工作的理解！"
+	DefaultDingTalkReminderTemplate     = "【{{.HEDR}}】您预约的位于{{.ROOM}}的值班即将开始，请在{{.DATE}}前往{{.ROOM}}诊室。诊所地址为{{.LOCA}}。"
+	DefaultDingTalkTransferTitle        = "工单转诊"
+	legacyDefaultDingTalkNoShowTemplate = "【{{.HEDR}}】由于您未在值班时间前往诊所，您于{{.DATE}}的预约已关闭。未到诊所会导致您后两天无法预约。若您并未未到诊所，请联系{{.QQAC}}进行申诉。\n感谢您对网协工作的理解！"
 )
 
 //go:embed data/template.json
@@ -411,8 +412,23 @@ func (s *ConfigService) ensureRuntimeSettings(initialValues map[string]string) e
 				return fmt.Errorf("seed config item %s: %w", setting.Name, err)
 			}
 		}
+		if err := migrateDingTalkNoShowTemplate(tx); err != nil {
+			return err
+		}
 		return nil
 	})
+}
+
+func migrateDingTalkNoShowTemplate(tx *sql.Tx) error {
+	if _, err := tx.Exec(
+		"UPDATE clinic_config_item SET value = $1 WHERE name = $2 AND value = $3",
+		DefaultDingTalkNoShowTemplate,
+		runtimeSettingDingTalkNoShowTemplate,
+		legacyDefaultDingTalkNoShowTemplate,
+	); err != nil {
+		return fmt.Errorf("migrate legacy no-show template: %w", err)
+	}
+	return nil
 }
 
 func loadRuntimeSettingsValues(path string, template runtimeSettingsTemplate) (map[string]string, error) {
@@ -879,15 +895,16 @@ func validateDingTalkTemplate(name, value string) error {
 	}
 	var rendered strings.Builder
 	if err := parsed.Execute(&rendered, map[string]string{
-		"HEDR": "header",
-		"DATE": "date",
-		"ID":   "#1",
-		"ROOM": "room",
-		"TRRO": "transfer room",
-		"LOCA": "room address",
-		"TRLO": "transfer address",
-		"REAS": "reason",
-		"QQAC": "QQ",
+		"HEDR":  "header",
+		"DATE":  "date",
+		"ID":    "#1",
+		"ROOM":  "room",
+		"TRRO":  "transfer room",
+		"LOCA":  "room address",
+		"TRLO":  "transfer address",
+		"REAS":  "reason",
+		"QQAC":  "QQ",
+		"BANDU": "two days",
 	}); err != nil {
 		return fmt.Errorf("%w: %s must be a valid template", ErrConfigValueInvalid, name)
 	}

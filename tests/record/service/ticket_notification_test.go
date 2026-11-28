@@ -104,7 +104,7 @@ func TestDingTalkTicketNotifierFormatsStatusMessages(t *testing.T) {
 	location := time.FixedZone("UTC+8", 8*60*60)
 	start := time.Date(2026, 11, 20, 18, 30, 0, 0, location)
 	end := time.Date(2026, 11, 20, 21, 0, 0, 0, location)
-	const allFields = "{{.HEDR}}|{{.DATE}}|{{.ID}}|{{.ROOM}}|{{.LOCA}}|{{.TRRO}}|{{.TRLO}}|{{.REAS}}|{{.QQAC}}"
+	const allFields = "{{.HEDR}}|{{.DATE}}|{{.ID}}|{{.ROOM}}|{{.LOCA}}|{{.TRRO}}|{{.TRLO}}|{{.REAS}}|{{.QQAC}}|{{.BANDU}}"
 	cfg := recordservice.DingTalkTicketNotifierConfig{
 		Title:               "状态通知",
 		Header:              "测试协会",
@@ -157,15 +157,16 @@ func TestDingTalkTicketNotifierFormatsStatusMessages(t *testing.T) {
 				t.Fatalf("NewDingTalkTicketNotifier() error = %v", err)
 			}
 			delivery, err := notifier.Notify(context.Background(), recordservice.TicketStatusNotification{
-				RecordID:     42,
-				User:         "ding-user-42",
-				Status:       tt.status,
-				Reason:       tt.reason,
-				RoomName:     "徐特立图书馆",
-				RoomAddress:  "徐特立图书馆三楼311G研讨室",
-				RoomTransfer: tt.transfer,
-				ServiceStart: start,
-				ServiceEnd:   end,
+				RecordID:         42,
+				User:             "ding-user-42",
+				Status:           tt.status,
+				Reason:           tt.reason,
+				RoomName:         "徐特立图书馆",
+				RoomAddress:      "徐特立图书馆三楼311G研讨室",
+				RoomTransfer:     tt.transfer,
+				BanDurationHours: 48,
+				ServiceStart:     start,
+				ServiceEnd:       end,
 			})
 			if err != nil {
 				t.Fatalf("Notify() error = %v", err)
@@ -181,7 +182,7 @@ func TestDingTalkTicketNotifierFormatsStatusMessages(t *testing.T) {
 				t.Errorf("Receivers = %q, want ding-user-42", request.Receivers)
 			}
 			wantContent := "测试协会|2026-11-20的18:30-21:00|#42|徐特立图书馆|徐特立图书馆三楼311G研讨室|徐特立图书馆|徐特立图书馆三楼311G研讨室|" +
-				tt.reason + "|123456"
+				tt.reason + "|123456|两天"
 			wantTitle := "状态通知"
 			if tt.transfer {
 				wantTitle = "工单转诊"
@@ -293,16 +294,19 @@ func TestDingTalkTicketNotifierSelectsNoShowTemplate(t *testing.T) {
 		RejectedTemplate:    "rejected",
 		ReferredTemplate:    "referred",
 		TransferTemplate:    "transfer",
-		NoShowBanTemplate:   "封禁模式 {{.DATE}}",
+		NoShowBanTemplate:   "封禁模式 {{.BANDU}}",
 		NoShowNoBanTemplate: "非封禁模式 {{.DATE}}",
 		ReminderTemplate:    "reminder",
 	}
 	tests := []struct {
-		name    string
-		banMode bool
-		want    string
+		name          string
+		banMode       bool
+		durationHours int64
+		want          string
 	}{
-		{name: "ban mode", banMode: true, want: "封禁模式 2026-11-20的18:30-20:30"},
+		{name: "ban mode days", banMode: true, durationHours: 48, want: "封禁模式 两天"},
+		{name: "ban mode hours", banMode: true, durationHours: 36, want: "封禁模式 三十六小时"},
+		{name: "ban mode large duration", banMode: true, durationHours: 2400, want: "封禁模式 100天"},
 		{name: "non-ban mode", want: "非封禁模式 2026-11-20的18:30-20:30"},
 	}
 	for _, tt := range tests {
@@ -314,7 +318,8 @@ func TestDingTalkTicketNotifierSelectsNoShowTemplate(t *testing.T) {
 			}
 			if _, err := notifier.Notify(context.Background(), recordservice.TicketStatusNotification{
 				RecordID: 1, User: "ding-user", Status: recordmodel.RecordStatusNoShow,
-				NoShowBanEnabled: tt.banMode, ServiceStart: start, ServiceEnd: end,
+				NoShowBanEnabled: tt.banMode, BanDurationHours: tt.durationHours,
+				ServiceStart: start, ServiceEnd: end,
 			}); err != nil {
 				t.Fatalf("notify: %v", err)
 			}
@@ -425,6 +430,9 @@ func TestNoShowNotificationUsesCampusPolicyMode(t *testing.T) {
 			}
 			if got := notifier.notifications[0].NoShowBanEnabled; got != enabled {
 				t.Fatalf("NoShowBanEnabled = %t, want %t", got, enabled)
+			}
+			if got := notifier.notifications[0].BanDurationHours; got != 48 {
+				t.Fatalf("BanDurationHours = %d, want 48", got)
 			}
 		})
 	}

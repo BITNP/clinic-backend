@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -27,6 +28,7 @@ type TicketStatusNotification struct {
 	RoomAddress      string
 	RoomTransfer     bool
 	NoShowBanEnabled bool
+	BanDurationHours int64
 	ServiceStart     time.Time
 	ServiceEnd       time.Time
 }
@@ -244,30 +246,32 @@ func isNotifiableTicketStatus(status recordmodel.RecordStatus) bool {
 }
 
 type ticketNotificationTemplateData struct {
-	HEDR string
-	DATE string
-	ID   string
-	ROOM string
-	TRRO string
-	LOCA string
-	TRLO string
-	REAS string
-	QQAC string
+	HEDR  string
+	DATE  string
+	ID    string
+	ROOM  string
+	TRRO  string
+	LOCA  string
+	TRLO  string
+	REAS  string
+	QQAC  string
+	BANDU string
 }
 
 func (n *DingTalkTicketNotifier) render(tmpl *template.Template, notification TicketStatusNotification) (string, error) {
 	start := notification.ServiceStart.In(n.location)
 	end := notification.ServiceEnd.In(n.location)
 	data := ticketNotificationTemplateData{
-		HEDR: n.header,
-		DATE: fmt.Sprintf("%s的%s-%s", start.Format("2006-01-02"), start.Format("15:04"), end.Format("15:04")),
-		ID:   fmt.Sprintf("#%d", notification.RecordID),
-		ROOM: notification.RoomName,
-		TRRO: notification.RoomName,
-		LOCA: notification.RoomAddress,
-		TRLO: notification.RoomAddress,
-		REAS: strings.TrimSpace(notification.Reason),
-		QQAC: n.qqAccount,
+		HEDR:  n.header,
+		DATE:  fmt.Sprintf("%s的%s-%s", start.Format("2006-01-02"), start.Format("15:04"), end.Format("15:04")),
+		ID:    fmt.Sprintf("#%d", notification.RecordID),
+		ROOM:  notification.RoomName,
+		TRRO:  notification.RoomName,
+		LOCA:  notification.RoomAddress,
+		TRLO:  notification.RoomAddress,
+		REAS:  strings.TrimSpace(notification.Reason),
+		QQAC:  n.qqAccount,
+		BANDU: formatBanDurationHours(notification.BanDurationHours),
 	}
 	var content bytes.Buffer
 	if err := tmpl.Execute(&content, data); err != nil {
@@ -343,6 +347,7 @@ func (s *AdminRecordService) notifyTicketStatusChange(
 		RoomAddress:      details.RoomAddress,
 		RoomTransfer:     roomTransfer,
 		NoShowBanEnabled: details.NoShowBanEnabled,
+		BanDurationHours: details.BanDurationHours,
 		ServiceStart:     details.ServiceStart,
 		ServiceEnd:       details.ServiceEnd,
 	})
@@ -459,6 +464,7 @@ type ticketNotificationDetails struct {
 	ServiceStart     time.Time
 	ServiceEnd       time.Time
 	NoShowBanEnabled bool
+	BanDurationHours int64
 }
 
 func (s *AdminRecordService) loadTicketNotificationDetails(
@@ -472,7 +478,8 @@ func (s *AdminRecordService) loadTicketNotificationDetails(
 	}
 	err := s.db.QueryRowContext(
 		ctx,
-		fmt.Sprintf(`SELECT r.name, r.address, d.start_time, d.end_time, COALESCE(c.no_show_ban_enabled, FALSE)
+		fmt.Sprintf(`SELECT r.name, r.address, d.start_time, d.end_time,
+		        COALESCE(c.no_show_ban_enabled, FALSE), COALESCE(c.no_show_ban_duration_hours, 0)
 		 FROM clinic_room r
 		 LEFT JOIN clinic_campus c ON c.id = r.campus_id
 		 JOIN clinic_service_date d ON r.id = $1 AND d.room_id = r.id AND %s
@@ -480,7 +487,14 @@ func (s *AdminRecordService) loadTicketNotificationDetails(
 		 LIMIT 1`, datePredicate),
 		record.RoomID,
 		record.AppointmentTime,
-	).Scan(&details.RoomName, &details.RoomAddress, &details.ServiceStart, &details.ServiceEnd, &details.NoShowBanEnabled)
+	).Scan(
+		&details.RoomName,
+		&details.RoomAddress,
+		&details.ServiceStart,
+		&details.ServiceEnd,
+		&details.NoShowBanEnabled,
+		&details.BanDurationHours,
+	)
 	if err == sql.ErrNoRows {
 		return ticketNotificationDetails{}, fmt.Errorf("notification room or service date is missing")
 	}
@@ -488,4 +502,40 @@ func (s *AdminRecordService) loadTicketNotificationDetails(
 		return ticketNotificationDetails{}, fmt.Errorf("load notification details: %w", err)
 	}
 	return details, nil
+}
+
+func formatBanDurationHours(hours int64) string {
+	if hours <= 0 {
+		return ""
+	}
+	if hours%24 == 0 {
+		return formatChineseDurationNumber(hours/24) + "天"
+	}
+	return formatChineseDurationNumber(hours) + "小时"
+}
+
+func formatChineseDurationNumber(value int64) string {
+	if value == 2 {
+		return "两"
+	}
+	return formatChineseNumber(value)
+}
+
+func formatChineseNumber(value int64) string {
+	if value < 0 || value >= 100 {
+		return strconv.FormatInt(value, 10)
+	}
+	digits := [...]string{"零", "一", "二", "三", "四", "五", "六", "七", "八", "九"}
+	if value < 10 {
+		return digits[value]
+	}
+	tens, ones := value/10, value%10
+	prefix := ""
+	if tens > 1 {
+		prefix = digits[tens]
+	}
+	if ones == 0 {
+		return prefix + "十"
+	}
+	return prefix + "十" + digits[ones]
 }
