@@ -30,6 +30,7 @@ func migrateAdminRecordTestModels(t *testing.T, db *gorm.DB) {
 		&roommodel.ClinicCampus{},
 		&roommodel.ClinicRoom{},
 		&recordmodel.ClinicRecord{},
+		&recordmodel.ClinicUserTicketBan{},
 		&recordmodel.ClinicRecordDevice{},
 		&recordmodel.ClinicRecordWorker{},
 		&recordmodel.ClinicRecordPhoto{},

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"clinic-backend/internal/database"
 	recordmodel "clinic-backend/internal/record/model"
 	recordservice "clinic-backend/internal/record/service"
 	roommodel "clinic-backend/internal/room/model"
@@ -265,5 +266,93 @@ func TestUserTicketBanService_IsBanned(t *testing.T) {
 				t.Fatalf("is banned = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestUserTicketBanServicePostgres(t *testing.T) {
+	db, gormDB := setupRecordPostgres(t)
+	firstCampus := roommodel.ClinicCampus{Name: "First"}
+	secondCampus := roommodel.ClinicCampus{Name: "Second"}
+	if err := gormDB.Create(&firstCampus).Error; err != nil {
+		t.Fatalf("seed first campus: %v", err)
+	}
+	if err := gormDB.Create(&secondCampus).Error; err != nil {
+		t.Fatalf("seed second campus: %v", err)
+	}
+
+	svc := recordservice.NewUserTicketBanService(database.Wrap(db, database.DriverPostgres))
+	future := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Microsecond)
+	global, err := svc.Create(recordservice.CreateUserTicketBanInput{
+		UserID: "global", Scope: recordservice.UserTicketBanScopeGlobal,
+		Reason: "global reason", ExpirateAt: future,
+	})
+	if err != nil {
+		t.Fatalf("create global ban: %v", err)
+	}
+	if _, err := svc.Create(recordservice.CreateUserTicketBanInput{
+		UserID: "global", Scope: recordservice.UserTicketBanScopeGlobal,
+		Reason: "duplicate", ExpirateAt: future,
+	}); !errors.Is(err, recordservice.ErrUserTicketBanConflict) {
+		t.Fatalf("duplicate global: expected %v, got %v", recordservice.ErrUserTicketBanConflict, err)
+	}
+	campus, err := svc.Create(recordservice.CreateUserTicketBanInput{
+		UserID: "global", Scope: recordservice.UserTicketBanScopeCampus, CampusID: &firstCampus.ID,
+		Reason: "campus reason", ExpirateAt: future,
+	})
+	if err != nil {
+		t.Fatalf("global and campus bans should coexist: %v", err)
+	}
+	if global.CampusID != nil || campus.CampusID == nil || *campus.CampusID != firstCampus.ID {
+		t.Fatalf("created scopes: global=%+v campus=%+v", global, campus)
+	}
+	if _, err := svc.Create(recordservice.CreateUserTicketBanInput{
+		UserID: "campus", Scope: recordservice.UserTicketBanScopeCampus, CampusID: &firstCampus.ID,
+		Reason: "campus-only reason", ExpirateAt: future,
+	}); err != nil {
+		t.Fatalf("create campus-only ban: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		userID   string
+		campusID *uint
+		want     bool
+	}{
+		{name: "global on first campus", userID: "global", campusID: &firstCampus.ID, want: true},
+		{name: "global on second campus", userID: "global", campusID: &secondCampus.ID, want: true},
+		{name: "campus on matching campus", userID: "campus", campusID: &firstCampus.ID, want: true},
+		{name: "campus on other campus", userID: "campus", campusID: &secondCampus.ID, want: false},
+		{name: "other user", userID: "other", campusID: &firstCampus.ID, want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := svc.IsBanned(tc.userID, tc.campusID, time.Now())
+			if err != nil {
+				t.Fatalf("check ban: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("banned = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	expired, err := svc.Create(recordservice.CreateUserTicketBanInput{
+		UserID: "expired", Scope: recordservice.UserTicketBanScopeGlobal,
+		Reason: "expired reason", ExpirateAt: future,
+	})
+	if err != nil {
+		t.Fatalf("create expiring ban: %v", err)
+	}
+	if err := gormDB.Model(&recordmodel.ClinicUserTicketBan{}).
+		Where("id = ?", expired.ID).
+		Update("expirate_at", time.Now().UTC().Add(-time.Hour)).Error; err != nil {
+		t.Fatalf("expire ban: %v", err)
+	}
+	banned, err := svc.IsBanned("expired", &firstCampus.ID, time.Now())
+	if err != nil {
+		t.Fatalf("check expired ban: %v", err)
+	}
+	if banned {
+		t.Fatal("expired ban should not apply")
 	}
 }

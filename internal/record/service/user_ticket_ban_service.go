@@ -103,13 +103,13 @@ func (s *UserTicketBanService) Create(in CreateUserTicketBanInput) (recordmodel.
 		}
 
 		var existingID uint
-		err := tx.QueryRow(
-			`SELECT id FROM clinic_user_ticket_ban
-			 WHERE user_id = $1
-			   AND (($2 IS NULL AND campus_id IS NULL) OR campus_id = $2)
-			 LIMIT 1`,
-			userID, nullableUint(campusID),
-		).Scan(&existingID)
+		query := "SELECT id FROM clinic_user_ticket_ban WHERE user_id = $1 AND campus_id IS NULL LIMIT 1"
+		args := []any{userID}
+		if campusID != nil {
+			query = "SELECT id FROM clinic_user_ticket_ban WHERE user_id = $1 AND campus_id = $2 LIMIT 1"
+			args = append(args, *campusID)
+		}
+		err := tx.QueryRow(query, args...).Scan(&existingID)
 		if err == nil {
 			return ErrUserTicketBanConflict
 		}
