@@ -308,6 +308,115 @@ func TestRevertReferRemovesReferral(t *testing.T) {
 	}
 }
 
+func TestRevertNoShowRemovesCreatedBan(t *testing.T) {
+	db := setupAdminRecordTestDB(t)
+	room := seedNoShowPolicyRoom(t, db, "revert-created", roommodel.NoShowBanPolicy{
+		Enabled: true, DurationHours: 48, Level: roommodel.NoShowBanLevelCampus,
+	})
+	rec := seedActionRecord(t, db, recordmodel.RecordStatusConfirmed, room.ID)
+	svc := newActionRecordService(t, db, newFakeActionStore())
+
+	if _, err := svc.MarkNoShow(context.Background(), 7, rec.ID); err != nil {
+		t.Fatalf("no-show: %v", err)
+	}
+	var count int64
+	if err := db.Model(&recordmodel.ClinicUserTicketBan{}).Where("user_id = ?", rec.User).Count(&count).Error; err != nil {
+		t.Fatalf("count ban: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected created ban, got %d", count)
+	}
+
+	view, err := svc.Revert(context.Background(), 7, rec.ID)
+	if err != nil {
+		t.Fatalf("revert: %v", err)
+	}
+	if view.Status != string(recordmodel.RecordStatusConfirmed) {
+		t.Fatalf("status after revert = %s", view.Status)
+	}
+	if err := db.Model(&recordmodel.ClinicUserTicketBan{}).Where("user_id = ?", rec.User).Count(&count).Error; err != nil {
+		t.Fatalf("count ban after revert: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected created ban to be removed, got %d", count)
+	}
+}
+
+func TestRevertNoShowRestoresExtendedBan(t *testing.T) {
+	db := setupAdminRecordTestDB(t)
+	room := seedNoShowPolicyRoom(t, db, "revert-extended", roommodel.NoShowBanPolicy{
+		Enabled: true, DurationHours: 48, Level: roommodel.NoShowBanLevelCampus,
+	})
+	rec := seedActionRecord(t, db, recordmodel.RecordStatusConfirmed, room.ID)
+	previousExpiry := time.Now().UTC().Add(time.Hour)
+	previousReason := "manual reason"
+	existing := recordmodel.ClinicUserTicketBan{
+		UserID: rec.User, CampusID: room.CampusID, Reason: previousReason, ExpirateAt: previousExpiry,
+	}
+	if err := db.Create(&existing).Error; err != nil {
+		t.Fatalf("seed ban: %v", err)
+	}
+	svc := newActionRecordService(t, db, newFakeActionStore())
+
+	if _, err := svc.MarkNoShow(context.Background(), 7, rec.ID); err != nil {
+		t.Fatalf("no-show: %v", err)
+	}
+	var extended recordmodel.ClinicUserTicketBan
+	if err := db.First(&extended, existing.ID).Error; err != nil {
+		t.Fatalf("load extended ban: %v", err)
+	}
+	if !extended.ExpirateAt.After(previousExpiry) {
+		t.Fatalf("ban was not extended: %+v", extended)
+	}
+
+	if _, err := svc.Revert(context.Background(), 7, rec.ID); err != nil {
+		t.Fatalf("revert: %v", err)
+	}
+	var restored recordmodel.ClinicUserTicketBan
+	if err := db.First(&restored, existing.ID).Error; err != nil {
+		t.Fatalf("load restored ban: %v", err)
+	}
+	if !restored.ExpirateAt.Equal(previousExpiry) || restored.Reason != previousReason {
+		t.Fatalf("restored ban = %+v, want expiry %v reason %q", restored, previousExpiry, previousReason)
+	}
+}
+
+func TestRevertNoShowRejectsChangedBan(t *testing.T) {
+	db := setupAdminRecordTestDB(t)
+	room := seedNoShowPolicyRoom(t, db, "revert-changed", roommodel.NoShowBanPolicy{
+		Enabled: true, DurationHours: 48, Level: roommodel.NoShowBanLevelCampus,
+	})
+	rec := seedActionRecord(t, db, recordmodel.RecordStatusConfirmed, room.ID)
+	svc := newActionRecordService(t, db, newFakeActionStore())
+
+	if _, err := svc.MarkNoShow(context.Background(), 7, rec.ID); err != nil {
+		t.Fatalf("no-show: %v", err)
+	}
+	var ban recordmodel.ClinicUserTicketBan
+	if err := db.Where("user_id = ?", rec.User).First(&ban).Error; err != nil {
+		t.Fatalf("load ban: %v", err)
+	}
+	changedExpiry := ban.ExpirateAt.Add(24 * time.Hour)
+	if err := db.Model(&ban).Updates(map[string]any{
+		"reason": "changed after no-show", "expirate_at": changedExpiry,
+	}).Error; err != nil {
+		t.Fatalf("change ban: %v", err)
+	}
+	if _, err := svc.Revert(context.Background(), 7, rec.ID); !errors.Is(err, recordservice.ErrRevertSuperseded) {
+		t.Fatalf("expected superseded revert, got %v", err)
+	}
+	if got := reloadActionRecord(t, db, rec.ID); got.Status != recordmodel.RecordStatusNoShow {
+		t.Fatalf("record revert should roll back, got %s", got.Status)
+	}
+	var unchanged recordmodel.ClinicUserTicketBan
+	if err := db.First(&unchanged, ban.ID).Error; err != nil {
+		t.Fatalf("reload changed ban: %v", err)
+	}
+	if unchanged.Reason != "changed after no-show" || !unchanged.ExpirateAt.Equal(changedExpiry) {
+		t.Fatalf("changed ban overwritten: %+v", unchanged)
+	}
+}
+
 func TestRevertUpdateRestoresWorkerDesc(t *testing.T) {
 	db := setupAdminRecordTestDB(t)
 	room := seedActionRoom(t, db)

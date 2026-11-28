@@ -188,6 +188,9 @@ func (s *AdminRecordService) Revert(ctx context.Context, actorID int, id uint) (
 		if err := s.restoreSnapshotTx(tx, &record, entry.Prev, entry.PrevSeq, entry.PrevToken); err != nil {
 			return err
 		}
+		if err := restoreNoShowBanTx(ctx, tx, s.db.Driver, entry.NoShowBan); err != nil {
+			return err
+		}
 		record, err = loadRecord(tx, id)
 		if err != nil {
 			return fmt.Errorf("reload record %d after revert: %w", id, err)
@@ -198,6 +201,19 @@ func (s *AdminRecordService) Revert(ctx context.Context, actorID int, id uint) (
 				return err
 			}
 			changes := recordSnapshotChanges(beforeSnap, afterSnap)
+			details := map[string]any{
+				"version":            1,
+				"reverted_event_id":  entry.JournalEventID,
+				"reverted_action":    recordEventAction(entry.Action),
+				"reverted_operation": entry.OperationID,
+				"changes":            changes,
+			}
+			if entry.NoShowBan != nil {
+				details["no_show_ban"] = map[string]any{
+					"ban_id":  entry.NoShowBan.BanID,
+					"created": entry.NoShowBan.Created,
+				}
+			}
 			if _, err := journal.InsertTx(ctx, tx, journal.EventInput{
 				OccurredAt:  now,
 				ActorType:   journal.ActorStaff,
@@ -206,13 +222,7 @@ func (s *AdminRecordService) Revert(ctx context.Context, actorID int, id uint) (
 				EntityType:  "record",
 				EntityID:    recordEntityID(record.ID),
 				OperationID: operationID,
-				Details: map[string]any{
-					"version":            1,
-					"reverted_event_id":  entry.JournalEventID,
-					"reverted_action":    recordEventAction(entry.Action),
-					"reverted_operation": entry.OperationID,
-					"changes":            changes,
-				},
+				Details:     details,
 			}); err != nil {
 				return err
 			}

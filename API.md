@@ -1974,7 +1974,8 @@ submission; notification failures are recorded in the journal and do not roll
 back the transition. The send is skipped when the `DINGTALK_NOTIFY_ENABLED`
 config item is false. The record room's campus `no_show_ban_policy` is applied
 transactionally with the status change; an invalid stored policy rolls back the
-transition.
+transition. A ban created or extended by this action is restored or removed by
+the corresponding revert.
 
 **Request:** No body.
 
@@ -1995,13 +1996,16 @@ curl -X POST "$BASE/api/admin/records/1/no-show" \
 restoring the previous snapshot. Staff or admin; each staff member can only
 revert their own actions. Reverts are strict LIFO and only valid inside
 the database-managed `RECORD_ACTION_WINDOW` (default `5m`). Reverting is also
-refused when the record has changed since the action.
+refused when the record has changed since the action. Reverting a manual
+`no_show` also removes a ban created by the action or restores the expiration
+and reason of a ban that the action extended. If that generated ban was changed
+independently, the entire record revert is refused as superseded.
 
 **Response `200 OK`** — admin record view after the restore.
 
 **Error responses:** `400` (invalid id), `401`, `403` (wrong role), `404`,
 `409` (`no revertible action`, `revert window expired`, or
-`action has been superseded`).
+`action has been superseded`, including a changed generated no-show ban).
 
 **curl**
 

@@ -66,6 +66,8 @@ type RecordActionEntry struct {
 	// action tokens were introduced.
 	ActionToken string `json:"action_token,omitempty"`
 	PrevToken   string `json:"prev_token,omitempty"`
+	// NoShowBan captures the ban mutation made by a manual no-show action.
+	NoShowBan *NoShowBanActionSnapshot `json:"no_show_ban,omitempty"`
 }
 
 func newRecordActionToken() (string, error) {

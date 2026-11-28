@@ -22,6 +22,7 @@ type transitionSpec struct {
 	notificationTransfer *bool
 	allowed              func(recordmodel.RecordStatus) bool
 	update               func(*sql.Tx, recordmodel.ClinicRecord, time.Time) error
+	augmentEntry         func(*RecordActionEntry)
 }
 
 func (s *AdminRecordService) runTransition(ctx context.Context, id uint, spec transitionSpec) (AdminRecordView, error) {
@@ -101,6 +102,9 @@ func (s *AdminRecordService) runTransition(ctx context.Context, id uint, spec tr
 			OperationID:    operationID,
 			ActionToken:    token,
 			PrevToken:      prevToken,
+		}
+		if spec.augmentEntry != nil {
+			spec.augmentEntry(&entry)
 		}
 		view, err = s.buildViewTx(tx, record)
 		return err
@@ -323,6 +327,7 @@ func (s *AdminRecordService) MarkReferred(ctx context.Context, id uint, reason s
 }
 
 func (s *AdminRecordService) MarkNoShow(ctx context.Context, actorID int, id uint) (AdminRecordView, error) {
+	var banSnapshot *NoShowBanActionSnapshot
 	return s.runTransition(ctx, id, transitionSpec{
 		verb:    "no-show",
 		action:  RecordActionNoShow,
@@ -332,8 +337,12 @@ func (s *AdminRecordService) MarkNoShow(ctx context.Context, actorID int, id uin
 			if err := setRecordStatusTx(tx, record.ID, recordmodel.RecordStatusNoShow, nil, false); err != nil {
 				return err
 			}
-			_, err := s.applyNoShowBanTx(ctx, tx, record, now)
+			snapshot, err := s.applyNoShowBanTx(ctx, tx, record, now)
+			banSnapshot = snapshot
 			return err
+		},
+		augmentEntry: func(entry *RecordActionEntry) {
+			entry.NoShowBan = banSnapshot
 		},
 	})
 }

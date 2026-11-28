@@ -155,3 +155,51 @@ func (s *AdminRecordService) loadUserTicketBanForUpdateTx(
 	}
 	return scanUserTicketBan(tx.QueryRowContext(ctx, query, args...))
 }
+
+func restoreNoShowBanTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	driver database.Driver,
+	snapshot *NoShowBanActionSnapshot,
+) error {
+	if snapshot == nil {
+		return nil
+	}
+	query := "SELECT " + userTicketBanColumns + " FROM clinic_user_ticket_ban WHERE id = $1"
+	if driver == database.DriverPostgres {
+		query += " FOR UPDATE"
+	}
+	current, err := scanUserTicketBan(tx.QueryRowContext(ctx, query, snapshot.BanID))
+	if errors.Is(err, sql.ErrNoRows) {
+		if snapshot.Created {
+			return nil
+		}
+		return fmt.Errorf("restore no-show ban %d: %w", snapshot.BanID, ErrRevertSuperseded)
+	}
+	if err != nil {
+		return fmt.Errorf("load no-show ban %d for revert: %w", snapshot.BanID, err)
+	}
+	if !current.ExpirateAt.Equal(snapshot.AppliedExpirateAt) ||
+		current.Reason != snapshot.AppliedReason {
+		return fmt.Errorf("restore no-show ban %d: %w", snapshot.BanID, ErrRevertSuperseded)
+	}
+	if snapshot.Created {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM clinic_user_ticket_ban WHERE id = $1", snapshot.BanID); err != nil {
+			return fmt.Errorf("delete no-show ban %d: %w", snapshot.BanID, err)
+		}
+		return nil
+	}
+	if snapshot.PreviousExpirateAt == nil || snapshot.PreviousReason == nil {
+		return fmt.Errorf("restore no-show ban %d: missing previous state", snapshot.BanID)
+	}
+	if _, err := tx.ExecContext(
+		ctx,
+		"UPDATE clinic_user_ticket_ban SET expirate_at = $1, reason = $2 WHERE id = $3",
+		*snapshot.PreviousExpirateAt,
+		*snapshot.PreviousReason,
+		snapshot.BanID,
+	); err != nil {
+		return fmt.Errorf("restore no-show ban %d: %w", snapshot.BanID, err)
+	}
+	return nil
+}
