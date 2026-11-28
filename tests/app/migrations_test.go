@@ -165,6 +165,9 @@ func TestAutoMigrate_UpgradesServiceDateReminderIdentity(t *testing.T) {
 	if err := app.MigrateBeforeAutoMigrate(db); err != nil {
 		t.Fatalf("migrate before auto: %v", err)
 	}
+	if db.Migrator().HasIndex(&legacyServiceDateReminder{}, "idx_reminder_identity") {
+		t.Fatal("legacy reminder identity index still exists before AutoMigrate")
+	}
 	if err := db.AutoMigrate(&schedulingmodel.ServiceDateReminder{}); err != nil {
 		t.Fatalf("migrate reminder schema: %v", err)
 	}

@@ -48,7 +48,10 @@ func prepareServiceDateReminderKindIndex(db *gorm.DB) error {
 		!db.Migrator().HasIndex(model, "idx_reminder_identity") {
 		return nil
 	}
-	if err := db.Migrator().DropIndex(model, "idx_reminder_identity"); err != nil {
+	// GORM's PostgreSQL DropIndex implementation incorrectly quotes
+	// CURRENT_SCHEMA() as an identifier. Both supported databases accept this
+	// unqualified form and resolve the index through the active schema.
+	if err := db.Exec(`DROP INDEX IF EXISTS "idx_reminder_identity"`).Error; err != nil {
 		return fmt.Errorf("drop legacy service date reminder identity index: %w", err)
 	}
 	return nil
