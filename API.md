@@ -582,7 +582,16 @@ Campus object:
 | `duration_hours` | integer | Positive ban duration in hours. Defaults to `48`. |
 | `level` | string | `campus` to ban only the record's campus, or `global` to ban every campus. Defaults to `campus`. |
 
-Mutations bump the `room` counter.
+Mutations bump the `room` and `journal` counters. Creation, update, or removal
+of a non-default `no_show_ban_policy` writes a transactional staff-attributed
+journal event with `entity_type: "campus"` and one of these actions:
+
+- `campus.no_show_ban_policy_created`
+- `campus.no_show_ban_policy_updated`
+- `campus.no_show_ban_policy_removed`
+
+Journal details include the campus name and before/after values for each
+changed policy field. A failed journal write rolls back the campus mutation.
 
 ### `GET /api/admin/campuses`
 

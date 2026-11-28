@@ -2,8 +2,11 @@ package handler_test
 
 import (
 	"clinic-backend/internal/calendar"
+	"clinic-backend/internal/journal"
+	journalmodel "clinic-backend/internal/journal/model"
 	recordmodel "clinic-backend/internal/record/model"
 	schedulingmodel "clinic-backend/internal/scheduling/model"
+	staffmodel "clinic-backend/internal/staff/model"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -26,15 +29,20 @@ func setupCampusHandlerRouter(t *testing.T) (*gin.Engine, *roomservice.CampusSer
 	if err != nil {
 		t.Fatalf("open fake database: %v", err)
 	}
-	if err := db.AutoMigrate(&roommodel.ClinicCampus{}, &roommodel.ClinicRoom{}); err != nil {
+	if err := db.AutoMigrate(&roommodel.ClinicCampus{}, &roommodel.ClinicRoom{}, &journalmodel.Event{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	campusSvc := roomservice.NewCampusService(testutil.RawDB(t, db))
-	roomSvc := roomservice.NewRoomService(testutil.RawDB(t, db))
+	rawDB := testutil.RawDB(t, db)
+	campusSvc := roomservice.NewCampusService(rawDB)
+	campusSvc.SetJournalService(journal.NewService(rawDB))
+	roomSvc := roomservice.NewRoomService(rawDB)
 	h := roomhandler.NewCampusHandler(campusSvc, roomSvc)
 
 	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("staff", staffmodel.ClinicStaff{ID: 7})
+	})
 	g := r.Group("/api/admin/campuses")
 	{
 		g.POST("", h.Create)
@@ -45,6 +53,30 @@ func setupCampusHandlerRouter(t *testing.T) (*gin.Engine, *roomservice.CampusSer
 		g.DELETE("/:id", h.Delete)
 	}
 	return r, campusSvc, db
+}
+
+func TestCampusHandler_NoShowPolicyUpdateJournalsActor(t *testing.T) {
+	r, svc, db := setupCampusHandlerRouter(t)
+	campus, err := svc.Create(roomservice.CreateCampusInput{Name: "Journal"})
+	if err != nil {
+		t.Fatalf("seed campus: %v", err)
+	}
+	w := testutil.DoRequest(t, r, http.MethodPut, "/api/admin/campuses/"+testutil.Itoa(campus.ID), map[string]any{
+		"no_show_ban_policy": map[string]any{"enabled": true},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("update policy: %d %s", w.Code, w.Body.String())
+	}
+	var event journalmodel.Event
+	if err := db.First(&event).Error; err != nil {
+		t.Fatalf("load journal event: %v", err)
+	}
+	if event.ActorType != journal.ActorStaff ||
+		event.ActorID != "7" ||
+		event.Action != "campus.no_show_ban_policy_updated" ||
+		event.EntityType != "campus" {
+		t.Fatalf("unexpected journal event: %+v", event)
+	}
 }
 
 func TestCampusHandler_Create_Success(t *testing.T) {

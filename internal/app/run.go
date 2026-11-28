@@ -201,6 +201,7 @@ func Run() {
 	roomSvc := roomservice.NewRoomService(rawDB, serviceDateLoc)
 	roomH := roomhandler.NewRoomHandler(roomSvc)
 	campusSvc := roomservice.NewCampusService(rawDB)
+	campusSvc.SetJournalService(journalSvc)
 	campusH := roomhandler.NewCampusHandler(campusSvc, roomSvc)
 	userTicketBanSvc := recordservice.NewUserTicketBanService(rawDB)
 	userTicketBanH := recordhandler.NewUserTicketBanHandler(userTicketBanSvc)

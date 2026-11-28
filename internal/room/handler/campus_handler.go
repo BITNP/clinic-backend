@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	authhandler "clinic-backend/internal/auth/handler"
 	"clinic-backend/internal/httpx"
 	roommodel "clinic-backend/internal/room/model"
 	roomservice "clinic-backend/internal/room/service"
@@ -45,11 +46,11 @@ func (h *CampusHandler) Create(c *gin.Context) {
 		return
 	}
 
-	campus, err := h.campusSvc.Create(roomservice.CreateCampusInput{
+	campus, err := h.campusSvc.CreateForActor(roomservice.CreateCampusInput{
 		Name:            req.Name,
 		SelectionPolicy: req.SelectionPolicy,
 		NoShowBanPolicy: toNoShowBanPolicyPatch(req.NoShowBanPolicy),
-	})
+	}, campusActorID(c))
 	if err != nil {
 		writeCampusError(c, err)
 		return
@@ -93,11 +94,11 @@ func (h *CampusHandler) Update(c *gin.Context) {
 		return
 	}
 
-	campus, err := h.campusSvc.Update(id, roomservice.UpdateCampusInput{
+	campus, err := h.campusSvc.UpdateForActor(id, roomservice.UpdateCampusInput{
 		Name:            req.Name,
 		SelectionPolicy: req.SelectionPolicy,
 		NoShowBanPolicy: toNoShowBanPolicyPatch(req.NoShowBanPolicy),
-	})
+	}, campusActorID(c))
 	if err != nil {
 		writeCampusError(c, err)
 		return
@@ -110,7 +111,7 @@ func (h *CampusHandler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.campusSvc.Delete(id); err != nil {
+	if err := h.campusSvc.DeleteForActor(id, campusActorID(c)); err != nil {
 		writeCampusError(c, err)
 		return
 	}
@@ -197,4 +198,12 @@ func toNoShowBanPolicyPatch(req *noShowBanPolicyRequest) *roomservice.NoShowBanP
 		DurationHours: req.DurationHours,
 		Level:         req.Level,
 	}
+}
+
+func campusActorID(c *gin.Context) int {
+	staff, ok := authhandler.ContextStaff(c)
+	if !ok {
+		return 0
+	}
+	return staff.ID
 }

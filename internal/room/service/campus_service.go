@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"clinic-backend/internal/database"
+	"clinic-backend/internal/journal"
 	roommodel "clinic-backend/internal/room/model"
 )
 
@@ -31,11 +33,17 @@ var ErrCampusInUse = errors.New("campus has rooms and cannot be deleted")
 
 // CampusService contains the business logic for clinic campus CRUD.
 type CampusService struct {
-	db *database.DB
+	db      *database.DB
+	journal *journal.Service
 }
 
 func NewCampusService(db *database.DB) *CampusService {
 	return &CampusService{db: db}
+}
+
+// SetJournalService enables transactional no-show policy history.
+func (s *CampusService) SetJournalService(journalSvc *journal.Service) {
+	s.journal = journalSvc
 }
 
 const campusColumns = "id, name, selection_policy, no_show_ban_enabled, no_show_ban_duration_hours, no_show_ban_level"
@@ -85,6 +93,11 @@ type ListCampusFilter struct {
 }
 
 func (s *CampusService) Create(in CreateCampusInput) (roommodel.ClinicCampus, error) {
+	return s.CreateForActor(in, 0)
+}
+
+// CreateForActor creates a campus and journals a non-default no-show policy.
+func (s *CampusService) CreateForActor(in CreateCampusInput, actorID int) (roommodel.ClinicCampus, error) {
 	policy := in.SelectionPolicy
 	if policy == "" {
 		policy = roommodel.SelectionPolicyBalanced
@@ -96,18 +109,33 @@ func (s *CampusService) Create(in CreateCampusInput) (roommodel.ClinicCampus, er
 	if err := validateNoShowBanPolicy(noShowPolicy); err != nil {
 		return roommodel.ClinicCampus{}, err
 	}
-	c, err := scanCampus(s.db.QueryRow(
-		`INSERT INTO clinic_campus
-		 (name, selection_policy, no_show_ban_enabled, no_show_ban_duration_hours, no_show_ban_level)
-		 VALUES ($1, $2, $3, $4, $5)
-		 RETURNING `+campusColumns,
-		in.Name, policy, noShowPolicy.Enabled, noShowPolicy.DurationHours, noShowPolicy.Level,
-	))
-	if err != nil {
-		if database.IsUniqueViolation(err) {
-			return roommodel.ClinicCampus{}, ErrCampusNameTaken
+	var c roommodel.ClinicCampus
+	err := database.WithTx(context.Background(), s.db.DB, func(tx *sql.Tx) error {
+		var err error
+		c, err = scanCampus(tx.QueryRow(
+			`INSERT INTO clinic_campus
+			 (name, selection_policy, no_show_ban_enabled, no_show_ban_duration_hours, no_show_ban_level)
+			 VALUES ($1, $2, $3, $4, $5)
+			 RETURNING `+campusColumns,
+			in.Name, policy, noShowPolicy.Enabled, noShowPolicy.DurationHours, noShowPolicy.Level,
+		))
+		if err != nil {
+			if database.IsUniqueViolation(err) {
+				return ErrCampusNameTaken
+			}
+			return fmt.Errorf("create campus: %w", err)
 		}
-		return roommodel.ClinicCampus{}, fmt.Errorf("create campus: %w", err)
+		return s.journalNoShowBanPolicyTx(
+			tx,
+			actorID,
+			"campus.no_show_ban_policy_created",
+			roommodel.DefaultNoShowBanPolicy(),
+			c.NoShowBanPolicy,
+			c,
+		)
+	})
+	if err != nil {
+		return roommodel.ClinicCampus{}, err
 	}
 	return c, nil
 }
@@ -173,6 +201,11 @@ func (s *CampusService) List(f ListCampusFilter) ([]roommodel.ClinicCampus, int6
 }
 
 func (s *CampusService) Update(id uint, in UpdateCampusInput) (roommodel.ClinicCampus, error) {
+	return s.UpdateForActor(id, in, 0)
+}
+
+// UpdateForActor updates a campus and journals no-show policy changes.
+func (s *CampusService) UpdateForActor(id uint, in UpdateCampusInput, actorID int) (roommodel.ClinicCampus, error) {
 	var c roommodel.ClinicCampus
 	err := database.WithTx(context.Background(), s.db.DB, func(tx *sql.Tx) error {
 		var err error
@@ -186,6 +219,7 @@ func (s *CampusService) Update(id uint, in UpdateCampusInput) (roommodel.ClinicC
 			}
 			return fmt.Errorf("get campus %d for update: %w", id, err)
 		}
+		before := c
 
 		var updates []string
 		var args []any
@@ -232,6 +266,16 @@ func (s *CampusService) Update(id uint, in UpdateCampusInput) (roommodel.ClinicC
 				return fmt.Errorf("update campus %d: %w", id, err)
 			}
 		}
+		if err := s.journalNoShowBanPolicyTx(
+			tx,
+			actorID,
+			"campus.no_show_ban_policy_updated",
+			before.NoShowBanPolicy,
+			c.NoShowBanPolicy,
+			c,
+		); err != nil {
+			return err
+		}
 		return nil
 	})
 	if err != nil {
@@ -272,9 +316,17 @@ func validateNoShowBanPolicy(policy roommodel.NoShowBanPolicy) error {
 }
 
 func (s *CampusService) Delete(id uint) error {
+	return s.DeleteForActor(id, 0)
+}
+
+// DeleteForActor deletes a campus and journals removal of a non-default policy.
+func (s *CampusService) DeleteForActor(id uint, actorID int) error {
 	return database.WithTx(context.Background(), s.db.DB, func(tx *sql.Tx) error {
-		var existingID uint
-		if err := tx.QueryRow("SELECT id FROM clinic_campus WHERE id = $1", id).Scan(&existingID); err != nil {
+		campus, err := scanCampus(tx.QueryRow(
+			"SELECT "+campusColumns+" FROM clinic_campus WHERE id = $1",
+			id,
+		))
+		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrCampusNotFound
 			}
@@ -291,6 +343,64 @@ func (s *CampusService) Delete(id uint) error {
 		if _, err := tx.Exec("DELETE FROM clinic_campus WHERE id = $1", id); err != nil {
 			return fmt.Errorf("delete campus %d: %w", id, err)
 		}
-		return nil
+		return s.journalNoShowBanPolicyTx(
+			tx,
+			actorID,
+			"campus.no_show_ban_policy_removed",
+			campus.NoShowBanPolicy,
+			roommodel.DefaultNoShowBanPolicy(),
+			campus,
+		)
 	})
+}
+
+func (s *CampusService) journalNoShowBanPolicyTx(
+	tx *sql.Tx,
+	actorID int,
+	action string,
+	before roommodel.NoShowBanPolicy,
+	after roommodel.NoShowBanPolicy,
+	campus roommodel.ClinicCampus,
+) error {
+	if actorID <= 0 || s.journal == nil || before == after {
+		return nil
+	}
+	operationID, err := journal.NewOperationID()
+	if err != nil {
+		return fmt.Errorf("prepare campus policy journal operation: %w", err)
+	}
+	if _, err := journal.InsertTx(context.Background(), tx, journal.EventInput{
+		ActorType:   journal.ActorStaff,
+		ActorID:     strconv.Itoa(actorID),
+		Action:      action,
+		EntityType:  "campus",
+		EntityID:    strconv.FormatUint(uint64(campus.ID), 10),
+		OperationID: operationID,
+		Details:     campusNoShowBanPolicyJournalDetails(before, after, campus.Name),
+	}); err != nil {
+		return fmt.Errorf("journal campus %d no-show policy: %w", campus.ID, err)
+	}
+	return nil
+}
+
+func campusNoShowBanPolicyJournalDetails(
+	before roommodel.NoShowBanPolicy,
+	after roommodel.NoShowBanPolicy,
+	campusName string,
+) map[string]any {
+	changes := make(map[string]any)
+	if before.Enabled != after.Enabled {
+		changes["enabled"] = map[string]any{"before": before.Enabled, "after": after.Enabled}
+	}
+	if before.DurationHours != after.DurationHours {
+		changes["duration_hours"] = map[string]any{"before": before.DurationHours, "after": after.DurationHours}
+	}
+	if before.Level != after.Level {
+		changes["level"] = map[string]any{"before": before.Level, "after": after.Level}
+	}
+	return map[string]any{
+		"version":     1,
+		"campus_name": campusName,
+		"changes":     changes,
+	}
 }

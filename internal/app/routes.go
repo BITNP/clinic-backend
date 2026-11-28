@@ -152,7 +152,11 @@ func (h routeHandlers) router() *gin.Engine {
 		campusRead.GET("/:id", h.campusH.Get)
 	}
 	campusWrite := r.Group("/api/admin/campuses")
-	campusWrite.Use(h.adminAuth, authhandler.RequireAdmin, changes.SyncBumpMiddleware(h.syncSvc, changes.SyncGroupRoom))
+	campusWrite.Use(
+		h.adminAuth,
+		authhandler.RequireAdmin,
+		changes.SyncBumpMiddleware(h.syncSvc, changes.SyncGroupRoom, changes.SyncGroupJournal),
+	)
 	{
 		campusWrite.POST("", h.campusH.Create)
 		campusWrite.PUT("/:id", h.campusH.Update)
