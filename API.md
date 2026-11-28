@@ -1067,8 +1067,11 @@ The backend seeds and reserves `SYNC_POLL_INTERVAL`, `STAFF_VERSION`,
 `DINGTALK_NOTIFICATION_TITLE`, `DINGTALK_NOTIFICATION_HEADER`,
 `DINGTALK_NOTIFICATION_QQ_ACCOUNT`, `DINGTALK_TEMPLATE_CONFIRMED`,
 `DINGTALK_TEMPLATE_REJECTED`, `DINGTALK_TEMPLATE_REFERRED`,
-`DINGTALK_TEMPLATE_TRANSFER`, `DINGTALK_TEMPLATE_NO_SHOW`, and
-`DINGTALK_TEMPLATE_REMINDER`. Their types, required flags, write-only flags,
+`DINGTALK_TEMPLATE_TRANSFER`, `DINGTALK_TEMPLATE_NO_SHOW`,
+`DINGTALK_TEMPLATE_NO_SHOW_NO_BAN`, and `DINGTALK_TEMPLATE_REMINDER`.
+`DINGTALK_TEMPLATE_NO_SHOW` is the ban-mode no-show template;
+`DINGTALK_TEMPLATE_NO_SHOW_NO_BAN` is used when the record campus's no-show ban
+policy is disabled. Their types, required flags, write-only flags,
 and role levels are fixed and their values receive key-specific validation.
 `TAGGER_LLM_API_KEY`,
 `TAGGER_LLM_BASE_URL`, `TAGGER_LLM_MODEL`, `TAGGER_AGENT_POOL_SIZE`,
@@ -1507,6 +1510,8 @@ automatic `no_show` transitions apply the room campus's
 creates or extends a global or campus ban until the transition time plus
 `duration_hours`. The generated ban reason is
 `预约后未到访诊所，已暂停预约`. A ban that already expires later is unchanged.
+No-show DingTalk notifications use `DINGTALK_TEMPLATE_NO_SHOW` when the campus
+policy is enabled and `DINGTALK_TEMPLATE_NO_SHOW_NO_BAN` when it is disabled.
 
 DingTalk message text is rendered from configurable templates. The available
 fields are `HEDR`, `DATE`, `ID`, `ROOM`, `LOCA`, `TRRO`, `TRLO`, `REAS`, and

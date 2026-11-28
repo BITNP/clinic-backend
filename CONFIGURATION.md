@@ -240,8 +240,13 @@ afterward.
 | `DINGTALK_TEMPLATE_REJECTED` | built-in rejection example | admin | Template for `rejected`. |
 | `DINGTALK_TEMPLATE_REFERRED` | built-in referral example | admin | Template for `referred`. |
 | `DINGTALK_TEMPLATE_TRANSFER` | built-in transfer example | admin | Template sent when confirmation changes the room. The DingTalk title is `工单转诊`. |
-| `DINGTALK_TEMPLATE_NO_SHOW` | built-in no-show example | admin | Template for `no_show`. |
+| `DINGTALK_TEMPLATE_NO_SHOW` | built-in ban-mode no-show example | admin | No-show template used when the record campus's `no_show_ban_policy.enabled` is true. |
+| `DINGTALK_TEMPLATE_NO_SHOW_NO_BAN` | built-in non-ban no-show example | admin | No-show template used when the record campus's `no_show_ban_policy.enabled` is false. |
 | `DINGTALK_TEMPLATE_REMINDER` | built-in reminder example | admin | Confirmed-ticket pre-shift reminder. |
+
+No-show template selection is evaluated from the record room's campus when the
+status notification is prepared. The two templates are independently
+configurable and are validated with the same placeholder rules.
 
 Enabling notifications requires a valid base URL, app code, app key, and app
 secret. Enabling redirection additionally requires exactly one receiver.
