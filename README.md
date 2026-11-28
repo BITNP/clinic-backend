@@ -450,8 +450,10 @@ token.
 The default template is
 `[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待审核工单，请及时处理。`
 
-`LeadTime` is the actual time remaining when the message is sent, rounded down
-to the minute. Approval reminders count only `pending` tickets.
+For approval templates, `LeadTime` is the actual time remaining when the
+message is sent, rounded down to the minute. Approval reminders count only
+`pending` tickets. Completion templates receive the configured end-time delay
+as `LeadTime`.
 
 The default completion template is
 `[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待完成工单，请及时处理。`

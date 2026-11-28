@@ -17,7 +17,7 @@ const (
 	defaultServiceDateReminderTimeout = 5 * time.Second
 )
 
-// ServiceDateReminderConfig controls the pending-ticket reminder worker.
+// ServiceDateReminderConfig controls the service-date reminder worker.
 type ServiceDateReminderConfig struct {
 	Enabled                   bool
 	LeadTimes                 []time.Duration
