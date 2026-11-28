@@ -289,6 +289,224 @@ func TestReminderDiscoveryCreatesOneJobForAssignedAdmin(t *testing.T) {
 	}
 }
 
+func TestReminderCompletionUsesEndTimeDelayAndUnfinishedTickets(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.AutoMigrate(
+		&schedulingmodel.ClinicServiceDate{},
+		&schedulingmodel.ServiceDateReminder{},
+		&schedulingmodel.ClinicWorkSchedule{},
+		&schedulingmodel.ClinicWorkScheduleWeekday{},
+		&schedulingmodel.ClinicWorkScheduleStaff{},
+		&staffmodel.ClinicStaff{},
+		&recordmodel.ClinicRecord{},
+		&roommodel.ClinicRoom{},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	loc := time.FixedZone("UTC+8", 8*3600)
+	start := time.Date(2026, 11, 12, 18, 30, 0, 0, loc)
+	end := start.Add(2 * time.Hour)
+	day := time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC)
+	room := roommodel.ClinicRoom{ID: 1, Name: "北区医务室", Address: "A", Enabled: true}
+	date := schedulingmodel.ClinicServiceDate{
+		ID:        1,
+		RoomID:    &room.ID,
+		Date:      day,
+		StartTime: start.UTC(),
+		EndTime:   end.UTC(),
+	}
+	admins := []staffmodel.ClinicStaff{
+		{ID: 1, AccountID: "admin-1", Role: "admin", QQNumber: "123"},
+		{ID: 2, AccountID: "admin-2", Role: "admin", QQNumber: "456"},
+	}
+	schedule := schedulingmodel.ClinicWorkSchedule{
+		ID:        1,
+		Name:      "schedule",
+		StartDate: day,
+		EndDate:   day,
+		Enabled:   true,
+	}
+	slot := schedulingmodel.ClinicWorkScheduleWeekday{
+		ID:             1,
+		WorkScheduleID: 1,
+		Weekday:        int(day.Weekday()),
+		RoomID:         room.ID,
+		StartTime:      time.Date(1970, 1, 1, 18, 0, 0, 0, time.UTC),
+		EndTime:        time.Date(1970, 1, 1, 21, 0, 0, 0, time.UTC),
+	}
+	for _, value := range []any{&room, &date, &schedule, &slot} {
+		if err := db.Create(value).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := range admins {
+		if err := db.Create(&admins[i]).Error; err != nil {
+			t.Fatal(err)
+		}
+		assignment := schedulingmodel.ClinicWorkScheduleStaff{
+			WeekdayID:  slot.ID,
+			ScheduleID: schedule.ID,
+			StaffID:    admins[i].ID,
+		}
+		if err := db.Create(&assignment).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	records := []recordmodel.ClinicRecord{
+		{User: "pending", Realname: "r", PhoneNum: "p", Status: recordmodel.RecordStatusCompleted, AppointmentTime: day, QuestionDesc: "q", RoomID: room.ID},
+		{User: "in-progress", Realname: "r", PhoneNum: "p", Status: recordmodel.RecordStatusNoShow, AppointmentTime: day, QuestionDesc: "q", RoomID: room.ID},
+		{User: "rejected", Realname: "r", PhoneNum: "p", Status: recordmodel.RecordStatusRejected, AppointmentTime: day, QuestionDesc: "q", RoomID: room.ID},
+		{User: "referred", Realname: "r", PhoneNum: "p", Status: recordmodel.RecordStatusReferred, AppointmentTime: day, QuestionDesc: "q", RoomID: room.ID},
+		{User: "completed", Realname: "r", PhoneNum: "p", Status: recordmodel.RecordStatusCompleted, AppointmentTime: day, QuestionDesc: "q", RoomID: room.ID},
+		{User: "no-show", Realname: "r", PhoneNum: "p", Status: recordmodel.RecordStatusNoShow, AppointmentTime: day, QuestionDesc: "q", RoomID: room.ID},
+	}
+	for i := range records {
+		if err := db.Create(&records[i]).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rawDB := testutil.RawDB(t, db)
+	discovery := &schedulingservice.ReminderDiscovery{
+		DB:              rawDB,
+		Location:        loc,
+		CompletionDelay: 30 * time.Minute,
+	}
+	beforeDue := end.Add(29 * time.Minute)
+	if err := discovery.Discover(context.Background(), beforeDue); err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	if err := db.Model(&schedulingmodel.ServiceDateReminder{}).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("before due completion jobs = %d, want 0", count)
+	}
+
+	due := end.Add(30 * time.Minute)
+	if err := discovery.Discover(context.Background(), due); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&schedulingmodel.ServiceDateReminder{}).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("finished-ticket completion jobs = %d, want 0", count)
+	}
+
+	if err := db.Model(&records[0]).Update("status", recordmodel.RecordStatusPending).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&records[1]).Update("status", recordmodel.RecordStatusInProgress).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&records[2]).Update("status", recordmodel.RecordStatusConfirmed).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&records[3]).Update("status", recordmodel.RecordStatusArrived).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := discovery.Discover(context.Background(), due); err != nil {
+		t.Fatal(err)
+	}
+	if err := discovery.Discover(context.Background(), due); err != nil {
+		t.Fatal(err)
+	}
+
+	var jobs []schedulingmodel.ServiceDateReminder
+	if err := db.Order("id").Find(&jobs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 2 {
+		t.Fatalf("completion jobs = %+v, want two admin jobs", jobs)
+	}
+	for i, job := range jobs {
+		if job.Kind != schedulingmodel.ReminderKindCompletion {
+			t.Errorf("job %d kind = %q, want completion", i, job.Kind)
+		}
+		if job.LeadTimeSeconds != 0 {
+			t.Errorf("job %d lead_time_seconds = %d, want 0", i, job.LeadTimeSeconds)
+		}
+		if job.StaffID != admins[i].ID {
+			t.Errorf("job %d staff = %d, want %d", i, job.StaffID, admins[i].ID)
+		}
+	}
+
+	sentBodies := make([]string, 0, 1)
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		sentBodies = append(sentBodies, string(body))
+		return &http.Response{
+			StatusCode: http.StatusAccepted,
+			Body:       io.NopCloser(strings.NewReader(`{"status":"async","retcode":1,"data":{"delivery_id":"qq-completion"}}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	completionDelay := 30 * time.Minute
+	delivery := &schedulingservice.ReminderDelivery{
+		DB:        rawDB,
+		Discovery: discovery,
+		Client:    client,
+		Config: func() (schedulingservice.ReminderDeliveryConfig, error) {
+			return schedulingservice.ReminderDeliveryConfig{
+				Enabled:            true,
+				CompletionDelay:    completionDelay,
+				BaseURL:            "http://gateway",
+				Account:            "qq",
+				Token:              "secret",
+				Timeout:            time.Second,
+				CompletionTemplate: template.Must(template.New("completion").Parse("[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待完成工单，请及时处理。")),
+			}, nil
+		},
+		Lease: time.Minute,
+		Now:   func() time.Time { return due },
+	}
+	job, err := delivery.Claim(context.Background(), due)
+	if err != nil || job == nil {
+		t.Fatalf("claim completion reminder = %+v, %v", job, err)
+	}
+	if err := delivery.Deliver(context.Background(), job, due); err != nil {
+		t.Fatal(err)
+	}
+	if len(sentBodies) != 1 {
+		t.Fatalf("sent bodies = %v, want one", sentBodies)
+	}
+	wantMessage := "[电脑诊所]2026-11-12 18:30 北区医务室 的值班还有4个待完成工单，请及时处理。"
+	if !strings.Contains(sentBodies[0], `"user_id":123`) || !strings.Contains(sentBodies[0], wantMessage) {
+		t.Fatalf("sent body = %s", sentBodies[0])
+	}
+	if err := db.First(&jobs[0], job.ID).Error; err != nil || jobs[0].Status != "accepted" {
+		t.Fatalf("delivered completion job = %+v, %v", jobs[0], err)
+	}
+
+	completionDelay = 45 * time.Minute
+	secondJob, err := delivery.Claim(context.Background(), due)
+	if err != nil || secondJob == nil {
+		t.Fatalf("claim delayed completion reminder = %+v, %v", secondJob, err)
+	}
+	if err := delivery.Deliver(context.Background(), secondJob, due); err != nil {
+		t.Fatal(err)
+	}
+	if len(sentBodies) != 1 {
+		t.Fatalf("early completion reminder sent: %v", sentBodies)
+	}
+	if err := db.First(&jobs[1], secondJob.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	wantNextAttempt := end.Add(45 * time.Minute).UTC()
+	if jobs[1].Status != "pending" || !jobs[1].NextAttemptAt.Equal(wantNextAttempt) {
+		t.Fatalf("rescheduled completion job = %+v, want pending at %v", jobs[1], wantNextAttempt)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

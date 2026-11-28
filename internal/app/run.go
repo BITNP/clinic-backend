@@ -337,19 +337,25 @@ func Run() {
 					return schedulingservice.ReminderDeliveryConfig{}, err
 				}
 				return schedulingservice.ReminderDeliveryConfig{
-					Enabled:   cfg.Enabled,
-					LeadTimes: cfg.LeadTimes,
-					BaseURL:   cfg.Gateway.BaseURL,
-					Account:   cfg.Gateway.Account,
-					Token:     cfg.Gateway.AccountToken,
-					Timeout:   cfg.Gateway.Timeout,
-					Template:  cfg.MessageTemplate,
+					Enabled:            cfg.Enabled,
+					LeadTimes:          cfg.LeadTimes,
+					CompletionDelay:    cfg.CompletionDelay,
+					BaseURL:            cfg.Gateway.BaseURL,
+					Account:            cfg.Gateway.Account,
+					Token:              cfg.Gateway.AccountToken,
+					Timeout:            cfg.Gateway.Timeout,
+					Template:           cfg.MessageTemplate,
+					CompletionTemplate: cfg.CompletionMessageTemplate,
 				}, nil
 			},
 		}
 		leadTimes := func() []time.Duration { return configSvc.Current().ServiceDateReminderLeadTimes }
+		completionDelay := func() time.Duration {
+			return configSvc.Current().ServiceDateCompletionReminderDelay
+		}
 		enabled := func() bool { return configSvc.Current().ServiceDateReminderEnabled }
 		discovery.LeadTimesGetter = leadTimes
+		discovery.CompletionDelayGetter = completionDelay
 		discovery.Guard = func(run func() error) error {
 			return configSvc.WithRuntimeSettings(func(settings configservice.RuntimeSettings) error {
 				if !settings.ServiceDateReminderEnabled {

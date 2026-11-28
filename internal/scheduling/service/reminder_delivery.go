@@ -45,6 +45,12 @@ func (d *ReminderDelivery) checkSettings(ctx context.Context, job *schedulingmod
 			map[string]any{"reason": "reminders_disabled"},
 		)
 	}
+	if reminderKind(job) == schedulingmodel.ReminderKindCompletion {
+		if settings.CompletionDelay <= 0 {
+			return false, fmt.Errorf("completion reminder delay is not configured")
+		}
+		return true, nil
+	}
 	for _, lead := range settings.LeadTimes {
 		if int64(lead/time.Second) == job.LeadTimeSeconds {
 			return true, nil
@@ -105,10 +111,11 @@ func (d *ReminderDelivery) Claim(ctx context.Context, now time.Time) (*schedulin
 					EntityID:    fmt.Sprint(job.ServiceDateID),
 					OperationID: operationID,
 					Details: map[string]any{
-						"version":     1,
-						"reminder_id": job.ID,
-						"attempt":     job.Attempts,
-						"reason":      "retry_limit_reached",
+						"version":       1,
+						"reminder_id":   job.ID,
+						"reminder_kind": reminderKind(&job),
+						"attempt":       job.Attempts,
+						"reason":        "retry_limit_reached",
 					},
 				}); err != nil {
 					return err
@@ -153,10 +160,11 @@ func (d *ReminderDelivery) Claim(ctx context.Context, now time.Time) (*schedulin
 				EntityID:    fmt.Sprint(job.ServiceDateID),
 				OperationID: operationID,
 				Details: map[string]any{
-					"version":     1,
-					"reminder_id": job.ID,
-					"attempt":     job.Attempts + 1,
-					"reason":      reason,
+					"version":       1,
+					"reminder_id":   job.ID,
+					"reminder_kind": reminderKind(&job),
+					"attempt":       job.Attempts + 1,
+					"reason":        reason,
 				},
 			}); err != nil {
 				return err
@@ -253,6 +261,7 @@ func (d *ReminderDelivery) finish(
 		details := make(map[string]any, len(eventDetails)+4)
 		details["version"] = 1
 		details["reminder_id"] = job.ID
+		details["reminder_kind"] = reminderKind(job)
 		details["attempt"] = job.Attempts
 		for key, value := range eventDetails {
 			details[key] = value
@@ -307,13 +316,35 @@ func (d *ReminderDelivery) Deliver(ctx context.Context, job *schedulingmodel.Ser
 	if err != nil {
 		return d.retry(ctx, job, now, fmt.Errorf("load service date: %w", err))
 	}
-	if !date.StartTime.Equal(job.ServiceStartAt) || !now.Before(date.StartTime) {
-		if !date.StartTime.Equal(job.ServiceStartAt) {
-			return cancelJob("service_start_changed")
+	kind := reminderKind(job)
+	var dueAt time.Time
+	if !date.StartTime.Equal(job.ServiceStartAt) {
+		return cancelJob("service_start_changed")
+	}
+	if kind == schedulingmodel.ReminderKindCompletion {
+		dueAt = date.EndTime.Add(settings.CompletionDelay)
+		if now.Before(dueAt) {
+			return d.finish(
+				ctx,
+				job,
+				map[string]any{"status": "pending", "next_attempt_at": dueAt},
+				"notification.retry_scheduled",
+				map[string]any{
+					"reason":          "completion_delay_not_reached",
+					"next_attempt_at": dueAt.UTC().Format(time.RFC3339Nano),
+				},
+			)
 		}
+	} else if !now.Before(date.StartTime) {
 		return cancelJob("service_already_started")
 	}
-	admins, count, err := d.Discovery.Eligible(ctx, date)
+	var admins []staffmodel.ClinicStaff
+	var count int64
+	if kind == schedulingmodel.ReminderKindCompletion {
+		admins, count, err = d.Discovery.EligibleCompletion(ctx, date)
+	} else {
+		admins, count, err = d.Discovery.Eligible(ctx, date)
+	}
 	if err != nil {
 		return d.retry(ctx, job, now, err)
 	}
@@ -325,6 +356,9 @@ func (d *ReminderDelivery) Deliver(ctx context.Context, job *schedulingmodel.Ser
 		}
 	}
 	if count == 0 {
+		if kind == schedulingmodel.ReminderKindCompletion {
+			return cancelJob("no_unfinished_records")
+		}
 		return cancelJob("no_pending_records")
 	}
 	if qq == "" {
@@ -355,15 +389,47 @@ func (d *ReminderDelivery) Deliver(ctx context.Context, job *schedulingmodel.Ser
 		clock = time.Now
 	}
 	deliveryTime := clock()
-	if !deliveryTime.Before(date.StartTime) {
-		return cancelJob("service_already_started")
+	var (
+		messageTemplate  *template.Template
+		templateKey      string
+		templateLeadTime string
+	)
+	if kind == schedulingmodel.ReminderKindCompletion {
+		if deliveryTime.Before(dueAt) {
+			return d.finish(
+				ctx,
+				job,
+				map[string]any{"status": "pending", "next_attempt_at": dueAt},
+				"notification.retry_scheduled",
+				map[string]any{
+					"reason":          "completion_delay_not_reached",
+					"next_attempt_at": dueAt.UTC().Format(time.RFC3339Nano),
+				},
+			)
+		}
+		messageTemplate = settings.CompletionTemplate
+		templateKey = "SERVICE_DATE_COMPLETION_REMINDER_TEMPLATE"
+		templateLeadTime = settings.CompletionDelay.String()
+	} else {
+		if !deliveryTime.Before(date.StartTime) {
+			return cancelJob("service_already_started")
+		}
+		messageTemplate = settings.Template
+		templateKey = "SERVICE_DATE_REMINDER_TEMPLATE"
+		templateLeadTime = date.StartTime.Sub(deliveryTime).Truncate(time.Minute).String()
 	}
-	remaining := date.StartTime.Sub(deliveryTime).Truncate(time.Minute)
-	if settings.Template == nil {
+	if messageTemplate == nil {
 		return d.retry(ctx, job, now, fmt.Errorf("render reminder: template is not configured"))
 	}
 	var message bytes.Buffer
-	err = settings.Template.Execute(&message, map[string]string{"Date": date.Date.Format("2006-01-02"), "StartTime": start.Format("15:04"), "Room": room.Name, "PendingCount": strconv.FormatInt(count, 10), "LeadTime": remaining.String()})
+	parameters := map[string]string{
+		"Date":         date.Date.Format("2006-01-02"),
+		"StartTime":    start.Format("15:04"),
+		"Room":         room.Name,
+		"PendingCount": strconv.FormatInt(count, 10),
+		"LeadTime":     templateLeadTime,
+	}
+	err = messageTemplate.Execute(&message, parameters)
 	if err != nil {
 		return d.retry(ctx, job, now, fmt.Errorf("render reminder: %w", err))
 	}
@@ -431,14 +497,8 @@ func (d *ReminderDelivery) Deliver(ctx context.Context, job *schedulingmodel.Ser
 			"gateway_delivery_id": result.Data.DeliveryID,
 			"http_status":         resp.StatusCode,
 			"message": map[string]any{
-				"template_key": "SERVICE_DATE_REMINDER_TEMPLATE",
-				"parameters": map[string]any{
-					"Date":         date.Date.Format("2006-01-02"),
-					"StartTime":    start.Format("15:04"),
-					"Room":         room.Name,
-					"PendingCount": strconv.FormatInt(count, 10),
-					"LeadTime":     remaining.String(),
-				},
+				"template_key": templateKey,
+				"parameters":   parameters,
 			},
 		},
 	)
@@ -461,7 +521,8 @@ func (d *ReminderDelivery) retry(ctx context.Context, job *schedulingmodel.Servi
 		eventAction = "notification.failed"
 		reason = "retry_limit_reached"
 		terminal = true
-	} else if !now.Add(delay).Before(job.ServiceStartAt) {
+	} else if reminderKind(job) != schedulingmodel.ReminderKindCompletion &&
+		!now.Add(delay).Before(job.ServiceStartAt) {
 		status = "cancelled"
 		eventAction = "notification.failed"
 		reason = "retry_deadline_reached"
@@ -535,13 +596,15 @@ func (d *ReminderDelivery) DeliveryTimeout() time.Duration {
 // ReminderDeliveryConfig is the active database-backed snapshot used for one
 // reminder operation.
 type ReminderDeliveryConfig struct {
-	Enabled   bool
-	LeadTimes []time.Duration
-	BaseURL   string
-	Account   string
-	Token     string
-	Timeout   time.Duration
-	Template  *template.Template
+	Enabled            bool
+	LeadTimes          []time.Duration
+	CompletionDelay    time.Duration
+	BaseURL            string
+	Account            string
+	Token              string
+	Timeout            time.Duration
+	Template           *template.Template
+	CompletionTemplate *template.Template
 }
 
 func (d *ReminderDelivery) settings() (ReminderDeliveryConfig, error) {
@@ -554,4 +617,11 @@ func (d *ReminderDelivery) settings() (ReminderDeliveryConfig, error) {
 	}
 	settings.LeadTimes = append([]time.Duration(nil), settings.LeadTimes...)
 	return settings, nil
+}
+
+func reminderKind(job *schedulingmodel.ServiceDateReminder) string {
+	if job.Kind == "" {
+		return schedulingmodel.ReminderKindStart
+	}
+	return job.Kind
 }

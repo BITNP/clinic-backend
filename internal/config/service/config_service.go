@@ -648,7 +648,7 @@ func (s *ConfigService) updateItem(
 				if !found {
 					if _, err := tx.Exec(`UPDATE clinic_service_date_reminder
 						SET status = 'cancelled', updated_at = $1
-						WHERE status = 'pending' AND lead_time_seconds = $2`, time.Now().UTC(), int64(oldLead/time.Second)); err != nil {
+						WHERE status = 'pending' AND kind = 'start' AND lead_time_seconds = $2`, time.Now().UTC(), int64(oldLead/time.Second)); err != nil {
 						return fmt.Errorf("cancel reminders for removed lead time: %w", err)
 					}
 				}
