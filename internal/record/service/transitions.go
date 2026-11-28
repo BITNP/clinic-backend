@@ -328,8 +328,12 @@ func (s *AdminRecordService) MarkNoShow(ctx context.Context, actorID int, id uin
 		action:  RecordActionNoShow,
 		actorID: actorID,
 		allowed: onlyStatus(recordmodel.RecordStatusConfirmed),
-		update: func(tx *sql.Tx, record recordmodel.ClinicRecord, _ time.Time) error {
-			return setRecordStatusTx(tx, record.ID, recordmodel.RecordStatusNoShow, nil, false)
+		update: func(tx *sql.Tx, record recordmodel.ClinicRecord, now time.Time) error {
+			if err := setRecordStatusTx(tx, record.ID, recordmodel.RecordStatusNoShow, nil, false); err != nil {
+				return err
+			}
+			_, err := s.applyNoShowBanTx(ctx, tx, record, now)
+			return err
 		},
 	})
 }

@@ -55,6 +55,12 @@ func (s *AdminRecordService) CloseExpiredRecords(ctx context.Context, cutoff tim
 			return fmt.Errorf("read no-show records: %w", err)
 		}
 		noShowCount = int64(len(noShowRecords))
+		noShowAt := time.Now().UTC()
+		for _, record := range noShowRecords {
+			if _, err := s.applyNoShowBanTx(ctx, tx, record, noShowAt); err != nil {
+				return fmt.Errorf("apply no-show ban for record %d: %w", record.ID, err)
+			}
+		}
 
 		completedArgs := []any{recordmodel.RecordStatusCompleted, cutoff}
 		for _, status := range completedStatuses {

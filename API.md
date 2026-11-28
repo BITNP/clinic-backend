@@ -1501,7 +1501,12 @@ whose appointment date has passed are closed automatically. `pending` and
 `confirmed` records become `no_show`; `arrived` and `in_progress` records become
 `completed`. An existing arrival timestamp is preserved. Automatic `no_show`
 transitions send the same best-effort DingTalk notification described below
-when the `DINGTALK_NOTIFY_ENABLED` config item is true.
+when the `DINGTALK_NOTIFY_ENABLED` config item is true. Both manual and
+automatic `no_show` transitions apply the room campus's
+`no_show_ban_policy` in the same database transaction. When enabled, the policy
+creates or extends a global or campus ban until the transition time plus
+`duration_hours`. The generated ban reason is
+`预约后未到访诊所，已暂停预约`. A ban that already expires later is unchanged.
 
 DingTalk message text is rendered from configurable templates. The available
 fields are `HEDR`, `DATE`, `ID`, `ROOM`, `LOCA`, `TRRO`, `TRLO`, `REAS`, and
@@ -1967,7 +1972,9 @@ curl -X POST "$BASE/api/admin/records/1/refer" \
 record's `user` id. The message-center delivery status is checked after
 submission; notification failures are recorded in the journal and do not roll
 back the transition. The send is skipped when the `DINGTALK_NOTIFY_ENABLED`
-config item is false.
+config item is false. The record room's campus `no_show_ban_policy` is applied
+transactionally with the status change; an invalid stored policy rolls back the
+transition.
 
 **Request:** No body.
 
