@@ -14,6 +14,12 @@ import (
 // ErrCampusInvalidPolicy indicates an unsupported selection policy.
 var ErrCampusInvalidPolicy = errors.New("invalid selection_policy")
 
+// ErrCampusInvalidNoShowBanDuration indicates a non-positive or overflowing no-show ban duration.
+var ErrCampusInvalidNoShowBanDuration = errors.New("invalid no_show_ban_policy.duration_hours")
+
+// ErrCampusInvalidNoShowBanLevel indicates an unsupported no-show ban level.
+var ErrCampusInvalidNoShowBanLevel = errors.New("invalid no_show_ban_policy.level")
+
 // ErrCampusNotFound is returned when no campus matches the given id.
 var ErrCampusNotFound = errors.New("campus not found")
 
@@ -32,7 +38,7 @@ func NewCampusService(db *database.DB) *CampusService {
 	return &CampusService{db: db}
 }
 
-const campusColumns = "id, name, selection_policy"
+const campusColumns = "id, name, selection_policy, no_show_ban_enabled, no_show_ban_duration_hours, no_show_ban_level"
 
 func joinAnd(parts []string) string {
 	return strings.Join(parts, " AND ")
@@ -40,20 +46,35 @@ func joinAnd(parts []string) string {
 
 func scanCampus(row interface{ Scan(...any) error }) (roommodel.ClinicCampus, error) {
 	var c roommodel.ClinicCampus
-	err := row.Scan(&c.ID, &c.Name, &c.SelectionPolicy)
+	err := row.Scan(
+		&c.ID,
+		&c.Name,
+		&c.SelectionPolicy,
+		&c.NoShowBanPolicy.Enabled,
+		&c.NoShowBanPolicy.DurationHours,
+		&c.NoShowBanPolicy.Level,
+	)
 	return c, err
+}
+
+type NoShowBanPolicyPatch struct {
+	Enabled       *bool
+	DurationHours *int64
+	Level         *roommodel.NoShowBanLevel
 }
 
 // CreateCampusInput carries the fields a caller may set on creation.
 type CreateCampusInput struct {
 	SelectionPolicy roommodel.SelectionPolicy
 	Name            string
+	NoShowBanPolicy *NoShowBanPolicyPatch
 }
 
 // UpdateCampusInput uses pointers so omitted fields stay unchanged.
 type UpdateCampusInput struct {
 	SelectionPolicy *roommodel.SelectionPolicy
 	Name            *string
+	NoShowBanPolicy *NoShowBanPolicyPatch
 }
 
 // ListCampusFilter controls listing behavior.
@@ -71,9 +92,16 @@ func (s *CampusService) Create(in CreateCampusInput) (roommodel.ClinicCampus, er
 	if !policy.Valid() {
 		return roommodel.ClinicCampus{}, ErrCampusInvalidPolicy
 	}
+	noShowPolicy := defaultNoShowBanPolicy(in.NoShowBanPolicy)
+	if err := validateNoShowBanPolicy(noShowPolicy); err != nil {
+		return roommodel.ClinicCampus{}, err
+	}
 	c, err := scanCampus(s.db.QueryRow(
-		"INSERT INTO clinic_campus (name, selection_policy) VALUES ($1, $2) RETURNING "+campusColumns,
-		in.Name, policy,
+		`INSERT INTO clinic_campus
+		 (name, selection_policy, no_show_ban_enabled, no_show_ban_duration_hours, no_show_ban_level)
+		 VALUES ($1, $2, $3, $4, $5)
+		 RETURNING `+campusColumns,
+		in.Name, policy, noShowPolicy.Enabled, noShowPolicy.DurationHours, noShowPolicy.Level,
 	))
 	if err != nil {
 		if database.IsUniqueViolation(err) {
@@ -172,6 +200,25 @@ func (s *CampusService) Update(id uint, in UpdateCampusInput) (roommodel.ClinicC
 			args = append(args, *in.Name)
 			updates = append(updates, fmt.Sprintf("name = $%d", len(args)))
 		}
+		if in.NoShowBanPolicy != nil {
+			effective := c.NoShowBanPolicy
+			applyNoShowBanPolicyPatch(&effective, in.NoShowBanPolicy)
+			if err := validateNoShowBanPolicy(effective); err != nil {
+				return err
+			}
+			if in.NoShowBanPolicy.Enabled != nil {
+				args = append(args, *in.NoShowBanPolicy.Enabled)
+				updates = append(updates, fmt.Sprintf("no_show_ban_enabled = $%d", len(args)))
+			}
+			if in.NoShowBanPolicy.DurationHours != nil {
+				args = append(args, *in.NoShowBanPolicy.DurationHours)
+				updates = append(updates, fmt.Sprintf("no_show_ban_duration_hours = $%d", len(args)))
+			}
+			if in.NoShowBanPolicy.Level != nil {
+				args = append(args, *in.NoShowBanPolicy.Level)
+				updates = append(updates, fmt.Sprintf("no_show_ban_level = $%d", len(args)))
+			}
+		}
 		if len(updates) > 0 {
 			args = append(args, id)
 			c, err = scanCampus(tx.QueryRow(
@@ -191,6 +238,37 @@ func (s *CampusService) Update(id uint, in UpdateCampusInput) (roommodel.ClinicC
 		return roommodel.ClinicCampus{}, err
 	}
 	return c, nil
+}
+
+func defaultNoShowBanPolicy(patch *NoShowBanPolicyPatch) roommodel.NoShowBanPolicy {
+	policy := roommodel.DefaultNoShowBanPolicy()
+	applyNoShowBanPolicyPatch(&policy, patch)
+	return policy
+}
+
+func applyNoShowBanPolicyPatch(policy *roommodel.NoShowBanPolicy, patch *NoShowBanPolicyPatch) {
+	if patch == nil {
+		return
+	}
+	if patch.Enabled != nil {
+		policy.Enabled = *patch.Enabled
+	}
+	if patch.DurationHours != nil {
+		policy.DurationHours = *patch.DurationHours
+	}
+	if patch.Level != nil {
+		policy.Level = *patch.Level
+	}
+}
+
+func validateNoShowBanPolicy(policy roommodel.NoShowBanPolicy) error {
+	if policy.DurationHours <= 0 || policy.DurationHours > roommodel.MaxNoShowBanDurationHours {
+		return ErrCampusInvalidNoShowBanDuration
+	}
+	if !policy.Level.Valid() {
+		return ErrCampusInvalidNoShowBanLevel
+	}
+	return nil
 }
 
 func (s *CampusService) Delete(id uint) error {

@@ -23,7 +23,7 @@ const workScheduleWeekdayColumns = "id, work_schedule_id, weekday, start_time, e
 const workScheduleStaffColumns = "id, weekday_id, staff_id, schedule_id"
 const staffColumns = "id, account_id, realname, email, qq_number, role, version"
 const roomColumns = "id, name, address, enabled, campus_id, type"
-const roomWithCampusColumns = "r.id, r.name, r.address, r.enabled, r.campus_id, r.type, c.id, c.name, c.selection_policy"
+const roomWithCampusColumns = "r.id, r.name, r.address, r.enabled, r.campus_id, r.type, c.id, c.name, c.selection_policy, c.no_show_ban_enabled, c.no_show_ban_duration_hours, c.no_show_ban_level"
 const reminderColumns = "id, service_date_id, service_start_at, lead_time_seconds, staff_id, status, attempts, next_attempt_at, lease_until, claim_token, gateway_delivery_id, gateway_account, accepted_at, sent_at, last_tracked_at, last_error, created_at, updated_at"
 
 func scanServiceDate(row rowScanner) (schedulingmodel.ClinicServiceDate, error) {
@@ -75,13 +75,38 @@ func scanRoomWithCampus(row rowScanner) (roommodel.ClinicRoom, error) {
 	var room roommodel.ClinicRoom
 	var campusID sql.NullInt64
 	var campusName, selectionPolicy sql.NullString
-	err := row.Scan(&room.ID, &room.Name, &room.Address, &room.Enabled, &room.CampusID, &room.Type, &campusID, &campusName, &selectionPolicy)
+	var noShowEnabled sql.NullBool
+	var noShowDuration sql.NullInt64
+	var noShowLevel sql.NullString
+	err := row.Scan(
+		&room.ID,
+		&room.Name,
+		&room.Address,
+		&room.Enabled,
+		&room.CampusID,
+		&room.Type,
+		&campusID,
+		&campusName,
+		&selectionPolicy,
+		&noShowEnabled,
+		&noShowDuration,
+		&noShowLevel,
+	)
 	if err != nil {
 		return roommodel.ClinicRoom{}, err
 	}
 	if campusID.Valid {
 		id := uint(campusID.Int64)
-		room.Campus = &roommodel.ClinicCampus{ID: id, Name: campusName.String, SelectionPolicy: roommodel.SelectionPolicy(selectionPolicy.String)}
+		room.Campus = &roommodel.ClinicCampus{
+			ID:              id,
+			Name:            campusName.String,
+			SelectionPolicy: roommodel.SelectionPolicy(selectionPolicy.String),
+			NoShowBanPolicy: roommodel.NoShowBanPolicy{
+				Enabled:       noShowEnabled.Bool,
+				DurationHours: noShowDuration.Int64,
+				Level:         roommodel.NoShowBanLevel(noShowLevel.String),
+			},
+		}
 	}
 	return room, nil
 }

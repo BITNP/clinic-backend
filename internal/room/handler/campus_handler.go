@@ -23,11 +23,19 @@ func NewCampusHandler(campusSvc *roomservice.CampusService, roomSvc *roomservice
 type createCampusRequest struct {
 	SelectionPolicy roommodel.SelectionPolicy `json:"selection_policy" binding:"omitempty,oneof=balanced fulfill"`
 	Name            string                    `json:"name" binding:"required,max=64"`
+	NoShowBanPolicy *noShowBanPolicyRequest   `json:"no_show_ban_policy"`
 }
 
 type updateCampusRequest struct {
 	SelectionPolicy *roommodel.SelectionPolicy `json:"selection_policy" binding:"omitempty,oneof=balanced fulfill"`
 	Name            *string                    `json:"name" binding:"omitempty,max=64"`
+	NoShowBanPolicy *noShowBanPolicyRequest    `json:"no_show_ban_policy"`
+}
+
+type noShowBanPolicyRequest struct {
+	Enabled       *bool                     `json:"enabled"`
+	DurationHours *int64                    `json:"duration_hours"`
+	Level         *roommodel.NoShowBanLevel `json:"level" binding:"omitempty,oneof=campus global"`
 }
 
 func (h *CampusHandler) Create(c *gin.Context) {
@@ -37,7 +45,11 @@ func (h *CampusHandler) Create(c *gin.Context) {
 		return
 	}
 
-	campus, err := h.campusSvc.Create(roomservice.CreateCampusInput{Name: req.Name, SelectionPolicy: req.SelectionPolicy})
+	campus, err := h.campusSvc.Create(roomservice.CreateCampusInput{
+		Name:            req.Name,
+		SelectionPolicy: req.SelectionPolicy,
+		NoShowBanPolicy: toNoShowBanPolicyPatch(req.NoShowBanPolicy),
+	})
 	if err != nil {
 		writeCampusError(c, err)
 		return
@@ -81,7 +93,11 @@ func (h *CampusHandler) Update(c *gin.Context) {
 		return
 	}
 
-	campus, err := h.campusSvc.Update(id, roomservice.UpdateCampusInput{Name: req.Name, SelectionPolicy: req.SelectionPolicy})
+	campus, err := h.campusSvc.Update(id, roomservice.UpdateCampusInput{
+		Name:            req.Name,
+		SelectionPolicy: req.SelectionPolicy,
+		NoShowBanPolicy: toNoShowBanPolicyPatch(req.NoShowBanPolicy),
+	})
 	if err != nil {
 		writeCampusError(c, err)
 		return
@@ -161,6 +177,8 @@ func (h *CampusHandler) listRooms(c *gin.Context, recommend bool) {
 // writeCampusError maps campus service errors to HTTP statuses.
 var campusErrorMappings = []httpx.ErrStatus{
 	{Err: roomservice.ErrCampusInvalidPolicy, Status: http.StatusBadRequest},
+	{Err: roomservice.ErrCampusInvalidNoShowBanDuration, Status: http.StatusBadRequest},
+	{Err: roomservice.ErrCampusInvalidNoShowBanLevel, Status: http.StatusBadRequest},
 	{Err: roomservice.ErrCampusNotFound, Status: http.StatusNotFound},
 	{Err: roomservice.ErrCampusNameTaken, Status: http.StatusConflict},
 	{Err: roomservice.ErrCampusInUse, Status: http.StatusConflict},
@@ -168,4 +186,15 @@ var campusErrorMappings = []httpx.ErrStatus{
 
 func writeCampusError(c *gin.Context, err error) {
 	httpx.WriteMappedError(c, err, campusErrorMappings)
+}
+
+func toNoShowBanPolicyPatch(req *noShowBanPolicyRequest) *roomservice.NoShowBanPolicyPatch {
+	if req == nil {
+		return nil
+	}
+	return &roomservice.NoShowBanPolicyPatch{
+		Enabled:       req.Enabled,
+		DurationHours: req.DurationHours,
+		Level:         req.Level,
+	}
 }

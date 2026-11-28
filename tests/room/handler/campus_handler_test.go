@@ -61,6 +61,64 @@ func TestCampusHandler_Create_Success(t *testing.T) {
 	if got.ID == 0 || got.Name != "Main Campus" {
 		t.Errorf("unexpected campus: %+v", got)
 	}
+	if got.NoShowBanPolicy != roommodel.DefaultNoShowBanPolicy() {
+		t.Errorf("no-show policy = %+v, want defaults", got.NoShowBanPolicy)
+	}
+}
+
+func TestCampusHandler_NoShowBanPolicy(t *testing.T) {
+	r, _, _ := setupCampusHandlerRouter(t)
+	w := testutil.DoRequest(t, r, http.MethodPost, "/api/admin/campuses", map[string]any{
+		"name": "Configured",
+		"no_show_ban_policy": map[string]any{
+			"enabled":        true,
+			"duration_hours": 72,
+			"level":          "global",
+		},
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created roommodel.ClinicCampus
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+	if !created.NoShowBanPolicy.Enabled ||
+		created.NoShowBanPolicy.DurationHours != 72 ||
+		created.NoShowBanPolicy.Level != roommodel.NoShowBanLevelGlobal {
+		t.Fatalf("created policy = %+v", created.NoShowBanPolicy)
+	}
+
+	w = testutil.DoRequest(t, r, http.MethodPut, "/api/admin/campuses/"+testutil.Itoa(created.ID), map[string]any{
+		"no_show_ban_policy": map[string]any{"enabled": false},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("update: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var updated roommodel.ClinicCampus
+	if err := json.Unmarshal(w.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("decode update: %v", err)
+	}
+	if updated.NoShowBanPolicy.Enabled ||
+		updated.NoShowBanPolicy.DurationHours != 72 ||
+		updated.NoShowBanPolicy.Level != roommodel.NoShowBanLevelGlobal {
+		t.Fatalf("updated policy = %+v", updated.NoShowBanPolicy)
+	}
+
+	for name, policy := range map[string]map[string]any{
+		"zero duration": {"duration_hours": 0},
+		"bad level":     {"level": "district"},
+		"bad duration":  {"duration_hours": roommodel.MaxNoShowBanDurationHours + 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := testutil.DoRequest(t, r, http.MethodPut, "/api/admin/campuses/"+testutil.Itoa(created.ID), map[string]any{
+				"no_show_ban_policy": policy,
+			})
+			if got.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", got.Code, got.Body.String())
+			}
+		})
+	}
 }
 
 func TestCampusHandler_Create_Validation(t *testing.T) {

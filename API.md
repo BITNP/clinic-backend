@@ -572,6 +572,15 @@ Campus object:
 | `id` | integer | Campus id. |
 | `name` | string | Unique campus name, max 64 characters. |
 | `selection_policy` | string | `balanced` (default, including existing campuses) or `fulfill`. |
+| `no_show_ban_policy` | object | Automatic ticket-ban policy after a `no_show` transition. |
+
+`no_show_ban_policy` fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `enabled` | boolean | Enables automatic banning. Defaults to `false` for new and existing campuses. |
+| `duration_hours` | integer | Positive ban duration in hours. Defaults to `48`. |
+| `level` | string | `campus` to ban only the record's campus, or `global` to ban every campus. Defaults to `campus`. |
 
 Mutations bump the `room` counter.
 
@@ -621,6 +630,7 @@ curl "$BASE/api/admin/campuses/1" -b cookies.txt
 | --- | --- | --- | --- |
 | `name` | string | yes | Max 64, unique. |
 | `selection_policy` | string | no | `balanced` (default) or `fulfill`; unsupported values return `400`. |
+| `no_show_ban_policy` | object | no | Partial no-show policy; omitted fields use `enabled=false`, `duration_hours=48`, and `level=campus`. |
 
 **Response `201 Created`** — campus object.
 
@@ -632,7 +642,7 @@ curl "$BASE/api/admin/campuses/1" -b cookies.txt
 curl -X POST "$BASE/api/admin/campuses" \
   -b cookies.txt -H "X-CSRF-Token: $CSRF" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"默认校区"}'
+  -d '{"name":"默认校区","no_show_ban_policy":{"enabled":true,"duration_hours":48,"level":"campus"}}'
 ```
 
 ### `PUT /api/admin/campuses/{id}`
@@ -645,6 +655,7 @@ curl -X POST "$BASE/api/admin/campuses" \
 | --- | --- | --- | --- |
 | `name` | string | no | Max 64, unique. |
 | `selection_policy` | string | no | `balanced` or `fulfill`; omitted leaves unchanged, invalid/empty values return `400`. |
+| `no_show_ban_policy` | object | no | Partial no-show policy update; omitted fields retain their current values. |
 
 **Response `200 OK`** — updated campus object.
 
@@ -656,7 +667,7 @@ curl -X POST "$BASE/api/admin/campuses" \
 curl -X PUT "$BASE/api/admin/campuses/1" \
   -b cookies.txt -H "X-CSRF-Token: $CSRF" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"主校区","selection_policy":"fulfill"}'
+  -d '{"name":"主校区","selection_policy":"fulfill","no_show_ban_policy":{"enabled":true,"duration_hours":72,"level":"global"}}'
 ```
 
 ### `DELETE /api/admin/campuses/{id}`

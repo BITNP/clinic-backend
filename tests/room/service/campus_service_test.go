@@ -22,6 +22,9 @@ func TestCampusService_Create(t *testing.T) {
 	if campus.Name != "Main Campus" {
 		t.Errorf("name = %q, want %q", campus.Name, "Main Campus")
 	}
+	if campus.NoShowBanPolicy != roommodel.DefaultNoShowBanPolicy() {
+		t.Errorf("no-show policy = %+v, want defaults", campus.NoShowBanPolicy)
+	}
 }
 
 func TestCampusService_Create_DuplicateName(t *testing.T) {
@@ -109,6 +112,73 @@ func TestCampusService_Update_Partial(t *testing.T) {
 	}
 }
 
+func TestCampusService_NoShowBanPolicy(t *testing.T) {
+	db := setupRoomServiceDB(t)
+	svc := newCampusService(t, db)
+	enabled := true
+	duration := int64(72)
+	level := roommodel.NoShowBanLevelGlobal
+
+	campus, err := svc.Create(roomservice.CreateCampusInput{
+		Name: "Configured",
+		NoShowBanPolicy: &roomservice.NoShowBanPolicyPatch{
+			Enabled:       &enabled,
+			DurationHours: &duration,
+			Level:         &level,
+		},
+	})
+	if err != nil {
+		t.Fatalf("create configured campus: %v", err)
+	}
+	if !campus.NoShowBanPolicy.Enabled ||
+		campus.NoShowBanPolicy.DurationHours != duration ||
+		campus.NoShowBanPolicy.Level != level {
+		t.Fatalf("created policy = %+v", campus.NoShowBanPolicy)
+	}
+
+	enabled = false
+	updated, err := svc.Update(campus.ID, roomservice.UpdateCampusInput{
+		NoShowBanPolicy: &roomservice.NoShowBanPolicyPatch{Enabled: &enabled},
+	})
+	if err != nil {
+		t.Fatalf("update enabled: %v", err)
+	}
+	if updated.NoShowBanPolicy.Enabled ||
+		updated.NoShowBanPolicy.DurationHours != duration ||
+		updated.NoShowBanPolicy.Level != level {
+		t.Fatalf("partially updated policy = %+v", updated.NoShowBanPolicy)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		patch roomservice.NoShowBanPolicyPatch
+		want  error
+	}{
+		{
+			name:  "zero duration",
+			patch: roomservice.NoShowBanPolicyPatch{DurationHours: ptrInt64(0)},
+			want:  roomservice.ErrCampusInvalidNoShowBanDuration,
+		},
+		{
+			name:  "duration too large",
+			patch: roomservice.NoShowBanPolicyPatch{DurationHours: ptrInt64(roommodel.MaxNoShowBanDurationHours + 1)},
+			want:  roomservice.ErrCampusInvalidNoShowBanDuration,
+		},
+		{
+			name:  "invalid level",
+			patch: roomservice.NoShowBanPolicyPatch{Level: levelPtr("invalid")},
+			want:  roomservice.ErrCampusInvalidNoShowBanLevel,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := svc.Update(campus.ID, roomservice.UpdateCampusInput{NoShowBanPolicy: &tc.patch})
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("expected %v, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
 func TestCampusService_Update_DuplicateName(t *testing.T) {
 	db := setupRoomServiceDB(t)
 	svc := newCampusService(t, db)
@@ -163,4 +233,12 @@ func TestCampusService_Delete_InUse(t *testing.T) {
 	if err := svc.Delete(campus.ID); !errors.Is(err, roomservice.ErrCampusInUse) {
 		t.Fatalf("expected ErrCampusInUse, got %v", err)
 	}
+}
+
+func ptrInt64(v int64) *int64 {
+	return &v
+}
+
+func levelPtr(v roommodel.NoShowBanLevel) *roommodel.NoShowBanLevel {
+	return &v
 }
