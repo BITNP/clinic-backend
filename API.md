@@ -1512,10 +1512,12 @@ creates or extends a global or campus ban until the transition time plus
 `预约后未到访诊所，已暂停预约`. A ban that already expires later is unchanged.
 No-show DingTalk notifications use `DINGTALK_TEMPLATE_NO_SHOW` when the campus
 policy is enabled and `DINGTALK_TEMPLATE_NO_SHOW_NO_BAN` when it is disabled.
+The ban-mode template can use `BANDU`, which renders the campus policy duration
+as a customer-facing duration such as `两天` or `三十六小时`.
 
 DingTalk message text is rendered from configurable templates. The available
-fields are `HEDR`, `DATE`, `ID`, `ROOM`, `LOCA`, `TRRO`, `TRLO`, `REAS`, and
-`QQAC`; see `CONFIGURATION.md` for their source config items.
+fields are `HEDR`, `DATE`, `ID`, `ROOM`, `LOCA`, `TRRO`, `TRLO`, `REAS`,
+`QQAC`, and `BANDU`; see `CONFIGURATION.md` for their source config items.
 When DingTalk notifications are enabled, confirmed tickets receive a persisted
 pre-shift reminder when their service window enters the configured lead-time
 window (`DINGTALK_REMINDER_LEAD_TIME`, default `30m`). Disabling
