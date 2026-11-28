@@ -11,13 +11,15 @@ import (
 
 func validReminderSettings() configservice.RuntimeSettings {
 	return configservice.RuntimeSettings{
-		ServiceDateReminderEnabled:   true,
-		ServiceDateReminderLeadTimes: []time.Duration{5 * time.Hour, 3 * time.Hour},
-		ServiceDateReminderTemplate:  configservice.DefaultServiceDateReminderTemplate,
-		MessageGatewayURL:            "http://message-gateway:8081/",
-		MessageGatewayAccount:        "qq",
-		MessageGatewayAccountToken:   "gateway-token",
-		MessageGatewayTimeout:        5 * time.Second,
+		ServiceDateReminderEnabled:            true,
+		ServiceDateReminderLeadTimes:          []time.Duration{5 * time.Hour, 3 * time.Hour},
+		ServiceDateReminderTemplate:           configservice.DefaultServiceDateReminderTemplate,
+		ServiceDateCompletionReminderDelay:    configservice.DefaultServiceDateCompletionReminderDelay,
+		ServiceDateCompletionReminderTemplate: configservice.DefaultServiceDateCompletionReminderTemplate,
+		MessageGatewayURL:                     "http://message-gateway:8081/",
+		MessageGatewayAccount:                 "qq",
+		MessageGatewayAccountToken:            "gateway-token",
+		MessageGatewayTimeout:                 5 * time.Second,
 	}
 }
 
@@ -25,6 +27,8 @@ func TestLoadServiceDateReminderConfigDefaults(t *testing.T) {
 	settings := validReminderSettings()
 	settings.ServiceDateReminderEnabled = false
 	settings.ServiceDateReminderTemplate = ""
+	settings.ServiceDateCompletionReminderDelay = 0
+	settings.ServiceDateCompletionReminderTemplate = ""
 	settings.MessageGatewayURL = ""
 	settings.MessageGatewayAccountToken = ""
 	settings.MessageGatewayTimeout = 0
@@ -49,6 +53,9 @@ func TestLoadServiceDateReminderConfigDefaults(t *testing.T) {
 	if cfg.Gateway.BaseURL != "" || cfg.Gateway.AccountToken != "" {
 		t.Errorf("unexpected default gateway credentials: %+v", cfg.Gateway)
 	}
+	if cfg.CompletionDelay != configservice.DefaultServiceDateCompletionReminderDelay {
+		t.Errorf("CompletionDelay = %v", cfg.CompletionDelay)
+	}
 
 	var rendered strings.Builder
 	if err := cfg.MessageTemplate.Execute(&rendered, map[string]string{
@@ -64,12 +71,28 @@ func TestLoadServiceDateReminderConfigDefaults(t *testing.T) {
 	if rendered.String() != want {
 		t.Errorf("rendered template = %q, want %q", rendered.String(), want)
 	}
+
+	rendered.Reset()
+	if err := cfg.CompletionMessageTemplate.Execute(&rendered, map[string]string{
+		"Date":         "2026-11-12",
+		"StartTime":    "18:30",
+		"Room":         "北区医务室",
+		"PendingCount": "2",
+	}); err != nil {
+		t.Fatalf("render default completion template: %v", err)
+	}
+	want = "[电脑诊所]2026-11-12 18:30 北区医务室 的值班还有2个待完成工单，请及时处理。"
+	if rendered.String() != want {
+		t.Errorf("rendered completion template = %q, want %q", rendered.String(), want)
+	}
 }
 
 func TestLoadServiceDateReminderConfigCustom(t *testing.T) {
 	settings := validReminderSettings()
 	settings.ServiceDateReminderLeadTimes = []time.Duration{3 * time.Hour, 7 * time.Hour}
 	settings.ServiceDateReminderTemplate = "{{.Room}} 有 {{.PendingCount}} 个待审核工单，{{.LeadTime}} 后开始"
+	settings.ServiceDateCompletionReminderDelay = 45 * time.Minute
+	settings.ServiceDateCompletionReminderTemplate = "{{.Room}} 还有 {{.PendingCount}} 个待完成工单"
 	settings.MessageGatewayURL = " https://gateway.example/api/ "
 	settings.MessageGatewayAccount = " qq-main "
 	settings.MessageGatewayAccountToken = " secret "
@@ -82,6 +105,9 @@ func TestLoadServiceDateReminderConfigCustom(t *testing.T) {
 
 	if !cfg.Enabled {
 		t.Fatal("Enabled = false, want true")
+	}
+	if cfg.CompletionDelay != 45*time.Minute {
+		t.Errorf("CompletionDelay = %v, want 45m", cfg.CompletionDelay)
 	}
 	if len(cfg.LeadTimes) != 2 || cfg.LeadTimes[0] != 7*time.Hour || cfg.LeadTimes[1] != 3*time.Hour {
 		t.Fatalf("LeadTimes = %v, want [7h 3h]", cfg.LeadTimes)
@@ -109,6 +135,17 @@ func TestLoadServiceDateReminderConfigCustom(t *testing.T) {
 	}
 	if rendered.String() != "北区医务室 有 2 个待审核工单，7 小时 后开始" {
 		t.Errorf("rendered template = %q", rendered.String())
+	}
+
+	rendered.Reset()
+	if err := cfg.CompletionMessageTemplate.Execute(&rendered, map[string]string{
+		"Room":         "北区医务室",
+		"PendingCount": "4",
+	}); err != nil {
+		t.Fatalf("render custom completion template: %v", err)
+	}
+	if rendered.String() != "北区医务室 还有 4 个待完成工单" {
+		t.Errorf("rendered completion template = %q", rendered.String())
 	}
 }
 
@@ -146,6 +183,34 @@ func TestLoadServiceDateReminderConfigRejectsInvalidValues(t *testing.T) {
 				settings.ServiceDateReminderTemplate = "{{.Missing}}"
 			},
 			want: "unsupported value",
+		},
+		{
+			name: "completion template syntax",
+			update: func(settings *configservice.RuntimeSettings) {
+				settings.ServiceDateCompletionReminderTemplate = "{{.Room"
+			},
+			want: "SERVICE_DATE_COMPLETION_REMINDER_TEMPLATE",
+		},
+		{
+			name: "completion template unknown field",
+			update: func(settings *configservice.RuntimeSettings) {
+				settings.ServiceDateCompletionReminderTemplate = "{{.Missing}}"
+			},
+			want: "unsupported value",
+		},
+		{
+			name: "completion delay not positive",
+			update: func(settings *configservice.RuntimeSettings) {
+				settings.ServiceDateCompletionReminderDelay = -time.Minute
+			},
+			want: "SERVICE_DATE_COMPLETION_REMINDER_DELAY",
+		},
+		{
+			name: "completion delay less than one second",
+			update: func(settings *configservice.RuntimeSettings) {
+				settings.ServiceDateCompletionReminderDelay = time.Millisecond
+			},
+			want: "SERVICE_DATE_COMPLETION_REMINDER_DELAY",
 		},
 		{
 			name: "missing gateway url",

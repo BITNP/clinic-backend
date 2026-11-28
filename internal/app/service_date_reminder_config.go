@@ -19,10 +19,12 @@ const (
 
 // ServiceDateReminderConfig controls the pending-ticket reminder worker.
 type ServiceDateReminderConfig struct {
-	Enabled         bool
-	LeadTimes       []time.Duration
-	MessageTemplate *template.Template
-	Gateway         ServiceDateReminderGatewayConfig
+	Enabled                   bool
+	LeadTimes                 []time.Duration
+	MessageTemplate           *template.Template
+	CompletionDelay           time.Duration
+	CompletionMessageTemplate *template.Template
+	Gateway                   ServiceDateReminderGatewayConfig
 }
 
 // ServiceDateReminderGatewayConfig contains the account-scoped gateway
@@ -45,9 +47,31 @@ func LoadServiceDateReminderConfig(settings configservice.RuntimeSettings) (Serv
 		return leadTimes[i] > leadTimes[j]
 	})
 
-	messageTemplate, err := parseServiceDateReminderTemplate(settings.ServiceDateReminderTemplate)
+	messageTemplate, err := parseServiceDateReminderTemplate(
+		"service_date_reminder",
+		settings.ServiceDateReminderTemplate,
+		configservice.DefaultServiceDateReminderTemplate,
+	)
 	if err != nil {
 		return ServiceDateReminderConfig{}, fmt.Errorf("invalid SERVICE_DATE_REMINDER_TEMPLATE: %w", err)
+	}
+	completionDelay := settings.ServiceDateCompletionReminderDelay
+	if completionDelay == 0 {
+		completionDelay = configservice.DefaultServiceDateCompletionReminderDelay
+	}
+	if completionDelay <= 0 || completionDelay%time.Second != 0 {
+		return ServiceDateReminderConfig{}, fmt.Errorf(
+			"invalid SERVICE_DATE_COMPLETION_REMINDER_DELAY: %s must be positive and use whole seconds",
+			completionDelay,
+		)
+	}
+	completionMessageTemplate, err := parseServiceDateReminderTemplate(
+		"service_date_completion_reminder",
+		settings.ServiceDateCompletionReminderTemplate,
+		configservice.DefaultServiceDateCompletionReminderTemplate,
+	)
+	if err != nil {
+		return ServiceDateReminderConfig{}, fmt.Errorf("invalid SERVICE_DATE_COMPLETION_REMINDER_TEMPLATE: %w", err)
 	}
 
 	baseURL := strings.TrimRight(strings.TrimSpace(settings.MessageGatewayURL), "/")
@@ -79,9 +103,11 @@ func LoadServiceDateReminderConfig(settings configservice.RuntimeSettings) (Serv
 	}
 
 	return ServiceDateReminderConfig{
-		Enabled:         settings.ServiceDateReminderEnabled,
-		LeadTimes:       leadTimes,
-		MessageTemplate: messageTemplate,
+		Enabled:                   settings.ServiceDateReminderEnabled,
+		LeadTimes:                 leadTimes,
+		MessageTemplate:           messageTemplate,
+		CompletionDelay:           completionDelay,
+		CompletionMessageTemplate: completionMessageTemplate,
 		Gateway: ServiceDateReminderGatewayConfig{
 			BaseURL:      baseURL,
 			Account:      account,
@@ -108,13 +134,13 @@ func validateServiceDateReminderLeadTimes(leadTimes []time.Duration) error {
 	return nil
 }
 
-func parseServiceDateReminderTemplate(raw string) (*template.Template, error) {
+func parseServiceDateReminderTemplate(name, raw, defaultTemplate string) (*template.Template, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		raw = configservice.DefaultServiceDateReminderTemplate
+		raw = defaultTemplate
 	}
 
-	tmpl, err := template.New("service_date_reminder").
+	tmpl, err := template.New(name).
 		Option("missingkey=error").
 		Parse(raw)
 	if err != nil {
