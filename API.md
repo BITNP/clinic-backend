@@ -1065,6 +1065,8 @@ The backend seeds and reserves `SYNC_POLL_INTERVAL`, `STAFF_VERSION`,
 `RECORD_ACTION_WINDOW`, `RECORD_PHOTO_MAX_COUNT`,
 `RECORD_PHOTO_MAX_SIZE_BYTES`, `SERVICE_DATE_REMINDER_ENABLED`,
 `SERVICE_DATE_REMINDER_LEAD_TIMES`, `SERVICE_DATE_REMINDER_TEMPLATE`,
+`SERVICE_DATE_COMPLETION_REMINDER_DELAY`,
+`SERVICE_DATE_COMPLETION_REMINDER_TEMPLATE`,
 `MESSAGE_GATEWAY_URL`, `MESSAGE_GATEWAY_ACCOUNT`,
 `MESSAGE_GATEWAY_ACCOUNT_TOKEN`, `MESSAGE_GATEWAY_TIMEOUT`,
 `TAGGER_LLM_API_KEY`, `TAGGER_LLM_BASE_URL`, `TAGGER_LLM_MODEL`,
@@ -1098,10 +1100,12 @@ the row exists. `TAGGER_LLM_API_KEY`, `MESSAGE_GATEWAY_ACCOUNT_TOKEN`, and
 returned by the API. All successful saves apply without restarting the backend;
 tagger changes atomically replace the active pool generation, DingTalk changes
 atomically replace the prepared message-center client, and reminder delivery
-reads new gateway settings on its next send. The service-date reminder template
-supports `Date`, `StartTime`, `Room`, `PendingCount`, and `LeadTime`. DingTalk
-reminder scheduling reads its current lead time and polling interval at the next
-worker cycle.
+reads new gateway settings on its next send. Both service-date reminder
+templates support `Date`, `StartTime`, `Room`, `PendingCount`, and `LeadTime`.
+`SERVICE_DATE_REMINDER_TEMPLATE` controls the pre-shift approval reminder, while
+`SERVICE_DATE_COMPLETION_REMINDER_TEMPLATE` controls the post-shift reminder
+after `SERVICE_DATE_COMPLETION_REMINDER_DELAY`. DingTalk reminder scheduling
+reads its current lead time and polling interval at the next worker cycle.
 
 ### `GET /api/admin/config`
 

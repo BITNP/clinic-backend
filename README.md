@@ -417,11 +417,12 @@ alias. Counters are best-effort: a Redis failure is logged and never fails the
 underlying write.
 
 
-### Pending ticket reminders
+### Service-date reminders
 
-The backend can remind admins assigned to a service window when tickets remain
-pending. It scans every minute and on startup, finds pending tickets by date and
-room, and sends a QQ private message through the account-scoped message gateway.
+The backend reminds admins assigned to a service window before the shift when
+tickets remain pending, and after the shift when work orders remain unfinished.
+It scans every minute and on startup, finds matching tickets by date and room,
+and sends QQ private messages through the account-scoped message gateway.
 The reminder delivery settings are stored in the database, initialized from the
 external `runtime_settings.json` or matching legacy environment values, and
 managed from the admin system settings page:
@@ -430,7 +431,11 @@ managed from the admin system settings page:
 - `SERVICE_DATE_REMINDER_LEAD_TIMES` defaults to `5h,3h`: unique, positive
   Go durations in whole seconds. Each is relative to the service start time.
 - `SERVICE_DATE_REMINDER_TEMPLATE` supports `Date`, `StartTime`, `Room`,
-  `PendingCount`, and `LeadTime`.
+  `PendingCount`, and `LeadTime` for the pre-shift approval reminder.
+- `SERVICE_DATE_COMPLETION_REMINDER_DELAY` defaults to `30m` and is a positive
+  Go duration using whole seconds, relative to the service end time.
+- `SERVICE_DATE_COMPLETION_REMINDER_TEMPLATE` supports the same fields for the
+  post-shift completion reminder.
 - `MESSAGE_GATEWAY_URL` is the gateway base URL.
 - `MESSAGE_GATEWAY_ACCOUNT` defaults to `qq` and affects the next delivery.
 - `MESSAGE_GATEWAY_ACCOUNT_TOKEN` is the account's write-only `client_token`.
@@ -446,7 +451,15 @@ The default template is
 `[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待审核工单，请及时处理。`
 
 `LeadTime` is the actual time remaining when the message is sent, rounded down
-to the minute.
+to the minute. Approval reminders count only `pending` tickets.
+
+The default completion template is
+`[电脑诊所]{{.Date}} {{.StartTime}} {{.Room}} 的值班还有{{.PendingCount}}个待完成工单，请及时处理。`
+Completion reminders count `pending`, `confirmed`, `arrived`, and
+`in_progress` work orders. They are sent once per service date and assigned
+admin, only after the configured delay has elapsed since the service end.
+Finished states (`completed`, `rejected`, `referred`, and `no_show`) are not
+counted.
 
 Dates and message times use `CLINIC_TIMEZONE` (default UTC+8). Service start
 timestamps are interpreted as UTC instants, as sent by the admin frontend.
